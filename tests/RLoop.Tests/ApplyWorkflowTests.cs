@@ -4,7 +4,7 @@ using RLoop.Core;
 
 namespace RLoop.Tests;
 
-public sealed class ApplyWorkflowTests : IDisposable
+public sealed partial class ApplyWorkflowTests : IDisposable
 {
     private readonly string _root = Path.Combine(Path.GetTempPath(), "resoloop-workflow-" + Guid.NewGuid().ToString("N"));
 
@@ -1208,6 +1208,225 @@ public sealed class ApplyWorkflowTests : IDisposable
         Assert.False(component.Members["Enabled"].Value!.GetValue<bool>());
     }
 
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task NewKeyNeverReusesStaleOwnedComponent(bool reconnect, bool prune)
+    {
+        var original = Document("replace-key", """
+            [{"key":"old","type":"Test.Target","fields":{"Enabled":false},"identityFields":["Enabled"]}]
+            """);
+        var client = new FakeResoniteClient(original);
+        var service = new WorldService(client);
+        var state = Path.Combine(_root, "replace.state.json");
+        await service.ApplyAsync(original, new ApplyOptions(state));
+        var oldId = Assert.Single(Assert.Single(client.Root.Children).Components).Id;
+        var desired = Document("replace-key", """
+            [{"key":"new","type":"Test.Target","fields":{"Enabled":true},"identityFields":["Enabled"]}]
+            """);
+        if (reconnect) client.SessionId = "session-2";
+        client.ResetWriteCounts();
+        var options = new ApplyOptions(state, Prune: prune, ConfirmDeletes: prune);
+        var plan = await service.PlanApplyAsync(desired, options);
+        Assert.Contains(plan.Changes, x => x.Key == "new" && x.Action == "create");
+        Assert.Equal(0, client.Writes);
+        await service.ApplyAsync(desired, options);
+        var current = await service.ResolveStableReferenceAsync(state, "$component:new", client.SessionId);
+        Assert.NotEqual(oldId, current.Id);
+        Assert.Contains(Assert.Single(client.Root.Children).Components, c => c.Id == current.Id);
+        Assert.Equal(prune ? 1 : 2, Assert.Single(client.Root.Children).Components.Count);
+        client.ResetWriteCounts();
+        await service.ApplyAsync(desired, options);
+        Assert.Equal(0, client.Writes);
+    }
+
+    [Fact]
+    public async Task SameTypeInsertionPreservesExistingKeysAfterReordering()
+    {
+        var original = Document("insert-key", """
+            [{"key":"kept","type":"Test.Target","fields":{"Enabled":false},"identityFields":["Enabled"]}]
+            """);
+        var client = new FakeResoniteClient(original);
+        var service = new WorldService(client);
+        var state = Path.Combine(_root, "insert.state.json");
+        await service.ApplyAsync(original, new ApplyOptions(state));
+        var keptId = Assert.Single(Assert.Single(client.Root.Children).Components).Id;
+        var desired = Document("insert-key", """
+            [{"key":"inserted","type":"Test.Target","fields":{"Enabled":true},"identityFields":["Enabled"]},
+             {"key":"kept","type":"Test.Target","fields":{"Enabled":false},"identityFields":["Enabled"]}]
+            """);
+        client.SessionId = "session-2";
+        await service.ApplyAsync(desired, new ApplyOptions(state));
+        Assert.Equal(2, Assert.Single(client.Root.Children).Components.Count);
+        Assert.Equal(keptId, (await service.ResolveStableReferenceAsync(state, "$component:kept", client.SessionId)).Id);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task MultiMemberProbeRestoresAllOriginalValuesEvenWhenAssertionFails(bool mismatch)
+    {
+        var path = Path.Combine(_root, "multi-probe.json");
+        File.WriteAllText(path, $$$"""
+            {"schemaVersion":"1","ownership":{"key":"multi-probe"},"slot":{"key":"root","name":"Managed","parent":"Root"},
+             "components":[{"key":"a","type":"Test.Target","initialFields":{"Enabled":false},"identityFields":["Enabled"]},
+               {"key":"b","type":"Test.Target","initialFields":{"Enabled":true},"identityFields":["Enabled"]}],
+             "tests":[{"name":"temporary states","timeoutMs":10,"pollMs":10,
+               "probe":{"kind":"set-members","safe":true,"restore":true,"values":{"$member:a.Enabled":true,"$member:b.Enabled":false}},
+               "assertions":[{"target":"$member:a.Enabled","expected":{{{(mismatch ? "false" : "true")}}},"phase":"after"},
+                 {"target":"$member:b.Enabled","expected":false,"phase":"after"}]}]}
+            """);
+        var document = ApplyDocument.Load(path);
+        var client = new FakeResoniteClient(document);
+        var service = new WorldService(client);
+        var options = new ApplyOptions(Path.Combine(_root, "multi.state.json"));
+        await service.ApplyAsync(document, options);
+        var report = await service.TestAsync(document, options, true);
+        Assert.Equal(!mismatch, report.Passed);
+        var components = Assert.Single(client.Root.Children).Components;
+        Assert.False(components[0].Members["Enabled"].Value!.GetValue<bool>());
+        Assert.True(components[1].Members["Enabled"].Value!.GetValue<bool>());
+    }
+
+    [Fact]
+    public async Task MultiMemberProbeChecksEveryTargetBeforeWriting()
+    {
+        var document = Document("probe-preflight", """
+            [{"key":"a","type":"Test.Target","fields":{"Enabled":false}}]
+            """);
+        var client = new FakeResoniteClient(document);
+        var service = new WorldService(client);
+        var options = new ApplyOptions(Path.Combine(_root, "preflight.state.json"));
+        await service.ApplyAsync(document, options);
+        var json = JsonNode.Parse(File.ReadAllText(document.SourcePath!))!;
+        json["tests"] = JsonNode.Parse("""
+            [{"name":"missing second target","probe":{"kind":"set-members","safe":true,"values":{"$member:a.Enabled":true,"$member:a.Missing":false}},
+              "assertions":[{"target":"$slot:root","exists":true}]}]
+            """);
+        File.WriteAllText(document.SourcePath!, json.ToJsonString());
+        client.ResetWriteCounts();
+        await Assert.ThrowsAsync<RLoopException>(() => service.TestAsync(ApplyDocument.Load(document.SourcePath!), options, true));
+        Assert.Equal(0, client.Writes);
+    }
+
+    [Theory]
+    [InlineData("cancel")]
+    [InlineData("write-failure")]
+    [InlineData("restore-failure")]
+    public async Task MultiMemberProbeCompensatesAttemptedWritesAndReportsRestoreFailures(string failure)
+    {
+        var document = Document("probe-compensation", """
+            [{"key":"a","type":"Test.Target","fields":{"Enabled":false},"identityFields":["Enabled"]},
+             {"key":"b","type":"Test.Target","fields":{"Enabled":true},"identityFields":["Enabled"]}]
+            """);
+        var client = new FakeResoniteClient(document);
+        var service = new WorldService(client);
+        var options = new ApplyOptions(Path.Combine(_root, "compensation.state.json"));
+        await service.ApplyAsync(document, options);
+        var json = JsonNode.Parse(File.ReadAllText(document.SourcePath!))!;
+        json["tests"] = JsonNode.Parse("""
+            [{"name":"compensate","probe":{"kind":"set-members","safe":true,"values":{"$member:a.Enabled":true,"$member:b.Enabled":false}},
+              "assertions":[{"target":"$member:a.Enabled","expected":true,"phase":"after"}]}]
+            """);
+        File.WriteAllText(document.SourcePath!, json.ToJsonString());
+        client.ResetWriteCounts();
+        using var cancellation = new CancellationTokenSource();
+        if (failure == "cancel") { client.Cancellation = cancellation; client.CancelAfterWrites = 2; }
+        else client.FailOnWrite = failure == "write-failure" ? 2 : 3;
+        var error = await Record.ExceptionAsync(() => service.TestAsync(ApplyDocument.Load(document.SourcePath!), options, true, cancellation.Token));
+        Assert.NotNull(error);
+        if (failure == "restore-failure")
+        {
+            Assert.Equal("PROBE_RESTORE_FAILED", Assert.IsType<RLoopException>(error).Code);
+            Assert.Contains("$member:b.Enabled", JsonSerializer.Serialize(((RLoopException)error).Context));
+        }
+        else if (failure == "cancel") Assert.IsAssignableFrom<OperationCanceledException>(error);
+        else Assert.IsType<IOException>(error);
+        var components = Assert.Single(client.Root.Children).Components;
+        Assert.False(components[0].Members["Enabled"].Value!.GetValue<bool>());
+        Assert.Equal(failure != "restore-failure", components[1].Members["Enabled"].Value!.GetValue<bool>());
+        Assert.Equal(4, client.Writes);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(1)]
+    [InlineData(2)]
+    public async Task RelocationPreparesParentComponentsAndResumesFromCheckpoint(int interruptAfter)
+    {
+        var path = Path.Combine(_root, "prepare-parent.json");
+        File.WriteAllText(path, """
+            {"schemaVersion":"1","ownership":{"key":"prepare"},"slot":{"key":"root","name":"Managed","parent":"Root"},
+             "children":[{"slot":{"key":"leaf","name":"Retained"}}]}
+            """);
+        var client = new FakeResoniteClient();
+        var service = new WorldService(client);
+        var options = new ApplyOptions(Path.Combine(_root, "prepare.state.json"));
+        await service.ApplyAsync(ApplyDocument.Load(path), options);
+        var original = Assert.Single(Assert.Single(client.Root.Children).Children).Id;
+        File.WriteAllText(path, """
+            {"schemaVersion":"1","ownership":{"key":"prepare"},"slot":{"key":"root","name":"Managed","parent":"Root"},
+             "children":[{"slot":{"key":"parent","name":"NewParent"},"components":[{"key":"parent-component","type":"Test.Target","fields":{"Enabled":true}}],
+               "children":[{"slot":{"key":"leaf","name":"Retained"}}]}]}
+            """);
+        client.ResetWriteCounts();
+        client.Mutations.Clear();
+        using var cancellation = new CancellationTokenSource();
+        if (interruptAfter > 0)
+        {
+            client.CancelAfterWrites = interruptAfter;
+            client.Cancellation = cancellation;
+            await Assert.ThrowsAsync<RLoopException>(() => service.ApplyAsync(ApplyDocument.Load(path), options, cancellation.Token));
+            var checkpoint = JsonNode.Parse(File.ReadAllText(options.StateFile!))!;
+            Assert.Equal("Root/Managed/Retained", checkpoint["slots"]!["leaf"]!["path"]!.GetValue<string>());
+            client.CancelAfterWrites = null;
+            client.Cancellation = null;
+        }
+        await service.ApplyAsync(ApplyDocument.Load(path), options);
+        var newParent = Assert.Single(Assert.Single(client.Root.Children).Children);
+        Assert.Equal(original, Assert.Single(newParent.Children).Id);
+        Assert.True(client.Mutations.IndexOf("add-component:" + newParent.Id) < client.Mutations.IndexOf("move:" + original));
+        client.ResetWriteCounts();
+        await service.ApplyAsync(ApplyDocument.Load(path), options);
+        Assert.Equal(0, client.Writes);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task RejectsAliasedStateBeforeAnyMutation(bool prune)
+    {
+        var document = Document("alias", """
+            [{"key":"kept","type":"Test.Target","fields":{"Enabled":true}}]
+            """);
+        var client = new FakeResoniteClient(document);
+        var service = new WorldService(client);
+        var state = Path.Combine(_root, "alias.state.json");
+        await service.ApplyAsync(document, new ApplyOptions(state));
+        var checkpoint = JsonNode.Parse(File.ReadAllText(state))!;
+        checkpoint["components"]!["obsolete"] = checkpoint["components"]!["kept"]!.DeepClone();
+        File.WriteAllText(state, checkpoint.ToJsonString());
+        client.ResetWriteCounts();
+        var error = await Assert.ThrowsAsync<RLoopException>(() => service.ApplyAsync(document, new ApplyOptions(state, Prune: prune, ConfirmDeletes: prune)));
+        Assert.Equal("APPLY_COMPONENT_OWNERSHIP_CONFLICT", error.Code);
+        Assert.Equal(0, client.Writes);
+    }
+
+    [Fact]
+    public async Task UixObservationStopsAtSlotBudgetWithoutWrites()
+    {
+        var client = new FakeResoniteClient();
+        var root = await client.CreateSlotAsync(new SlotCreateRequest("Root", "UI"));
+        for (var i = 0; i < 5; i++) await client.CreateSlotAsync(new SlotCreateRequest(root, "Child" + i));
+        client.ResetWriteCounts();
+        var report = await UixAuditService.InspectAsync(client, root, 2, 2);
+        Assert.Equal(2, report.ObservedSlots);
+        Assert.True(report.Truncated);
+        Assert.Equal(0, client.Writes);
+    }
+
     private ApplyDocument Document(string ownership, string components, string name = "Managed")
     {
         var path = Path.Combine(_root, ownership + ".json");
@@ -1238,7 +1457,10 @@ public sealed class ApplyWorkflowTests : IDisposable
         public FakeSlot Root { get; }
         public int Writes { get; private set; }
         public int BatchUpdates { get; private set; }
+        public List<string> Mutations { get; } = [];
         public int? CancelAfterWrites { get; set; }
+        public int? FailOnWrite { get; set; }
+        public string? TargetClaimedBy { get; set; }
         public CancellationTokenSource? Cancellation { get; set; }
         public string SessionId { get; set; } = "session-1";
         public bool LoseNextSlotCreateResponse { get; set; }
@@ -1270,6 +1492,7 @@ public sealed class ApplyWorkflowTests : IDisposable
 
         public Task<ComponentInfo> GetComponentAsync(string id, CancellationToken cancellationToken = default)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             _requests++;
             var component = _components[id];
             return Task.FromResult(new ComponentInfo(component.Id, component.Type, component.Members));
@@ -1292,6 +1515,7 @@ public sealed class ApplyWorkflowTests : IDisposable
 
         public Task UpdateSlotAsync(SlotUpdateRequest request, CancellationToken cancellationToken = default)
         {
+            if (request.ParentId is not null) Mutations.Add("move:" + request.Id);
             Write();
             var slot = _slots[request.Id];
             if (request.ParentId is not null && request.ParentId != slot.ParentId)
@@ -1319,12 +1543,15 @@ public sealed class ApplyWorkflowTests : IDisposable
         public Task<ComponentCreateResult> AddComponentAsync(string slotId, string componentType,
             IReadOnlyDictionary<string, string> fields, CancellationToken cancellationToken = default)
         {
+            Mutations.Add("add-component:" + slotId);
             Write();
             var id = "C" + _nextComponent++;
             var component = new FakeComponent(id, componentType);
             foreach (var member in _knownMembers.GetValueOrDefault(componentType) ?? [])
                 component.Members[member] = new MemberValue("field", id + ":" + member, "bool", JsonValue.Create(false));
             SetFields(component, fields);
+            if (TargetClaimedBy is not null && _components.ContainsKey(TargetClaimedBy) && fields.ContainsKey("Target"))
+                component.Members["Target"] = new MemberValue("reference", id + ":Target");
             _components[id] = component;
             _slots[slotId].Components.Add(component);
             return Task.FromResult(new ComponentCreateResult(id, componentType));
@@ -1336,9 +1563,12 @@ public sealed class ApplyWorkflowTests : IDisposable
         public Task SetComponentMembersAsync(string componentId, string componentType,
             IReadOnlyDictionary<string, string> fields, CancellationToken cancellationToken = default)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             Write();
             BatchUpdates++;
             SetFields(_components[componentId], fields);
+            if (TargetClaimedBy is not null && componentId != TargetClaimedBy && _components.ContainsKey(TargetClaimedBy) && fields.ContainsKey("Target"))
+                _components[componentId].Members["Target"] = new MemberValue("reference", componentId + ":Target");
             return Task.CompletedTask;
         }
 
@@ -1391,6 +1621,7 @@ public sealed class ApplyWorkflowTests : IDisposable
         private void Write()
         {
             Writes++;
+            if (FailOnWrite == Writes) throw new IOException("Simulated write failure.");
             if (CancelAfterWrites == Writes) Cancellation?.Cancel();
         }
 

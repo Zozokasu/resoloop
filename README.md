@@ -110,6 +110,21 @@ UV-bearing n-gons and current generated/edited image buffers are handled during 
 
 New exports isolate providers in named Slots for interrupted-apply recovery; existing root-provider bundles can retain their layout with `--legacy-root-providers`. Strict validation checks write conversion before imports, including nullable enums. Nested SyncObject fields converge without suppressing drift detection, Slot field IDs are inspectable, and scene bounds identify geometry versus partial/pivot estimates. [Clock tower and tank improvements](docs/CLOCKTOWER-FEEDBACK.md) records the changes and verification. Modeling prioritizes visual quality before resource reduction; session FPS is not an individual-model acceptance criterion.
 
+## UIX authoring
+
+The bundled `resonite-uix` skill covers shared assets, layout metrics, fitting, scrolling, input state, and hierarchy migration. `init` and `skills sync` distribute its reference files with per-file edit protection. Existing UIX Slots are relocated after parent components are prepared; new component keys no longer reuse IDs scheduled for pruning.
+
+```powershell
+resoloop uix audit '$slot:panel' --state .resoloop/state/panel.json --depth 6 --max-slots 128 --json
+resoloop validate examples/uix-responsive.json --strict --json
+```
+
+The audit is read-only and reports partial structural evidence, with computed size marked unknown. `--strict` also fails on warnings. The [responsive example](examples/uix-responsive.json) shares one font and demonstrates equal-width cards and a restoring multi-field probe. [Declaration options](docs/DECLARATIVE.md) cover `set-members` and explicit expansion budgets; [UIX feedback](docs/UIX-FEEDBACK.md) records verified behavior and remaining work. These changes are in the source tree and have not been published as a package.
+
+The preview.11 local build preserves exact Slot names in checkpoint schema 2, rejects duplicate sibling names and malformed assets before mutation, verifies symbolic references after lifecycle changes, and allows checkpoint readers alongside one writer. Texture/material settings and Button color drivers are included in `uix audit`; they do not prove assets loaded. See the [test14 investigation](docs/UIX-TEST14-FEEDBACK.md), including why checkerboards were not attributed to compression alone. This version has not been published to nuget.org.
+
+For a Slot whose literal name contains a slash or surrounding spaces, use PowerShell `resoloop slot inspect 'path:["Root","A/B"," Label "]' --json`. Managed `$slot:key` selectors use the saved exact name segments across connections. Old schema 1 checkpoints upgrade on save; the declaration schema stays `"1"`.
+
 ## Learn more
 
 - [Detailed documentation](README-DETAILS.md) — commands, architecture, declaration format, Flux-SDK, and limitations

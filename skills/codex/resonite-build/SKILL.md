@@ -5,6 +5,8 @@ description: Build or modify Resonite world content through resoloop when a requ
 
 # Resonite Build
 
+For native UIX controls, panels, shared UI resources, or responsive layout changes, also follow the bundled `resonite-uix` skill. It covers saved-item asset sharing, layout metrics and fitting, input wiring, state-driven visuals, and preservation during hierarchy changes.
+
 For a world or environment commission, establish traversable space and the visual composition in a blockout before producing all props. Compare actual exterior, interior and focal-area views with the approved concept; correct proportions and sightlines early. Verify floor/wall colliders, openings and circulation separately from visual success. Record atmosphere features as implemented motion, static placeholders or unimplemented effects. Inspect and record global lighting/sky changes only when world-level editing is within the user's scope; keep shared-session work inside the owned root otherwise. Structural collider checks do not prove manual traversal, and saved portability requires its own verification.
 
 When reviewing external-reference policy, copy a reviewed role from `item audit`'s `externalRoleCandidates`. Prefer `[Assembly]Namespace.Type:MemberPath` to avoid short-name collisions; namespace-qualified and legacy short names are also accepted. A type role allows every matching component, whereas `COMPONENT_ID:MemberPath` only covers that current-session component. Check `unmatchedExternalRoles` and `ITEM_ALLOW_ROLE_UNUSED`; unmatched entries warn and fail strict audits. These declarations do not automatically prove the target is an engine default or that an item survives save/reload.

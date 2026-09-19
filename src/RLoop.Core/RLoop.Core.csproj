@@ -3,6 +3,9 @@
     <TargetFramework>net10.0</TargetFramework>
   </PropertyGroup>
   <ItemGroup>
+    <InternalsVisibleTo Include="RLoop.Tests" />
+    <EmbeddedResource Include="../../skills/codex/resonite-uix/SKILL.md" LogicalName="RLoop.Core.Skills.resonite-uix.SKILL.md" />
+    <EmbeddedResource Include="../../skills/codex/resonite-uix/references/*.md" LogicalName="RLoop.Core.Skills.resonite-uix.references.%(Filename)%(Extension)" />
     <EmbeddedResource Include="../../skills/codex/resonite-blender/SKILL.md" LogicalName="RLoop.Core.Skills.resonite-blender.SKILL.md" />
     <EmbeddedResource Include="../../skills/codex/resonite-build/SKILL.md" LogicalName="RLoop.Core.Skills.resonite-build.SKILL.md" />
     <EmbeddedResource Include="../../skills/codex/resonite-debug/SKILL.md" LogicalName="RLoop.Core.Skills.resonite-debug.SKILL.md" />

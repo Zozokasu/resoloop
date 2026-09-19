@@ -493,6 +493,19 @@ public static class Program
                 });
                 break;
             }
+            case "uix":
+            {
+                var sub = args.Positional(1, "uix subcommand").ToLowerInvariant();
+                if (sub != "audit" || args.Positionals.Count != 3) throw UnknownCommand("uix " + sub);
+                var root = await world.ResolveSlotSelectorAsync(args.Positional(2, "UIX root"), args.Option("state"), cancellationToken);
+                var report = await UixAuditService.InspectAsync(client, root, args.IntOption("depth", 6, 0, 32),
+                    args.IntOption("max-slots", 256, 1, 4096), cancellationToken);
+                if (!report.Valid || args.Has("strict") && report.Issues.Count > 0)
+                    throw new RLoopException("UIX_AUDIT_FAILED", "UIX audit found structural issues or incomplete evidence.",
+                        ExitCodes.ValidationFailed, new Dictionary<string, object?> { ["report"] = report });
+                output.Success(report);
+                break;
+            }
             case "item":
             {
                 var sub = args.Positional(1, "item subcommand").ToLowerInvariant();
@@ -981,6 +994,7 @@ Editing:
   resoloop plan|diff FILE.json [--state FILE] [--adopt] [--changes-only|--creates-only|--deletes-only|--summary]
   resoloop apply FILE.json [--state FILE] [--adopt] [--profile] [--ndjson-progress] [--prune --yes]
   resoloop test FILE.json [--state FILE] [--probe --yes]
+  resoloop uix audit SLOT|$slot:key [--state FILE] [--depth 6] [--max-slots 256] [--strict]
   resoloop item audit SLOT [--strict] [--allow-external ID|PATH|$slot:key ...]
     [--allow-external-role COMPONENT_TYPE:MEMBER_PATH|COMPONENT_ID:MEMBER_PATH ...] [--state WORLD_STATE]
     Review externalRoleCandidates first; type roles cover all matching components, ID roles are session-scoped.
@@ -1001,6 +1015,7 @@ Diagnostics:
   resoloop logs [--path FILE_OR_DIRECTORY] [--tail 200]
 
 Global options: --url, --timeout SECONDS, --command-timeout SECONDS, --json, --verbose
+Exact Slot path (PowerShell): 'path:["Root","A/B"," Label "]' preserves separators and spaces in names.
 Configuration priority: CLI > environment > .resoloop.json > ~/.resoloop/config.json
 Environment: RESONITE_LINK_URL, RESOLOOP_TIMEOUT_SECONDS, RESOLOOP_COMMAND_TIMEOUT_SECONDS, RESOLOOP_FLUX_EXECUTABLE, RESONITE_MANAGED_DATA_PATH, RESONITE_LOG_PATH, RESOLOOP_BLENDER_EXECUTABLE
 """);

@@ -3,7 +3,7 @@ using System.Text.Json;
 namespace RLoop.Core;
 
 public sealed record StableSlotReference(string Key, string Id, string Path, string? SessionId, string OwnershipKey,
-    bool RuntimeRelocatable = false);
+    bool RuntimeRelocatable = false, IReadOnlyList<string>? PathSegments = null);
 public sealed record StableComponentReference(string Key, string Id, string SlotKey, string Type, int TypeOrdinal,
     string? SessionId, string OwnershipKey, int? ComponentIndex = null,
     IReadOnlyList<string>? MemberNames = null, IReadOnlyDictionary<string, string>? IdentityValues = null,
@@ -53,10 +53,9 @@ public static class StableReferenceResolver
     {
         var key = reference.StartsWith("$slot:", StringComparison.Ordinal) ? reference[6..] : reference;
         var path = Path.GetFullPath(stateFile);
-        if (!File.Exists(path)) throw new RLoopException("APPLY_STATE_NOT_FOUND", $"World state file '{path}' does not exist.", ExitCodes.NotFound);
         try
         {
-            using var document = JsonDocument.Parse(File.ReadAllText(path));
+            using var document = JsonDocument.Parse(CheckpointFiles.Read(path));
             var root = document.RootElement;
             if (!root.GetProperty("slots").TryGetProperty(key, out var slot))
                 throw new RLoopException("STABLE_SLOT_NOT_FOUND", $"Stable slot key '{key}' is not present in '{path}'.", ExitCodes.NotFound);
@@ -64,10 +63,13 @@ public static class StableReferenceResolver
                 slot.GetProperty("path").GetString() ?? string.Empty,
                 root.TryGetProperty("sessionId", out var session) ? session.GetString() : null,
                 root.GetProperty("ownershipKey").GetString() ?? string.Empty,
-                slot.TryGetProperty("runtimeRelocatable", out var relocatable) && relocatable.ValueKind == JsonValueKind.True);
+                slot.TryGetProperty("runtimeRelocatable", out var relocatable) && relocatable.ValueKind == JsonValueKind.True,
+                slot.TryGetProperty("pathSegments", out var segments) && segments.ValueKind == JsonValueKind.Array
+                    ? segments.EnumerateArray().Select(segment => segment.GetString() ?? string.Empty).ToArray() : null);
         }
+        catch (FileNotFoundException ex) { throw new RLoopException("APPLY_STATE_NOT_FOUND", $"World state file '{path}' does not exist.", ExitCodes.NotFound, innerException: ex); }
         catch (RLoopException) { throw; }
-        catch (Exception ex) when (ex is JsonException or InvalidOperationException)
+        catch (Exception ex) when (ex is JsonException or InvalidOperationException or IOException or UnauthorizedAccessException)
         {
             throw new RLoopException("APPLY_STATE_INVALID", $"Cannot resolve '{reference}' from '{path}': {ex.Message}", ExitCodes.ValidationFailed, innerException: ex);
         }
@@ -105,14 +107,14 @@ public static class StableReferenceResolver
     private static T ReadState<T>(string stateFile, Func<JsonElement, string, T> read, string reference)
     {
         var path = Path.GetFullPath(stateFile);
-        if (!File.Exists(path)) throw new RLoopException("APPLY_STATE_NOT_FOUND", $"World state file '{path}' does not exist.", ExitCodes.NotFound);
         try
         {
-            using var document = JsonDocument.Parse(File.ReadAllText(path));
+            using var document = JsonDocument.Parse(CheckpointFiles.Read(path));
             return read(document.RootElement, path);
         }
+        catch (FileNotFoundException ex) { throw new RLoopException("APPLY_STATE_NOT_FOUND", $"World state file '{path}' does not exist.", ExitCodes.NotFound, innerException: ex); }
         catch (RLoopException) { throw; }
-        catch (Exception ex) when (ex is JsonException or InvalidOperationException)
+        catch (Exception ex) when (ex is JsonException or InvalidOperationException or IOException or UnauthorizedAccessException)
         {
             throw new RLoopException("APPLY_STATE_INVALID", $"Cannot resolve '{reference}' from '{path}': {ex.Message}", ExitCodes.ValidationFailed, innerException: ex);
         }

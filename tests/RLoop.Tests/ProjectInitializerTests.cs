@@ -12,7 +12,7 @@ public sealed class ProjectInitializerTests : IDisposable
         var result = ProjectInitializer.Initialize(_root);
 
         Assert.Equal(Path.GetFullPath(_root), result.RootDirectory);
-        Assert.Equal(9 + BundledSkillManager.Names.Count, result.Created.Count);
+        Assert.Equal(9 + BundledSkillManager.Files.Count, result.Created.Count);
         Assert.True(File.Exists(Path.Combine(_root, ".resoloop.json")));
         var apply = ApplyDocument.Load(Path.Combine(_root, "content", "main.json"));
         Assert.Equal("1", apply.SchemaVersion);
@@ -40,7 +40,7 @@ public sealed class ProjectInitializerTests : IDisposable
         var result = ProjectInitializer.Initialize(_root);
 
         Assert.Empty(result.Created);
-        Assert.Equal(8 + BundledSkillManager.Names.Count, result.Unchanged.Count);
+        Assert.Equal(8 + BundledSkillManager.Files.Count, result.Unchanged.Count);
     }
 
     [Fact]
@@ -53,7 +53,7 @@ public sealed class ProjectInitializerTests : IDisposable
         var result = ProjectInitializer.Initialize(_root);
 
         Assert.Empty(result.Created);
-        Assert.Equal(8 + BundledSkillManager.Names.Count, result.Unchanged.Count);
+        Assert.Equal(8 + BundledSkillManager.Files.Count, result.Unchanged.Count);
     }
 
     [Fact]
@@ -177,6 +177,50 @@ public sealed class ProjectInitializerTests : IDisposable
         Assert.Equal("missing", check.Skills.Single(skill => skill.Name == "resonite-flux").Status);
         Assert.True(updated.Synchronized);
         Assert.True(File.Exists(skillPath));
+    }
+
+    [Fact]
+    public void ReferenceFilesAreInstalledRestoredAndProtectedBeforeAnyUpdate()
+    {
+        ProjectInitializer.Initialize(_root);
+        var assets = Path.Combine(_root, ".agents/skills/resonite-uix/references/assets.md");
+        var layout = Path.Combine(_root, ".agents/skills/resonite-uix/references/layout.md");
+        Assert.True(File.Exists(assets));
+        var original = File.ReadAllText(assets);
+        File.Delete(assets);
+        File.WriteAllText(layout, "user layout guidance");
+        var error = Assert.Throws<RLoopException>(() => BundledSkillManager.Sync(_root, true));
+        Assert.Equal("SKILL_SYNC_CONFLICT", error.Code);
+        Assert.False(File.Exists(assets));
+        Assert.Equal("user layout guidance", File.ReadAllText(layout));
+        File.Delete(layout);
+        var updated = BundledSkillManager.Sync(_root, true);
+        Assert.Contains(".agents/skills/resonite-uix/references/assets.md", updated.Updated);
+        Assert.Equal(original, File.ReadAllText(assets));
+        Assert.True(BundledSkillManager.Sync(_root, false).Synchronized);
+    }
+
+    [Fact]
+    public void ReferenceUpdateUsesItsOwnPreviousHashAndMigratesV1Lock()
+    {
+        ProjectInitializer.Initialize(_root);
+        var lockPath = Path.Combine(_root, BundledSkillManager.LockRelativePath);
+        var reference = Path.Combine(_root, ".agents/skills/resonite-uix/references/layout.md");
+        var content = File.ReadAllText(reference);
+        var old = "previous layout guidance\n";
+        File.WriteAllText(reference, old);
+        var locked = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(lockPath))!;
+        locked["files"]!["resonite-uix/references/layout.md"] = Convert.ToHexString(
+            System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(old)));
+        File.WriteAllText(lockPath, locked.ToJsonString());
+        BundledSkillManager.Sync(_root, true);
+        Assert.Equal(content, File.ReadAllText(reference));
+        File.WriteAllText(lockPath, "{\"schemaVersion\":1,\"skills\":{}}");
+        BundledSkillManager.Sync(_root, true);
+        var migrated = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(lockPath))!;
+        Assert.Equal(2, migrated["schemaVersion"]!.GetValue<int>());
+        Assert.NotNull(migrated["files"]!["resonite-uix/references/layout.md"]);
+        Assert.Null(migrated["skills"]);
     }
 
     public void Dispose()

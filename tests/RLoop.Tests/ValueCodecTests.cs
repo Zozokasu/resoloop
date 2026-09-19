@@ -88,6 +88,8 @@ public sealed class ValueCodecTests
         Assert.Equal("Reso_1", reference.TargetID);
         var nullReference = Assert.IsType<Link.Reference>(await ValueCodec.ParseAsync(link, definition, "null"));
         Assert.Null(nullReference.TargetID);
+        var quoted = await Assert.ThrowsAsync<RLoop.Core.RLoopException>(() => ValueCodec.ParseAsync(link, definition, "\"Reso_1\""));
+        Assert.Equal("REFERENCE_VALUE_QUOTED", quoted.Code);
     }
 
     [Fact]

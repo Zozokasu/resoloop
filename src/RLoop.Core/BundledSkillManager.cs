@@ -15,7 +15,12 @@ public static class BundledSkillManager
     public const string LockRelativePath = ".agents/skills/.resoloop-bundled.json";
 
     public static IReadOnlyList<string> Names { get; } =
-        ["resonite-build", "resonite-debug", "resonite-flux", "resonite-inspect", "resonite-blender"];
+        ["resonite-build", "resonite-debug", "resonite-flux", "resonite-inspect", "resonite-blender", "resonite-uix"];
+
+    // Only these packaged paths are writable. Never use paths supplied by the installed lock.
+    public static IReadOnlyList<string> Files { get; } = Names.Select(name => name + "/SKILL.md")
+        .Concat(["resonite-uix/references/assets.md", "resonite-uix/references/layout.md",
+            "resonite-uix/references/interaction-and-migration.md"]).ToArray();
 
     public static SkillSyncResult Sync(string targetDirectory, bool update)
     {
@@ -23,13 +28,14 @@ public static class BundledSkillManager
         var lockPath = Path.Combine(root, LockRelativePath.Replace('/', Path.DirectorySeparatorChar));
         var locked = LoadLock(lockPath);
         var entries = new List<SkillSyncEntry>();
-        foreach (var name in Names)
+        foreach (var file in Files)
         {
-            var relativePath = $".agents/skills/{name}/SKILL.md";
+            var name = file.EndsWith("/SKILL.md", StringComparison.Ordinal) ? file[..^9] : file;
+            var relativePath = $".agents/skills/{file}";
             var path = Path.Combine(root, relativePath.Replace('/', Path.DirectorySeparatorChar));
-            var bundledHash = Hash(LoadBundledSkill(name));
+            var bundledHash = Hash(LoadBundledFile(file));
             var installedHash = File.Exists(path) ? Hash(File.ReadAllText(path)) : null;
-            locked.TryGetValue(name, out var lockedHash);
+            locked.TryGetValue(file, out var lockedHash);
             var status = installedHash is null ? "missing" : installedHash == bundledHash ?
                 lockedHash == bundledHash ? "current" : "lock-update-required" :
                 lockedHash is null ? "untracked-conflict" : installedHash == lockedHash ? "update-available" : "modified-conflict";
@@ -54,11 +60,11 @@ public static class BundledSkillManager
         {
             var path = Path.Combine(root, entry.Path.Replace('/', Path.DirectorySeparatorChar));
             Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-            File.WriteAllText(path, NormalizeLineEndings(LoadBundledSkill(entry.Name)), new UTF8Encoding(false));
+            File.WriteAllText(path, NormalizeLineEndings(LoadBundledFile(entry.Path[".agents/skills/".Length..])), new UTF8Encoding(false));
             updated.Add(entry.Path);
         }
         Directory.CreateDirectory(Path.GetDirectoryName(lockPath)!);
-        var skillHashes = Names.ToDictionary(name => name, name => Hash(LoadBundledSkill(name)), StringComparer.Ordinal);
+        var skillHashes = Files.ToDictionary(file => file, file => Hash(LoadBundledFile(file)), StringComparer.Ordinal);
         var serializedLock = SerializeLock(skillHashes);
         if (!File.Exists(lockPath) || !string.Equals(
                 NormalizeLineEndings(File.ReadAllText(lockPath)),
@@ -77,9 +83,9 @@ public static class BundledSkillManager
         return new SkillSyncResult(root, "update", true, updated, finalEntries);
     }
 
-    internal static string LoadBundledSkill(string skillName)
+    internal static string LoadBundledFile(string file)
     {
-        var resourceName = $"RLoop.Core.Skills.{skillName}.SKILL.md";
+        var resourceName = $"RLoop.Core.Skills.{file.Replace('/', '.')}";
         using var stream = typeof(BundledSkillManager).Assembly.GetManifestResourceStream(resourceName)
             ?? throw new InvalidOperationException($"Bundled skill resource was not found: {resourceName}");
         using var reader = new StreamReader(stream, Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
@@ -87,7 +93,7 @@ public static class BundledSkillManager
     }
 
     internal static string SerializeLock(IReadOnlyDictionary<string, string> hashes) =>
-        JsonSerializer.Serialize(new BundledSkillLock(1, hashes), JsonOptions) + "\n";
+        JsonSerializer.Serialize(new BundledSkillLock(2, null, hashes), JsonOptions) + "\n";
 
     internal static string Hash(string content) => Convert.ToHexString(SHA256.HashData(
         Encoding.UTF8.GetBytes(NormalizeLineEndings(content))));
@@ -102,9 +108,14 @@ public static class BundledSkillManager
         try
         {
             var value = JsonSerializer.Deserialize<BundledSkillLock>(File.ReadAllText(path), JsonOptions);
-            if (value is null || value.SchemaVersion != 1)
+            if (value is null || value.SchemaVersion is not (1 or 2))
                 throw new JsonException("Unsupported or empty bundled skill lock.");
-            return new Dictionary<string, string>(value.Skills, StringComparer.Ordinal);
+            var hashes = value.SchemaVersion == 1
+                ? value.Skills?.ToDictionary(pair => pair.Key + "/SKILL.md", pair => pair.Value, StringComparer.Ordinal)
+                : value.Files;
+            if (hashes is null || hashes.Any(pair => string.IsNullOrWhiteSpace(pair.Value)))
+                throw new JsonException("Missing or invalid file hashes.");
+            return new Dictionary<string, string>(hashes, StringComparer.Ordinal);
         }
         catch (Exception ex) when (ex is JsonException or IOException or UnauthorizedAccessException)
         {
@@ -113,12 +124,14 @@ public static class BundledSkillManager
         }
     }
 
-    private sealed record BundledSkillLock(int SchemaVersion, IReadOnlyDictionary<string, string> Skills);
+    private sealed record BundledSkillLock(int SchemaVersion, IReadOnlyDictionary<string, string>? Skills,
+        IReadOnlyDictionary<string, string>? Files = null);
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
         PropertyNameCaseInsensitive = true,
+        DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull,
         WriteIndented = true
     };
 }

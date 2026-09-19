@@ -13,4 +13,7 @@
     <ProjectReference Include="../../src/RLoop.Core/RLoop.Core.csproj" />
     <ProjectReference Include="../../src/RLoop.ResoniteLink/RLoop.ResoniteLink.csproj" />
   </ItemGroup>
+  <ItemGroup>
+    <None Include="../../examples/uix-responsive.json" Link="examples/uix-responsive.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
 </Project>

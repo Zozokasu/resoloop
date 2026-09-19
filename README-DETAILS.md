@@ -59,7 +59,7 @@ release自動化とnuget.org Trusted Publishingの設定は[docs/RELEASING.md](d
 dotnet build ResoLoop.slnx
 dotnet test ResoLoop.slnx --no-build
 dotnet pack src/RLoop.Cli/RLoop.Cli.csproj -c Release -o artifacts
-dotnet tool install --global --add-source .\artifacts ResoLoop --version 0.1.0-preview.5
+dotnet tool update --global --add-source .\artifacts ResoLoop --version 0.1.0-preview.11
 ~~~
 
 開発中は次でも実行できます。
@@ -180,6 +180,8 @@ schema v1では、top-levelに `schemaVersion: "1"`、`ownership.key`、root `sl
 
 `inspect`、`slot`、`component`、`item audit`でもstable selectorを使用できます。例: `resoloop component inspect '$component:controller' --state .resoloop/state/item.json --json`。raw IDは接続単位、stable selectorはstateのpath、型、identity、reference topologyから現在のIDへ再解決されます。
 
+preview.10後のsourceではcheckpoint schema 2にSlot名の配列を保存し、`/`・`\`・前後空白を含む名前を保持します。厳密指定の例はPowerShell `resoloop slot inspect 'path:["Root","A/B"," Label "]' --json`です。同名兄弟は初回validationで拒否します。旧stateは次回保存時に移行しますが、旧版CLIはschema 2を読み込めません。宣言schemaは`"1"`のままです。UIXの参照切り替え、checkpoint競合、画像の市松模様の調査は[test14改善記録](docs/UIX-TEST14-FEEDBACK.md)を参照してください。
+
 include、parameter/variable、prototype/instance、repeat、asset、camera、assertionの仕様は[docs/DECLARATIVE.md](docs/DECLARATIVE.md)にまとめています。house fixtureは3ファイルへ分割し、22個のboxと4本のtable legをprototype化しました。展開結果69 Slot・148 Componentを維持したまま、宣言量は46,178 byteから42,430 byteへ8.1%減っています。
 
 `validate` は接続なしのschema・値形状・key・参照検査、`validate --strict` は接続先のruntime Reflectionを使ったComponent/member検査です。`plan` はworldを変更せずcreate/update/no-opを列挙します。既存rootを初めて管理対象へ取り込む場合、inspectとplanで完全一致対象を確認してから一度だけ `--adopt` を付けます。stateがある通常の再適用では不要です。
@@ -242,6 +244,7 @@ enumなどの非Component型はassembly名が必要な場合があります。`t
 skills/codexには次のworkflow Skillがあります。
 
 - resonite-build: 観測から編集・Reflection・検証・修正までの統合ループ
+- resonite-uix: 共有Assets、Layout、入力・状態保持、UIX階層移行と見た目の検証
 - resonite-debug: read-first診断
 - resonite-inspect: コンテキストを浪費しない観測
 - resonite-blender: Blenderの検出・背景Python制作・VR資源設計・mesh/UV/texture/materialのimport。[制作手順とCLI例](docs/BLENDER.md)
@@ -257,6 +260,8 @@ resoloop skills sync --update
 ~~~
 
 `resoloop init`はskill内容と配布hashを`.agents/skills/.resoloop-bundled.json`へ記録します。`skills sync --check`はread-onlyで差分を検査し、`--update`は現在内容が前回配布hashと一致する未編集skillだけを更新します。利用者編集またはlockのない未知内容は`SKILL_SYNC_CONFLICT`で全更新前に停止します。Codexはcurrent directoryからrepository rootまでの `.agents/skills/` を読み込むため、このskillsは対象project内でだけ利用されます。CLI commandはprimitive、Skillはworkflowです。
+
+同梱スキルはreferencesもfile単位でhash追跡します。lock schema 2の`files`へ移行し、schema 1の`skills`も読み込めます。referenceを利用者が編集した場合も全件preflightで保護し、欠損fileは復旧します。
 
 ## Tests
 

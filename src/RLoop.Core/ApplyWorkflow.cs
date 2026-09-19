@@ -96,7 +96,7 @@ public sealed record ApplyDocument(
         "schemaVersion", "ownership", "key", "slot", "parent", "name", "position", "rotation", "scale",
         "managedFields", "preserveWorldTransform", "runtimeRelocatable", "relocationTransform", "migrateFrom", "components", "children", "type", "fields",
         "initialFields", "identityFields", "assets", "cameras", "tests", "assertions", "probe", "arguments",
-        "method", "kind", "target", "value", "restore", "safe", "expected", "exists", "phase", "componentType",
+        "method", "kind", "target", "value", "values", "restore", "safe", "expected", "exists", "phase", "componentType",
         "count", "delta", "timeoutMs", "pollMs"
     ];
 }
@@ -107,7 +107,8 @@ public sealed record ApplyCompilationSummary(
     int Instances,
     int RepeatedNodes,
     int ExpandedNodes,
-    long ExpandedBytes);
+    long ExpandedBytes,
+    int ExpandedNodeLimit = 10_000);
 
 public sealed record ApplyAssetSpec(string Kind, string Source, IReadOnlyDictionary<string, JsonElement>? Options = null);
 
@@ -139,13 +140,14 @@ public sealed record ApplyAssertionSpec(
     int? Delta = null);
 
 public sealed record ApplyProbeSpec(
-    string Target,
+    string Target = "",
     string? Method = null,
     IReadOnlyDictionary<string, JsonElement>? Arguments = null,
     bool Safe = false,
     string Kind = "method",
     JsonElement? Value = null,
-    bool Restore = true);
+    bool Restore = true,
+    IReadOnlyDictionary<string, JsonElement>? Values = null);
 
 public sealed record ApplySlotSpec(
     string Name,
@@ -214,7 +216,8 @@ public static class ApplyDocumentValidator
         foreach (var asset in document.Assets ?? new Dictionary<string, ApplyAssetSpec>())
         {
             var path = "$.assets." + asset.Key;
-            if (string.IsNullOrWhiteSpace(asset.Value.Kind)) Issue("ASSET_KIND_MISSING", "Asset kind is required.", path + ".kind");
+            if (asset.Value is null) { Issue("ASSET_INVALID", "Asset must be an object with kind and source.", path); continue; }
+            if (string.IsNullOrWhiteSpace(asset.Value.Kind)) { Issue("ASSET_KIND_MISSING", "Asset kind is required.", path + ".kind"); continue; }
             if (string.IsNullOrWhiteSpace(asset.Value.Source)) { Issue("ASSET_SOURCE_MISSING", "Asset source is required.", path + ".source"); continue; }
             var hasAbsoluteUri = Uri.TryCreate(asset.Value.Source, UriKind.Absolute, out var uri);
             if (Path.IsPathFullyQualified(asset.Value.Source) || !hasAbsoluteUri || uri!.Scheme == Uri.UriSchemeFile)
@@ -273,8 +276,20 @@ public static class ApplyDocumentValidator
                     if (probe.Value is null) Issue("PROBE_VALUE_MISSING", "A set-member probe requires value.", path + ".probe.value");
                     if (!probe.Restore) Issue("PROBE_RESTORE_REQUIRED", "A set-member probe requires restore=true.", path + ".probe.restore");
                     break;
+                case "set-members":
+                    if (probe.Values is not { Count: > 0 and <= 32 })
+                        Issue("PROBE_VALUES_REQUIRED", "A set-members probe requires values with 1..32 member targets.", path + ".probe.values");
+                    foreach (var target in probe.Values?.Keys ?? [])
+                    {
+                        var body = target[(target.IndexOf(':') + 1)..];
+                        if (!(target.StartsWith("$member:", StringComparison.Ordinal) || target.StartsWith("$component:", StringComparison.Ordinal)) ||
+                            body.LastIndexOf('.') <= 0 || body.EndsWith('.'))
+                            Issue("PROBE_MEMBER_TARGET_REQUIRED", "Use $member:key.Member or $component:key.Member for every probe value.", path + ".probe.values");
+                    }
+                    if (!probe.Restore) Issue("PROBE_RESTORE_REQUIRED", "A set-members probe requires restore=true.", path + ".probe.restore");
+                    break;
                 default:
-                    Issue("PROBE_KIND_UNSUPPORTED", "Probe kind must be 'method' or 'set-member'.", path + ".probe.kind");
+                    Issue("PROBE_KIND_UNSUPPORTED", "Probe kind must be 'method', 'set-member', or 'set-members'.", path + ".probe.kind");
                     break;
             }
         }
@@ -312,6 +327,8 @@ public static class ApplyDocumentValidator
             IReadOnlyList<ApplyNodeSpec>? children, string path)
         {
             slots++;
+            foreach (var duplicate in (children ?? []).GroupBy(child => child.Slot.Name, StringComparer.Ordinal).Where(group => group.Count() > 1))
+                Issue("APPLY_SIBLING_NAME_DUPLICATE", $"Sibling name '{duplicate.Key}' is repeated. Stable keys do not disambiguate names after reconnect; choose distinct sibling names before creating the tree.", path + ".children");
             if (string.IsNullOrWhiteSpace(slot.Name)) Issue("APPLY_SLOT_NAME_MISSING", "Every slot requires a non-empty name.", path + ".slot.name");
             if (slot.Position is { Length: not 3 }) Issue("APPLY_VECTOR_INVALID", "position requires exactly 3 numbers.", path + ".slot.position");
             if (slot.Rotation is { Length: not 4 }) Issue("APPLY_QUATERNION_INVALID", "rotation requires exactly 4 numbers.", path + ".slot.rotation");
@@ -586,7 +603,7 @@ public static class ApplyDocumentValidator
     }
 }
 
-internal sealed record ApplyStateSlot(string Id, string Path, bool RuntimeRelocatable = false);
+internal sealed record ApplyStateSlot(string Id, string Path, bool RuntimeRelocatable = false, IReadOnlyList<string>? PathSegments = null);
 internal sealed record ApplyStateComponent(string Id, string SlotKey, string Type, int TypeOrdinal,
     int? ComponentIndex = null, IReadOnlyList<string>? MemberNames = null,
     IReadOnlyDictionary<string, string>? IdentityValues = null,
@@ -595,7 +612,7 @@ internal sealed record ApplyStateAsset(string Kind, string SourceHash, string Ur
 
 internal sealed class ApplyState
 {
-    public int SchemaVersion { get; set; } = 1;
+    public int SchemaVersion { get; set; } = 2;
     public string OwnershipKey { get; set; } = string.Empty;
     public string? SessionId { get; set; }
     public Dictionary<string, ApplyStateSlot> Slots { get; set; } = new(StringComparer.Ordinal);
@@ -617,20 +634,22 @@ internal static class ApplyStateStore
 
     public static ApplyState Load(string path, string ownershipKey)
     {
-        if (!File.Exists(path)) return new ApplyState { OwnershipKey = ownershipKey };
         try
         {
-            var state = JsonSerializer.Deserialize<ApplyState>(File.ReadAllText(path), Options)
+            var state = JsonSerializer.Deserialize<ApplyState>(CheckpointFiles.Read(path), Options)
                         ?? throw new JsonException("State was empty.");
-            if (state.SchemaVersion != 1)
+            if (state.SchemaVersion is not (1 or 2))
                 throw new RLoopException("APPLY_STATE_VERSION_UNSUPPORTED", $"State file '{path}' has unsupported schemaVersion {state.SchemaVersion}.", ExitCodes.ValidationFailed);
             if (!state.OwnershipKey.Equals(ownershipKey, StringComparison.Ordinal))
                 throw new RLoopException("APPLY_STATE_OWNERSHIP_MISMATCH", $"State file '{path}' belongs to '{state.OwnershipKey}', not '{ownershipKey}'.", ExitCodes.ValidationFailed);
             state.Slots = new Dictionary<string, ApplyStateSlot>(state.Slots, StringComparer.Ordinal);
             state.Components = new Dictionary<string, ApplyStateComponent>(state.Components, StringComparer.Ordinal);
             state.Assets = new Dictionary<string, ApplyStateAsset>(state.Assets ?? [], StringComparer.Ordinal);
+            state.SchemaVersion = 2;
             return state;
         }
+        catch (FileNotFoundException) { return new ApplyState { OwnershipKey = ownershipKey }; }
+        catch (DirectoryNotFoundException) { return new ApplyState { OwnershipKey = ownershipKey }; }
         catch (RLoopException) { throw; }
         catch (Exception ex) when (ex is IOException or JsonException or UnauthorizedAccessException)
         {
@@ -643,11 +662,7 @@ internal static class ApplyStateStore
     {
         try
         {
-            var directory = Path.GetDirectoryName(path)!;
-            Directory.CreateDirectory(directory);
-            var temporary = path + ".tmp";
-            File.WriteAllText(temporary, JsonSerializer.Serialize(state, Options) + "\n", new UTF8Encoding(false));
-            File.Move(temporary, path, true);
+            CheckpointFiles.Write(path, JsonSerializer.Serialize(state, Options) + "\n");
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {

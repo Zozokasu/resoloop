@@ -2,6 +2,19 @@
 
 このロードマップは、小さな家ワールドとブロック崩しを `resoloop apply` / Flux deployで実際に構築した結果を基準にしています。優先順位は、差分の収束、安全に再実行できること、結果を自動検証できること、反復時の観測量、表現力の順です。
 
+## 2026-09-14 UIXテスト13の改善計画
+
+詳細と証拠は [UIX-FEEDBACK.md](UIX-FEEDBACK.md) を参照。スキル配布とP0修正、以下のP1基盤をsource treeへ実装した。パッケージ公開は未実施。
+
+- [x] UIX専用スキルに、保存単位の共有Assets、LayoutElement / UseZeroMetrics、ContentSizeFitter、IgnoreLayout、押下とLayoutの分離、入力・状態保持、スクロール端の検証を収録する。referencesも配布・hash同期する。
+- [x] 新旧Component keyの再利用とpruneの衝突を最小fixtureで再現し、IDの二重割当・現役ID削除をmutation前に防ぐ。
+- [x] Imageの親変更後の描画消失を専用live fixtureで再現し、親RectTransform/Layoutの準備後に移動するapply順序へ修正する。ID維持・再apply0・中断再開を確認する。
+- [x] 一つのownershipでincludeを使えるよう、展開JSON node数の明示上限設定・境界検査・時間/割当量計測を追加する。
+- [x] boundedな`uix audit`と、複数fieldの退避・復元を行う`set-members` probe、共有Assets/幅/長文/スクロール末尾のliveサンプルを追加する。
+- [ ] Text/Maskを含む階層移行、入力・選択状態の保持、実クリック・キーボードを含む代表controlの検証を拡充する。
+- [ ] 複数apply manifestの依存state＋exported stable keyによる共有provider参照を追加する。
+- [ ] 部品の依存抽出、区切り文字を含むSlot名、フォント取り込みを改善し、単体保存と複数ユーザーの確認へ進む。
+
 ## 2026-09-06 シューティングレンジ制作フィードバック
 
 - [x] Flux bindingで`int` / `int32` / `System.Int32`、`bool` / `System.Boolean`などのscalar aliasを同値として扱う。
@@ -58,7 +71,7 @@ ResoniteLink 0.13.1の`ComponentDefinition` / update modelはUIX Buttonの`Press
 
 ### P1: scene/UIX/item lintとverification coverage
 
-- [ ] `UIX_GRAPHIC_CONFLICT`としてImage/Textなど競合Graphicの同一Slot配置を検出する。
+- [x] `uix audit`で`UIX_GRAPHIC_CONFLICT`として有効なImage/Textの同一Slot配置を検出する。
 - [ ] world-space UIXの最背面Imageについて、UI Unlitの`ZWrite=On`、`OffsetFactor=1`、`OffsetUnits=100`を検査する。
 - [ ] runtime driver、DynamicVariable、Flux outputが更新するfieldを通常`fields`でも管理している場合に警告する。
 - [ ] redundant double-sided、coplanar renderer、interaction collider遮蔽、zero-size/unreferenced collider、InteractiveCameraのlocal Z+遮蔽をlintする。

@@ -3,6 +3,7 @@ using RLoop.ResoniteLink;
 
 namespace RLoop.IntegrationTests;
 
+[Collection("Screenshot exports")]
 public sealed class CaptureIntegrationTests
 {
     [Fact]

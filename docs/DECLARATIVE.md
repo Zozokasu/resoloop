@@ -1,6 +1,6 @@
 # resoloop schema v1 authoring
 
-`resoloop`は複数のJSON sourceを展開してから、schema v1として一括検証します。展開は接続なしで行われ、循環include、未解決parameter、stable key衝突、10,000 node／10 MiB／64 source fileの上限違反をmutation前に拒否します。
+`resoloop`は複数のJSON sourceを展開してから、schema v1として一括検証します。展開は接続なしで行われ、循環include、未解決parameter、stable key衝突、既定10,000 JSON node／10 MiB／64 source fileの上限違反をmutation前に拒否します。JSON node数にはfieldやvalueも含まれ、Slot数ではありません。include先も同じ予算へ合算します。大きな単一ownershipにはrootで `"limits": { "expandedNodes": 20000 }` を指定できます（整数1〜250000）。byte数・file数の上限は変わりません。compilation結果には展開node数・設定上限・byte数を返します。上限を増やしてもruntime側の処理時間や快適な規模を保証しません。
 
 ## Include、parameter、prototype、repeat
 
@@ -146,6 +146,23 @@ resoloop test content/main.json --probe --yes --json
 
 `set-member`はfieldだけを対象とし、変更中にafter assertionをpollした後、成功・失敗・cancelのいずれでも元の値を復元して再読取確認します。`restore: false` は拒否されます。従来のmethod probeは `kind` 省略時の既定値です。
 
+幅と長文など複数条件を一緒に試す場合は `set-members` を使います。
+
+```json
+{
+  "probe": {
+    "kind": "set-members", "safe": true, "restore": true,
+    "values": {
+      "$member:canvas.Size": [320, 240],
+      "$member:label.Content": "A longer paragraph for the narrow layout."
+    }
+  },
+  "assertions": [{ "target": "$member:canvas.Size", "expected": [320, 240], "phase": "after" }]
+}
+```
+
+`values`は1〜32個のComponent fieldを指定し、全対象の存在・型変換・重複を事前検証します。値の退避後に順番に書き込み、失敗・cancel時も書き込みを試みたfieldを逆順に復元し再読取します。一つの復元失敗で残りを中断せず、復元不能なselectorを `PROBE_RESTORE_FAILED` の `targets` に返します。atomicなtransactionではなく、他ユーザーが同時編集するfieldで実行しないでください。通常と同じ `test --probe --yes` が必要です。これはfield検証であり、文字折返し・スクロール末尾・実クリックは別途captureや実操作で確認します。[UIXサンプル](../examples/uix-responsive.json)を参照。
+
 assertionはmember値に加え、`$component:key`の存在と`kind: "child-count"`を扱えます。child-countには`name`、`componentType`、固定`count`、またはprobe前からの`delta`を指定できます。`assertions`欠落は`APPLY_TEST_ASSERTIONS_MISSING`です。未知propertyは黙って無視せず、たとえば`argumnts`には`arguments`をsuggestします。
 
 ## Diff、rename、prune、recovery
@@ -160,6 +177,12 @@ resoloop apply content/main.json --prune --yes --json
 `diff`はcreate/update/rename/delete/no-op、理由、list要素のadded/removedを返し、worldを変更しません。JSONの `changes` にはno-op以外が常に入り、`--changes-only` / `--creates-only` / `--deletes-only` / `--summary` は `operations` の表示だけを絞ります。SyncObject listは子memberを構造値へ正規化して比較します。renameはstable keyで同一Slotを追跡してnameを更新します。delete候補はstateに記録されたownership root内の対象だけです。通常applyは削除しません。`--prune --yes`では、staleな親Slotがある場合は配下のSlot / Componentを個別削除せず、最上位のstale親Slotを1回削除して対応するstateをまとめてcheckpointします。親に含まれないstale Componentだけは個別に削除します。
 
 ResoniteLinkのoperationはtransactionではありません。結果は常に `atomic: false` とcheckpoint pathを含む復旧手順を返します。途中失敗後は原因を直し、同じapplyを再実行して収束させます。
+
+checkpoint schema 2はSlotのexact name segmentsを保存します。`resoloop slot inspect 'path:["Root","A/B"," Label "]' --json`のように指定すると名前内の区切り文字や前後空白を保持できます。通常のslash pathは階層の区切りとして解釈します。schema 1のstateは読込可能で次の保存時に移行しますが、失われた曖昧な名前情報は復元しません。宣言のschemaVersionは`"1"`のままです。同名兄弟はkeyが異なってもvalidationで拒否します。
+
+同じ表示名でも新keyは新roleとして作成し、旧roleのprune対象とは別IDにします。live/stale keyの同一Slot所有は`APPLY_SLOT_OWNERSHIP_CONFLICT`で変更前に停止します。Component/Slotのライフサイクル変更後はsymbolic referenceを読み戻して1回修復し、なお保持されない場合は`APPLY_REFERENCE_NOT_RETAINED`を返します。旧driverがtargetを占有する場合は明示pruneの計画を確認してください。自動でpruneを有効化することはありません。
+
+同じcheckpointへのapplyはwriter lockで直列化し、競合は`APPLY_STATE_BUSY`としてworld変更前に停止します。readerは置換可能な完全snapshotを読みます。ロックファイルの存在だけでは実行中と判断せず、使用中のロックを削除して迂回しないでください。別stateが同じworld objectへ書く競合や、観測中のworld全体の一貫性を保証する仕組みではありません。
 
 ## Flux module manifest
 

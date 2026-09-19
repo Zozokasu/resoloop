@@ -15,7 +15,7 @@ public sealed class WorldService(IResoniteClient client, string? generatedConten
             throw new RLoopException("SLOT_SELECTOR_MISSING", "A Slot ID or path is required.", ExitCodes.InvalidArguments);
         if (selector.Equals("Root", StringComparison.OrdinalIgnoreCase) || selector is "/" or "/Root") return "Root";
 
-        if (!selector.Contains('/') && !selector.StartsWith("Root", StringComparison.OrdinalIgnoreCase))
+        if (!selector.StartsWith("path:", StringComparison.Ordinal) && !selector.Contains('/') && !selector.StartsWith("Root", StringComparison.OrdinalIgnoreCase))
         {
             try { return (await client.GetSlotAsync(selector, 0, false, cancellationToken)).Id; }
             catch (RLoopException ex) when (ex.Code is "SLOT_NOT_FOUND" or "RESONITE_OPERATION_FAILED")
@@ -31,8 +31,7 @@ public sealed class WorldService(IResoniteClient client, string? generatedConten
             }
         }
 
-        var parts = selector.Replace('\\', '/').Split('/', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
-        if (parts.Count > 0 && parts[0].Equals("Root", StringComparison.OrdinalIgnoreCase)) parts.RemoveAt(0);
+        var parts = SlotPaths.ParseSelector(selector).Skip(1);
         var currentId = "Root";
         var currentPath = "Root";
         foreach (var part in parts)
@@ -179,7 +178,7 @@ public sealed class WorldService(IResoniteClient client, string? generatedConten
                 try { id = (await client.GetSlotAsync(stable.Id, 0, false, cancellationToken)).Id; }
                 catch (RLoopException ex) when (ex.Code is "SLOT_NOT_FOUND" or "RESONITE_OPERATION_FAILED")
                 {
-                    try { id = await ResolveSlotIdAsync(stable.Path, cancellationToken); }
+                    try { id = await ResolveSlotIdAsync(SlotPaths.Selector(stable.Path, stable.PathSegments), cancellationToken); }
                     catch (RLoopException pathError) when (stable.RuntimeRelocatable &&
                         pathError.Code is "SLOT_NOT_FOUND" or "SLOT_PATH_NOT_FOUND")
                     { id = (await ResolveRelocatableSlotAsync(stateFile, stable, cancellationToken)).Id; }
@@ -189,7 +188,7 @@ public sealed class WorldService(IResoniteClient client, string? generatedConten
             {
                 id = stable.RuntimeRelocatable
                     ? (await ResolveRelocatableSlotAsync(stateFile, stable, cancellationToken)).Id
-                    : await ResolveSlotIdAsync(stable.Path, cancellationToken);
+                    : await ResolveSlotIdAsync(SlotPaths.Selector(stable.Path, stable.PathSegments), cancellationToken);
             }
             return new ResolvedWorldReference(selector, id, "slot", "[FrooxEngine]FrooxEngine.Slot", stable.Path);
         }
@@ -274,7 +273,7 @@ public sealed class WorldService(IResoniteClient client, string? generatedConten
                 $"Runtime-relocatable Slot '{stable.Key}' has no managed Component evidence for a safe world-wide search.",
                 ExitCodes.ValidationFailed, suggestions:
                 ["Declare at least one keyed Component on the runtimeRelocatable Slot and apply it before moving the item."]);
-        var name = NormalizePath(stable.Path).Split('/', StringSplitOptions.RemoveEmptyEntries).LastOrDefault() ?? string.Empty;
+        var name = (stable.PathSegments ?? SlotPaths.LegacySegments(stable.Path)).LastOrDefault() ?? string.Empty;
         var world = AddPaths(await client.GetSlotAsync("Root", 64, true, cancellationToken), "Root");
         var candidates = new List<SlotInfo>();
         Visit(world, "Root", slot =>
@@ -373,6 +372,7 @@ public sealed class WorldService(IResoniteClient client, string? generatedConten
     {
         options ??= new ApplyOptions();
         var stopwatch = Stopwatch.StartNew();
+        using var writer = CheckpointFiles.AcquireWriter(ApplyStateStore.ResolvePath(document, options.StateFile));
         if (client is IResoniteClientDiagnostics diagnostics) diagnostics.ResetMetrics();
         options.Progress?.Invoke(new ApplyProgress("validate", 0, 1, document.SourcePath, "Validating and planning before mutation."));
         var prepared = await PrepareAsync(document, options, cancellationToken);
@@ -380,6 +380,7 @@ public sealed class WorldService(IResoniteClient client, string? generatedConten
             throw new RLoopException("CONFIRMATION_REQUIRED", "apply --prune is destructive and requires --yes.", ExitCodes.ValidationFailed,
                 new Dictionary<string, object?> { ["deleteCandidates"] = prepared.Deletions.Count, ["stateFile"] = prepared.StatePath });
         var counts = new ApplyCounts();
+        var updatedComponents = new HashSet<string>(StringComparer.Ordinal);
         var completed = 0;
         var total = prepared.Nodes.Count + prepared.Components.Count * 2;
         try
@@ -397,16 +398,21 @@ public sealed class WorldService(IResoniteClient client, string? generatedConten
                     prepared.Assets.Count, "$assets/" + asset.Key, asset.Action == "create" ? "imported asset" : "reused asset"));
             }
             var assetUrls = prepared.Assets.ToDictionary(x => x.Key, x => x.Url!, StringComparer.Ordinal);
+            foreach (var existingNode in prepared.Nodes.Where(node => node.Existing is not null))
+                existingNode.Id = existingNode.Existing!.Id;
             foreach (var node in prepared.Nodes)
             {
                 cancellationToken.ThrowIfCancellationRequested();
+                // UIX children must not be reparented into an empty Slot before its RectTransform
+                // and layout are attached. Keep the old checkpoint path until relocation commits.
+                if (node.SlotAction == "relocate") continue;
                 var parentId = node.Parent?.Id ?? prepared.ParentId;
                 switch (node.SlotAction)
                 {
                     case "create":
                         // Persist intent before the remote mutation. If the response is lost after Resonite
                         // creates the Slot, the next run can bind the exact pending path without duplicating it.
-                        prepared.State.Slots[node.StableKey] = new ApplyStateSlot(string.Empty, node.Path, node.Spec.RuntimeRelocatable);
+                        prepared.State.Slots[node.StableKey] = new ApplyStateSlot(string.Empty, node.Path, node.Spec.RuntimeRelocatable, node.PathSegments);
                         Checkpoint(prepared);
                         node.Id = await client.CreateSlotAsync(new SlotCreateRequest(parentId, node.Spec.Name,
                             node.Spec.Position?.ToVector3("position"), node.Spec.Rotation?.ToQuaternion("rotation"),
@@ -414,7 +420,6 @@ public sealed class WorldService(IResoniteClient client, string? generatedConten
                         counts.SlotsCreated++;
                         break;
                     case "update":
-                    case "relocate":
                         node.Id = node.Existing!.Id;
                         await client.UpdateSlotAsync(CreateSlotUpdate(node, prepared.ParentId), cancellationToken);
                         counts.SlotsUpdated++;
@@ -424,7 +429,7 @@ public sealed class WorldService(IResoniteClient client, string? generatedConten
                         counts.SlotsUnchanged++;
                         break;
                 }
-                prepared.State.Slots[node.StableKey] = new ApplyStateSlot(node.Id, node.Path, node.Spec.RuntimeRelocatable);
+                prepared.State.Slots[node.StableKey] = new ApplyStateSlot(node.Id, node.Path, node.Spec.RuntimeRelocatable, node.PathSegments);
                 Checkpoint(prepared);
                 completed++;
                 options.Progress?.Invoke(new ApplyProgress("slots", completed, total, node.Path, $"{node.SlotAction} Slot"));
@@ -478,7 +483,7 @@ public sealed class WorldService(IResoniteClient client, string? generatedConten
                 if (changed.Count > 0)
                 {
                     await client.SetComponentMembersAsync(component.Id!, component.ResolvedType ?? component.Spec.Type, changed, cancellationToken);
-                    if (component.Existing is not null) counts.ComponentsUpdated++;
+                    if (component.Existing is not null) { counts.ComponentsUpdated++; updatedComponents.Add(component.Id!); }
                 }
                 else if (component.Existing is not null)
                 {
@@ -495,6 +500,19 @@ public sealed class WorldService(IResoniteClient client, string? generatedConten
                 completed++;
                 options.Progress?.Invoke(new ApplyProgress("fields", completed, total, component.Path,
                     changed.Count == 0 ? "no field changes" : $"updated {changed.Count} field(s)"));
+            }
+
+            // All new parents and their field/reference configuration now exist. Preserve the
+            // parent-first relocation order, local/world transform policy, and existing Slot IDs.
+            foreach (var node in prepared.Nodes.Where(node => node.SlotAction == "relocate"))
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                await client.UpdateSlotAsync(CreateSlotUpdate(node, prepared.ParentId), cancellationToken);
+                counts.SlotsUpdated++;
+                prepared.State.Slots[node.StableKey] = new ApplyStateSlot(node.Id!, node.Path, node.Spec.RuntimeRelocatable, node.PathSegments);
+                Checkpoint(prepared);
+                completed++;
+                options.Progress?.Invoke(new ApplyProgress("slots", completed, total, node.Path, "relocated Slot after parent preparation"));
             }
 
             if (options.Prune)
@@ -524,6 +542,37 @@ public sealed class WorldService(IResoniteClient client, string? generatedConten
                     options.Progress?.Invoke(new ApplyProgress("prune", counts.ComponentsDeleted + counts.SlotsDeleted,
                         prepared.Deletions.Count, deletion.Path, "deleted owned Slot"));
                 }
+            }
+            // An old driver can reject a replacement's reference while it still owns the field.
+            // Reconcile after removals, and never report success for a connection the runtime dropped.
+            if (counts.ComponentsAdded + counts.ComponentsUpdated + counts.ComponentsDeleted + counts.SlotsUpdated + counts.SlotsDeleted > 0)
+            foreach (var component in prepared.Components)
+            {
+                var desired = component.Existing is null ? MergeCreateFields(component.Spec) : component.Spec.Fields;
+                var referenceFields = (desired ?? new Dictionary<string, JsonElement>())
+                    .Where(field => ContainsWorldReference(field.Value)).ToDictionary(pair => pair.Key, pair => pair.Value);
+                if (referenceFields.Count == 0) continue;
+                var fields = await ResolveFieldsAsync(referenceFields, byKey, slotsByKey, assetUrls, cancellationToken);
+                var current = await client.GetComponentAsync(component.Id!, cancellationToken);
+                var missing = fields.Where(field => !current.Members.TryGetValue(field.Key, out var observed) ||
+                    !MemberMatchesRaw(observed, field.Value)).ToDictionary(pair => pair.Key, pair => pair.Value);
+                if (missing.Count == 0) continue;
+                await client.SetComponentMembersAsync(component.Id!, component.ResolvedType ?? component.Spec.Type, missing, cancellationToken);
+                if (component.Existing is not null && updatedComponents.Add(component.Id!))
+                {
+                    counts.ComponentsUpdated++;
+                    counts.ComponentsUnchanged--;
+                }
+                current = await client.GetComponentAsync(component.Id!, cancellationToken);
+                var rejected = missing.Where(field => !current.Members.TryGetValue(field.Key, out var observed) ||
+                    !MemberMatchesRaw(observed, field.Value)).Select(field => field.Key).ToArray();
+                if (rejected.Length > 0)
+                    throw new RLoopException("APPLY_REFERENCE_NOT_RETAINED", "The runtime did not retain declared references after reconciliation. Inspect competing drivers and the saved checkpoint.",
+                        ExitCodes.OperationFailed, new Dictionary<string, object?> { ["stateFile"] = prepared.StatePath,
+                            ["componentKey"] = component.StableKey, ["componentId"] = component.Id, ["members"] = rejected },
+                        ["Inspect the exact targets and any obsolete field owner. If deletion is needed, review diff --deletes-only and use apply --prune --yes; no implicit pruning occurs."]);
+                Checkpoint(prepared);
+                options.Progress?.Invoke(new ApplyProgress("references", completed, total, component.Path, "reconciled references after removals"));
             }
         }
         catch (OperationCanceledException ex)
@@ -627,7 +676,8 @@ public sealed class WorldService(IResoniteClient client, string? generatedConten
                     else
                     {
                         var key = SymbolKey(probe.Target);
-                        if (!byKey.TryGetValue(key, out var target) || target.Existing is null)
+                        byKey.TryGetValue(key, out var target);
+                        if (!string.Equals(probe.Kind, "set-members", StringComparison.OrdinalIgnoreCase) && target?.Existing is null)
                             throw UnknownApplyReference(probe.Target, byKey.Keys);
                         switch (probe.Kind?.ToLowerInvariant())
                         {
@@ -635,7 +685,7 @@ public sealed class WorldService(IResoniteClient client, string? generatedConten
                             {
                                 if (string.IsNullOrWhiteSpace(probe.Method))
                                     throw new RLoopException("PROBE_METHOD_MISSING", $"Test '{test.Name}' method probe requires method.", ExitCodes.ValidationFailed);
-                                var definition = await client.DescribeComponentTypeAsync(target.Existing.Type, cancellationToken);
+                                var definition = await client.DescribeComponentTypeAsync(target!.Existing!.Type, cancellationToken);
                                 if (definition.Methods?.Any(x => x.Name == probe.Method && !x.IsStatic) != true)
                                 {
                                     structuralOnly = true;
@@ -652,40 +702,62 @@ public sealed class WorldService(IResoniteClient client, string? generatedConten
                                 break;
                             }
                             case "set-member":
+                            case "set-members":
                             {
                                 if (!probe.Restore)
                                     throw new RLoopException("PROBE_RESTORE_REQUIRED", $"Test '{test.Name}' set-member probe requires restore=true.", ExitCodes.ValidationFailed);
-                                if (probe.Value is not { } value)
-                                    throw new RLoopException("PROBE_VALUE_MISSING", $"Test '{test.Name}' set-member probe requires value.", ExitCodes.ValidationFailed);
-                                var selector = probe.Target[(probe.Target.IndexOf(':') + 1)..];
-                                var separator = selector.LastIndexOf('.');
-                                if (separator <= 0)
-                                    throw new RLoopException("PROBE_MEMBER_TARGET_REQUIRED",
-                                        $"Test '{test.Name}' set-member target must use $component:key.MemberName or $member:key.MemberName.", ExitCodes.ValidationFailed);
-                                var memberName = selector[(separator + 1)..];
-                                var current = await client.GetComponentAsync(target.Existing.Id, cancellationToken);
-                                if (!current.Members.TryGetValue(memberName, out var original))
-                                    throw new RLoopException("PROBE_MEMBER_NOT_FOUND", $"Probe member '{probe.Target}' was not found.", ExitCodes.NotFound);
-                                if (original.Kind != "field")
-                                    throw new RLoopException("PROBE_MEMBER_KIND_UNSUPPORTED",
-                                        $"Transactional probes currently support field members; '{probe.Target}' is '{original.Kind}'.", ExitCodes.ValidationFailed);
-                                var originalRaw = MemberRaw(original);
-                                var temporaryRaw = await ResolveValueAsync(value, byKey, slotsByKey, assetUrls, cancellationToken);
+                                var values = probe.Kind.Equals("set-members", StringComparison.OrdinalIgnoreCase)
+                                    ? probe.Values! : new Dictionary<string, JsonElement> { [probe.Target] = probe.Value!.Value };
+                                var changes = new List<(string Selector, string Id, string Member, string Original, string Temporary)>();
+                                foreach (var pair in values)
+                                {
+                                    var selector = pair.Key[(pair.Key.IndexOf(':') + 1)..];
+                                    var separator = selector.LastIndexOf('.');
+                                    if (!byKey.TryGetValue(selector[..separator], out var currentTarget) || currentTarget.Existing is null)
+                                        throw UnknownApplyReference(pair.Key, byKey.Keys);
+                                    var memberName = selector[(separator + 1)..];
+                                    var current = await client.GetComponentAsync(currentTarget.Existing.Id, cancellationToken);
+                                    if (!current.Members.TryGetValue(memberName, out var original))
+                                        throw new RLoopException("PROBE_MEMBER_NOT_FOUND", $"Probe member '{pair.Key}' was not found.", ExitCodes.NotFound);
+                                    if (original.Kind != "field")
+                                        throw new RLoopException("PROBE_MEMBER_KIND_UNSUPPORTED", $"Transactional probes support field members; '{pair.Key}' is '{original.Kind}'.", ExitCodes.ValidationFailed);
+                                    if (changes.Any(change => change.Id == current.Id && change.Member == memberName))
+                                        throw new RLoopException("PROBE_DUPLICATE_TARGET", "Probe aliases refer to the same member.", ExitCodes.ValidationFailed);
+                                    var temporary = await ResolveValueAsync(pair.Value, byKey, slotsByKey, assetUrls, cancellationToken);
+                                    await client.ValidateComponentMemberAsync(current.Type, memberName, temporary, cancellationToken);
+                                    changes.Add((pair.Key, current.Id, memberName, MemberRaw(original), temporary));
+                                }
+                                var attempted = 0;
                                 restoreProbe = async () =>
                                 {
-                                    await client.SetComponentMemberAsync(target.Existing.Id, memberName, originalRaw, CancellationToken.None);
-                                    var restored = await client.GetComponentAsync(target.Existing.Id, CancellationToken.None);
-                                    if (!restored.Members.TryGetValue(memberName, out var restoredMember) || !MemberMatchesRaw(restoredMember, originalRaw))
-                                        throw new RLoopException("PROBE_RESTORE_FAILED", $"Probe member '{probe.Target}' could not be restored.", ExitCodes.OperationFailed);
+                                    var failures = new List<string>();
+                                    foreach (var change in changes.Take(attempted).Reverse())
+                                    {
+                                        try
+                                        {
+                                            await client.SetComponentMemberAsync(change.Id, change.Member, change.Original, CancellationToken.None);
+                                            var restored = await client.GetComponentAsync(change.Id, CancellationToken.None);
+                                            if (!restored.Members.TryGetValue(change.Member, out var actual) || !MemberMatchesRaw(actual, change.Original))
+                                                failures.Add(change.Selector);
+                                        }
+                                        catch (Exception) { failures.Add(change.Selector); }
+                                    }
+                                    if (failures.Count > 0)
+                                        throw new RLoopException("PROBE_RESTORE_FAILED", "One or more temporary probe values could not be restored.", ExitCodes.OperationFailed,
+                                            new Dictionary<string, object?> { ["targets"] = failures });
                                 };
-                                await client.SetComponentMemberAsync(target.Existing.Id, memberName, temporaryRaw, cancellationToken);
+                                foreach (var change in changes)
+                                {
+                                    attempted++;
+                                    await client.SetComponentMemberAsync(change.Id, change.Member, change.Temporary, cancellationToken);
+                                }
                                 probeExecuted = true;
                                 capability = "Transactional field probe executed; after assertions were polled and the original value was restored.";
                                 break;
                             }
                             default:
                                 throw new RLoopException("PROBE_KIND_UNSUPPORTED", $"Probe kind '{probe.Kind}' is not supported.", ExitCodes.ValidationFailed,
-                                    suggestions: ["Use kind 'method' or 'set-member'."]);
+                                    suggestions: ["Use kind 'method', 'set-member', or 'set-members'."]);
                         }
                     }
                 }
@@ -826,9 +898,10 @@ public sealed class WorldService(IResoniteClient client, string? generatedConten
         var migrations = ApplyStateMigrations(document, state);
         var parentSelector = string.IsNullOrWhiteSpace(document.Slot!.Parent) ? "Root" : document.Slot.Parent;
         var parentId = await ResolveSlotIdAsync(parentSelector, cancellationToken);
-        var stateDepth = state.Slots.Values.Select(x => x.Path.Count(ch => ch == '/')).DefaultIfEmpty(0).Max();
+        var stateDepth = state.Slots.Values.Select(x => x.PathSegments?.Count - 1 ?? x.Path.Count(ch => ch == '/')).DefaultIfEmpty(0).Max();
         var parent = await client.GetSlotAsync(parentId, Math.Clamp(Math.Max(MaxDepth(document.Children) + 1, stateDepth), 0, 64), true, cancellationToken);
         var parentPath = await ObserveAbsolutePathAsync(parent, cancellationToken);
+        var parentSegments = await ObserveAbsoluteSegmentsAsync(parent, cancellationToken);
         var snapshots = new List<(SlotInfo Slot, string Path)> { (parent, parentPath) };
         var rootKey = document.Slot!.Key!;
         if (state.Slots.TryGetValue(rootKey, out var rootState) && !ContainsSlot(parent, rootState.Id))
@@ -836,7 +909,7 @@ public sealed class WorldService(IResoniteClient client, string? generatedConten
             if (rootState.RuntimeRelocatable && !sameSession)
             {
                 var stable = new StableSlotReference(rootKey, rootState.Id, rootState.Path, state.SessionId,
-                    state.OwnershipKey, true);
+                    state.OwnershipKey, true, rootState.PathSegments);
                 var relocated = await ResolveRelocatableSlotAsync(statePath, stable, cancellationToken);
                 state.Slots[rootKey] = rootState = rootState with { Id = relocated.Id };
                 snapshots.Add((relocated, relocated.Path ?? rootState.Path));
@@ -845,7 +918,7 @@ public sealed class WorldService(IResoniteClient client, string? generatedConten
             try
             {
                 var oldRootId = sameSession && !string.IsNullOrWhiteSpace(rootState.Id)
-                    ? rootState.Id : await ResolveSlotIdAsync(rootState.Path, cancellationToken);
+                    ? rootState.Id : await ResolveSlotIdAsync(SlotPaths.Selector(rootState.Path, rootState.PathSegments), cancellationToken);
                 snapshots.Add((await client.GetSlotAsync(oldRootId, Math.Clamp(stateDepth, 0, 64), true, cancellationToken), rootState.Path));
             }
             catch (RLoopException ex) when (ex.Code is "SLOT_NOT_FOUND" or "SLOT_PATH_NOT_FOUND" or "RESONITE_OPERATION_FAILED")
@@ -853,7 +926,7 @@ public sealed class WorldService(IResoniteClient client, string? generatedConten
                 if (rootState.RuntimeRelocatable)
                 {
                     var stable = new StableSlotReference(rootKey, rootState.Id, rootState.Path, state.SessionId,
-                        state.OwnershipKey, true);
+                        state.OwnershipKey, true, rootState.PathSegments);
                     var relocated = await ResolveRelocatableSlotAsync(statePath, stable, cancellationToken);
                     state.Slots[rootKey] = rootState = rootState with { Id = relocated.Id };
                     snapshots.Add((relocated, relocated.Path ?? rootState.Path));
@@ -861,13 +934,15 @@ public sealed class WorldService(IResoniteClient client, string? generatedConten
             }
         }
         var prepared = new PreparedApply(document, options, state, statePath, session, parentId, sameSession, snapshots,
-            migrations.Slots, migrations.Components);
+            migrations.Slots, migrations.Components, parentSegments);
         var rootSpec = new ApplyNodeSpec(document.Slot, document.Components, document.Children);
         BuildNode(prepared, rootSpec, null, parent, parentPath, true);
         await PrepareRelocationTransformsAsync(prepared, parentPath, cancellationToken);
         BuildAssetPlans(prepared);
         BuildComponentPlans(prepared);
         BuildDeletionPlans(prepared);
+        ValidateSlotOwnership(prepared);
+        ValidateComponentOwnership(prepared);
         var resolvedTypes = prepared.Components.Where(x => x.Existing is not null)
             .GroupBy(x => x.Spec.Type, StringComparer.Ordinal)
             .ToDictionary(group => group.Key, group => group.First().Existing!.Type, StringComparer.Ordinal);
@@ -882,7 +957,8 @@ public sealed class WorldService(IResoniteClient client, string? generatedConten
         var path = parentPath.TrimEnd('/') + "/" + spec.Slot.Name;
         var stableKey = spec.Slot.Key ?? "$path:" + path;
         prepared.State.Slots.TryGetValue(stableKey, out var stateSlot);
-        var existing = MatchSlot(parentSnapshot, spec.Slot.Name, stateSlot, prepared.SameSession, path);
+        var newManagedSlot = stateSlot is null && parentRuntime is not null && prepared.State.Slots.ContainsKey(parentRuntime.StableKey);
+        var existing = newManagedSlot ? null : MatchSlot(parentSnapshot, spec.Slot.Name, stateSlot, prepared.SameSession, path);
         existing ??= FindManagedSlot(prepared, stateSlot);
         if (isRoot && existing is not null && stateSlot is null && !prepared.Options.Adopt)
             throw new RLoopException("APPLY_OWNERSHIP_UNVERIFIED",
@@ -901,6 +977,7 @@ public sealed class WorldService(IResoniteClient client, string? generatedConten
                 }, ["Drop or return the item to its declared parent before apply; the command stopped before mutation."]);
         var action = existing is null ? "create" : relocating ? "relocate" : SlotNeedsUpdate(existing, spec.Slot) ? "update" : "no-op";
         var node = new NodeRuntime(spec.Slot, spec.Components ?? [], parentRuntime, existing, stableKey, path, action);
+        node.PathSegments = [.. parentRuntime?.PathSegments ?? prepared.ParentSegments, spec.Slot.Name];
         prepared.Nodes.Add(node);
         var planAction = action == "update" && existing?.Name != spec.Slot.Name ? "rename" : action;
         var migratedFrom = prepared.SlotMigrations.GetValueOrDefault(stableKey);
@@ -931,7 +1008,10 @@ public sealed class WorldService(IResoniteClient client, string? generatedConten
                 var relocating = stateComponent is not null && stateComponent.SlotKey != node.StableKey;
                 var topologyTargets = stateComponent is null ? null :
                     ResolveStateTopologyTargets(prepared, stateComponent, new HashSet<string>(StringComparer.Ordinal));
-                var existing = relocating ? null :
+                // A new key on an already managed Slot is a new object, not an ordinal rename.
+                // Otherwise it can alias a retained key or a stale key scheduled for pruning.
+                var newManagedComponent = stateComponent is null && prepared.State.Slots.ContainsKey(node.StableKey);
+                var existing = relocating || newManagedComponent ? null :
                     MatchComponent(node.Existing?.Components ?? [], spec.Type, ordinal, stateComponent, prepared.SameSession,
                         topologyTargets);
                 var componentIndex = existing is null
@@ -1040,41 +1120,50 @@ public sealed class WorldService(IResoniteClient client, string? generatedConten
     {
         var liveSlotKeys = prepared.Nodes.Select(x => x.StableKey).ToHashSet(StringComparer.Ordinal);
         var liveComponentKeys = prepared.Components.Select(x => x.StableKey).ToHashSet(StringComparer.Ordinal);
-        var rootPath = prepared.Nodes[0].Path;
-        var ownedRootPaths = new HashSet<string>(StringComparer.Ordinal) { rootPath };
-        if (prepared.State.Slots.TryGetValue(prepared.Nodes[0].StableKey, out var previousRoot))
-            ownedRootPaths.Add(previousRoot.Path);
-        var snapshots = prepared.SnapshotSlots.Select(slot => (Slot: slot, Path: slot.Path ?? string.Empty)).ToArray();
-
-        bool IsInsideOwnedRoot(string path, bool includeRoot) => ownedRootPaths.Any(ownedRoot =>
-            includeRoot && path.Equals(ownedRoot, StringComparison.Ordinal) ||
-            path.StartsWith(ownedRoot + "/", StringComparison.Ordinal));
+        var rootId = prepared.Nodes[0].Existing?.Id;
+        var snapshots = prepared.SnapshotSlots.GroupBy(slot => slot.Id).ToDictionary(group => group.Key, group => group.First(), StringComparer.Ordinal);
+        bool IsWithin(string id, string? ancestor, bool includeRoot = true)
+        {
+            if (ancestor is null) return false;
+            if (!includeRoot && id == ancestor) return false;
+            for (var depth = 0; depth <= 64 && snapshots.TryGetValue(id, out var current); depth++)
+            {
+                if (id == ancestor) return true;
+                if (current.ParentId is null) break;
+                id = current.ParentId;
+            }
+            return false;
+        }
+        SlotInfo? ResolveOwned(ApplyStateSlot state) => prepared.SameSession && !string.IsNullOrEmpty(state.Id)
+            ? snapshots.GetValueOrDefault(state.Id) : FindManagedSlot(prepared, state);
 
         var staleSlots = new List<(string Key, ApplyStateSlot State, SlotInfo Slot, string Path)>();
         foreach (var stateSlot in prepared.State.Slots.Where(x => !liveSlotKeys.Contains(x.Key)).ToArray())
         {
-            if (!IsInsideOwnedRoot(stateSlot.Value.Path, includeRoot: false)) continue;
-            var slot = snapshots.FirstOrDefault(x => prepared.SameSession && x.Slot.Id == stateSlot.Value.Id || x.Path == stateSlot.Value.Path);
-            if (slot.Slot is null || slot.Slot.Id.Equals("Root", StringComparison.OrdinalIgnoreCase)) continue;
-            staleSlots.Add((stateSlot.Key, stateSlot.Value, slot.Slot, slot.Path));
+            var slot = ResolveOwned(stateSlot.Value);
+            if (slot is null || !IsWithin(slot.Id, rootId, false) || slot.Id == "Root") continue;
+            staleSlots.Add((stateSlot.Key, stateSlot.Value, slot, slot.Path ?? stateSlot.Value.Path));
         }
         var parentSlotDeletions = staleSlots.OrderBy(x => x.Path.Count(ch => ch == '/'))
-            .Where(candidate => !staleSlots.Any(other => other.Path.Length < candidate.Path.Length &&
-                candidate.Path.StartsWith(other.Path + "/", StringComparison.Ordinal)))
+            .Where(candidate => !staleSlots.Any(other => other.Slot.Id != candidate.Slot.Id && IsWithin(candidate.Slot.Id, other.Slot.Id)))
             .ToArray();
         var coveredSlotKeys = staleSlots.Where(stateSlot => parentSlotDeletions.Any(deletion =>
-                stateSlot.Path == deletion.Path || stateSlot.Path.StartsWith(deletion.Path + "/", StringComparison.Ordinal)))
+                IsWithin(stateSlot.Slot.Id, deletion.Slot.Id)))
             .Select(stateSlot => stateSlot.Key).ToHashSet(StringComparer.Ordinal);
 
         foreach (var stateComponent in prepared.State.Components.Where(x => !liveComponentKeys.Contains(x.Key) &&
                      !coveredSlotKeys.Contains(x.Value.SlotKey)).ToArray())
         {
             if (!prepared.State.Slots.TryGetValue(stateComponent.Value.SlotKey, out var stateSlot)) continue;
-            var slot = snapshots.FirstOrDefault(x => prepared.SameSession && x.Slot.Id == stateSlot.Id || x.Path == stateSlot.Path);
-            if (slot.Slot is null || !IsInsideOwnedRoot(slot.Path, includeRoot: true)) continue;
-            var matches = slot.Slot.Components.Where(x => TypeNamesEquivalent(x.Type, stateComponent.Value.Type)).ToArray();
-            var component = prepared.SameSession ? slot.Slot.Components.FirstOrDefault(x => x.Id == stateComponent.Value.Id) : null;
-            component ??= stateComponent.Value.TypeOrdinal < matches.Length ? matches[stateComponent.Value.TypeOrdinal] : null;
+            var slot = ResolveOwned(stateSlot);
+            if (slot is null || !IsWithin(slot.Id, rootId)) continue;
+            var component = prepared.SameSession ? slot.Components.FirstOrDefault(x => x.Id == stateComponent.Value.Id) : null;
+            if (!prepared.SameSession)
+            {
+                var topology = ResolveStateTopologyTargets(prepared, stateComponent.Value, new HashSet<string>(StringComparer.Ordinal));
+                component = MatchComponent(slot.Components, stateComponent.Value.Type,
+                    stateComponent.Value.TypeOrdinal, stateComponent.Value, false, topology);
+            }
             if (component is null) continue;
             var deletion = new DeletionRuntime("component", stateComponent.Key, component.Id,
                 slot.Path + "/@" + stateComponent.Key, "stable key is no longer declared inside the owned boundary");
@@ -1085,8 +1174,7 @@ public sealed class WorldService(IResoniteClient client, string? generatedConten
 
         foreach (var staleSlot in parentSlotDeletions)
         {
-            var removedSlotKeys = staleSlots.Where(stateSlot => stateSlot.Path == staleSlot.Path ||
-                    stateSlot.Path.StartsWith(staleSlot.Path + "/", StringComparison.Ordinal))
+            var removedSlotKeys = staleSlots.Where(stateSlot => IsWithin(stateSlot.Slot.Id, staleSlot.Slot.Id))
                 .Select(stateSlot => stateSlot.Key).ToArray();
             var removedComponentKeys = prepared.State.Components.Where(component => !liveComponentKeys.Contains(component.Key) &&
                     removedSlotKeys.Contains(component.Value.SlotKey, StringComparer.Ordinal))
@@ -1098,6 +1186,38 @@ public sealed class WorldService(IResoniteClient client, string? generatedConten
             prepared.Entries.Add(new ApplyPlanEntry("delete", deletion.Kind, deletion.Path, deletion.Key,
                 Reason: deletion.Reason));
         }
+    }
+
+    private static void ValidateComponentOwnership(PreparedApply prepared)
+    {
+        var claims = prepared.Components.Where(component => component.Existing is not null)
+            .Select(component => (Id: component.Existing!.Id, Key: component.StableKey, Kind: "live"))
+            .Concat(prepared.Components.Where(component => component.RelocationSource is not null)
+                .Select(component => (Id: component.RelocationSource!.Id, Key: component.StableKey, Kind: "relocation")))
+            .Concat(prepared.Deletions.Where(deletion => deletion.Kind == "component")
+                .Select(deletion => (deletion.Id, deletion.Key, Kind: "delete")));
+        var conflicts = claims.GroupBy(claim => claim.Id, StringComparer.Ordinal)
+            .Where(group => group.Count() > 1)
+            .Select(group => new { id = group.Key, claims = group.Select(claim => new { claim.Key, claim.Kind }).ToArray() })
+            .ToArray();
+        if (conflicts.Length > 0)
+            throw new RLoopException("APPLY_COMPONENT_OWNERSHIP_CONFLICT",
+                "Multiple managed keys or deletion operations claim the same runtime Component. No mutations were performed.",
+                ExitCodes.ValidationFailed, new Dictionary<string, object?> { ["conflicts"] = conflicts },
+                ["Inspect the exact conflicting Components and preserve the checkpoint. Use migrateFrom for an intentional key rename; never repair this by guessing IDs."]);
+    }
+
+    private static void ValidateSlotOwnership(PreparedApply prepared)
+    {
+        var claims = prepared.Nodes.Where(node => node.Existing is not null)
+            .Select(node => (Id: node.Existing!.Id, Key: node.StableKey, Kind: "live"))
+            .Concat(prepared.Deletions.Where(deletion => deletion.Kind == "slot")
+                .Select(deletion => (deletion.Id, deletion.Key, Kind: "delete")));
+        var conflicts = claims.GroupBy(claim => claim.Id, StringComparer.Ordinal).Where(group => group.Count() > 1)
+            .Select(group => new { id = group.Key, claims = group.Select(claim => new { claim.Key, claim.Kind }).ToArray() }).ToArray();
+        if (conflicts.Length > 0)
+            throw new RLoopException("APPLY_SLOT_OWNERSHIP_CONFLICT", "Multiple managed keys or deletion operations claim the same Slot. No mutations were performed.",
+                ExitCodes.ValidationFailed, new Dictionary<string, object?> { ["conflicts"] = conflicts });
     }
 
     private async Task<IReadOnlyDictionary<string, string>> ResolveFieldsAsync(
@@ -1120,6 +1240,17 @@ public sealed class WorldService(IResoniteClient client, string? generatedConten
         foreach (var field in component.Fields ?? new Dictionary<string, JsonElement>()) result[field.Key] = field.Value;
         return result;
     }
+
+    private static bool ContainsWorldReference(JsonElement value) => value.ValueKind switch
+    {
+        JsonValueKind.String => value.GetString() is { } text &&
+            (text.StartsWith("$ref:", StringComparison.Ordinal) || text.StartsWith("$component:", StringComparison.Ordinal) ||
+             text.StartsWith("$member:", StringComparison.Ordinal) || text.StartsWith("$slot:", StringComparison.Ordinal) ||
+             text.StartsWith("$slot-member:", StringComparison.Ordinal)),
+        JsonValueKind.Array => value.EnumerateArray().Any(ContainsWorldReference),
+        JsonValueKind.Object => value.EnumerateObject().Any(property => ContainsWorldReference(property.Value)),
+        _ => false
+    };
 
     private async Task<string> ResolveValueAsync(JsonElement element,
         IReadOnlyDictionary<string, ComponentRuntime> components, IReadOnlyDictionary<string, NodeRuntime> slots,
@@ -1386,7 +1517,7 @@ public sealed class WorldService(IResoniteClient client, string? generatedConten
             candidates = parent.Children.Where(x => x.Id == state.Id).ToArray();
         if (candidates.Length == 0 && state is not null && !state.RuntimeRelocatable)
         {
-            var oldName = state.Path.Replace('\\', '/').Split('/', StringSplitOptions.RemoveEmptyEntries).LastOrDefault();
+            var oldName = (state.PathSegments ?? SlotPaths.LegacySegments(state.Path)).LastOrDefault();
             if (!string.IsNullOrWhiteSpace(oldName)) candidates = parent.Children.Where(x => x.Name == oldName).ToArray();
         }
         if (candidates.Length == 0 && state?.RuntimeRelocatable != true)
@@ -1406,7 +1537,9 @@ public sealed class WorldService(IResoniteClient client, string? generatedConten
             if (byId.Length == 1) return byId[0];
         }
         var normalizedPath = NormalizePath(state.Path);
-        var byPath = prepared.SnapshotSlots.Where(slot => NormalizePath(slot.Path ?? string.Empty) == normalizedPath).ToArray();
+        var byPath = prepared.SnapshotSlots.Where(slot => state.PathSegments is not null
+            ? prepared.SnapshotSegments[slot.Id].SequenceEqual(state.PathSegments, StringComparer.Ordinal)
+            : NormalizePath(slot.Path ?? string.Empty) == normalizedPath).ToArray();
         if (byPath.Length > 1)
             throw new RLoopException("APPLY_TARGET_AMBIGUOUS", $"Multiple Slots match managed state path '{state.Path}'.",
                 ExitCodes.ValidationFailed, new Dictionary<string, object?> { ["ids"] = byPath.Select(slot => slot.Id).ToArray() });
@@ -1552,7 +1685,7 @@ public sealed class WorldService(IResoniteClient client, string? generatedConten
         CancellationToken cancellationToken)
     {
         if (!prepared.Nodes.Any(node => node.SlotAction == "relocate" && node.Spec.RelocationTransform == "world")) return;
-        var externalParentWorld = await WorldTransformAtPathAsync(parentPath, cancellationToken);
+        var externalParentWorld = await WorldTransformAtPathAsync(SlotPaths.Selector(parentPath, prepared.ParentSegments), cancellationToken);
         var finalWorld = new Dictionary<NodeRuntime, Matrix4x4>();
         foreach (var node in prepared.Nodes)
         {
@@ -1564,7 +1697,7 @@ public sealed class WorldService(IResoniteClient client, string? generatedConten
                     throw new RLoopException("APPLY_RELOCATION_STATE_MISSING",
                         $"World-transform relocation for '{node.StableKey}' requires its previous stable path.",
                         ExitCodes.ValidationFailed);
-                var oldWorld = await WorldTransformAtPathAsync(previous.Path, cancellationToken);
+                var oldWorld = await WorldTransformAtPathAsync(SlotPaths.Selector(previous.Path, previous.PathSegments), cancellationToken);
                 if (!Matrix4x4.Invert(parentWorld, out var inverseParent))
                     throw new RLoopException("APPLY_RELOCATION_PARENT_NONINVERTIBLE",
                         $"Cannot preserve world transform for '{node.StableKey}' because the new parent transform is non-invertible.",
@@ -1588,7 +1721,7 @@ public sealed class WorldService(IResoniteClient client, string? generatedConten
 
     private async Task<Matrix4x4> WorldTransformAtPathAsync(string path, CancellationToken cancellationToken)
     {
-        var parts = NormalizePath(path).Split('/', StringSplitOptions.RemoveEmptyEntries).Skip(1).ToArray();
+        var parts = SlotPaths.ParseSelector(path).Skip(1).ToArray();
         var currentId = "Root";
         var currentPath = "Root";
         var world = Matrix4x4.Identity;
@@ -1707,7 +1840,10 @@ public sealed class WorldService(IResoniteClient client, string? generatedConten
 
     private static int MaxDepth(IReadOnlyList<ApplyNodeSpec>? children) => children is null || children.Count == 0
         ? 0 : 1 + children.Max(x => MaxDepth(x.Children));
-    private async Task<string> ObserveAbsolutePathAsync(SlotInfo slot, CancellationToken cancellationToken)
+    private async Task<string> ObserveAbsolutePathAsync(SlotInfo slot, CancellationToken cancellationToken) =>
+        string.Join('/', await ObserveAbsoluteSegmentsAsync(slot, cancellationToken));
+
+    private async Task<IReadOnlyList<string>> ObserveAbsoluteSegmentsAsync(SlotInfo slot, CancellationToken cancellationToken)
     {
         var names = new List<string>();
         var visited = new HashSet<string>(StringComparer.Ordinal);
@@ -1719,9 +1855,9 @@ public sealed class WorldService(IResoniteClient client, string? generatedConten
             slot = await client.GetSlotAsync(slot.ParentId, 0, false, cancellationToken);
         }
         names.Reverse();
-        return "Root" + (names.Count == 0 ? "" : "/" + string.Join('/', names));
+        return ["Root", .. names];
     }
-    private static string NormalizePath(string path) => "Root/" + string.Join('/', path.Replace('\\', '/').Split('/', StringSplitOptions.RemoveEmptyEntries).Where(x => !x.Equals("Root", StringComparison.OrdinalIgnoreCase)));
+    private static string NormalizePath(string path) => string.Join('/', SlotPaths.LegacySegments(path));
     private static string MemberKey(string selector) { var separator = selector.LastIndexOf('.'); return separator > 0 ? selector[..separator] : selector; }
     private static string NormalizeType(string value) { var bracket = value.IndexOf(']'); return bracket >= 0 ? value[(bracket + 1)..] : value; }
     private static bool TypeNamesEquivalent(string left, string right) => NormalizeType(left).Equals(NormalizeType(right), StringComparison.Ordinal) ||
@@ -1749,7 +1885,7 @@ public sealed class WorldService(IResoniteClient client, string? generatedConten
 
     private sealed class PreparedApply(ApplyDocument document, ApplyOptions options, ApplyState state,
         string statePath, SessionInfo session, string parentId, bool sameSession, IReadOnlyList<(SlotInfo Slot, string Path)> snapshots,
-        IReadOnlyDictionary<string, string> slotMigrations, IReadOnlyDictionary<string, string> componentMigrations)
+        IReadOnlyDictionary<string, string> slotMigrations, IReadOnlyDictionary<string, string> componentMigrations, IReadOnlyList<string> parentSegments)
     {
         public ApplyDocument Document { get; } = document;
         public ApplyOptions Options { get; } = options;
@@ -1758,6 +1894,8 @@ public sealed class WorldService(IResoniteClient client, string? generatedConten
         public SessionInfo Session { get; } = session;
         public string ParentId { get; } = parentId;
         public bool SameSession { get; } = sameSession;
+        public IReadOnlyList<string> ParentSegments { get; } = parentSegments;
+        public IReadOnlyDictionary<string, IReadOnlyList<string>> SnapshotSegments { get; } = BuildSegments(snapshots, state, parentId, parentSegments);
         public IReadOnlyDictionary<string, string> SlotMigrations { get; } = slotMigrations;
         public IReadOnlyDictionary<string, string> ComponentMigrations { get; } = componentMigrations;
         public IReadOnlyList<SlotInfo> SnapshotSlots { get; } = snapshots.SelectMany(snapshot => Flatten(snapshot.Slot, snapshot.Path)).ToArray();
@@ -1766,6 +1904,21 @@ public sealed class WorldService(IResoniteClient client, string? generatedConten
         public List<ApplyPlanEntry> Entries { get; } = [];
         public List<DeletionRuntime> Deletions { get; } = [];
         public List<AssetRuntime> Assets { get; } = [];
+
+        private static IReadOnlyDictionary<string, IReadOnlyList<string>> BuildSegments(IReadOnlyList<(SlotInfo Slot, string Path)> roots,
+            ApplyState state, string parentId, IReadOnlyList<string> parentSegments)
+        {
+            var result = new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal);
+            void VisitSegments(SlotInfo slot, IReadOnlyList<string> names)
+            {
+                result[slot.Id] = names;
+                foreach (var child in slot.Children) VisitSegments(child, [.. names, child.Name]);
+            }
+            foreach (var root in roots)
+                VisitSegments(root.Slot, root.Slot.Id == parentId ? parentSegments :
+                    state.Slots.Values.FirstOrDefault(slot => slot.Id == root.Slot.Id)?.PathSegments ?? SlotPaths.LegacySegments(root.Path));
+            return result;
+        }
 
         private static IReadOnlyList<SlotInfo> Flatten(SlotInfo root, string rootPath)
         {
@@ -1784,6 +1937,7 @@ public sealed class WorldService(IResoniteClient client, string? generatedConten
         public SlotInfo? Existing { get; } = existing;
         public string StableKey { get; } = stableKey;
         public string Path { get; } = path;
+        public IReadOnlyList<string> PathSegments { get; set; } = [];
         public string SlotAction { get; } = slotAction;
         public string? Id { get; set; }
         public Vector3Value? RelocationPosition { get; set; }

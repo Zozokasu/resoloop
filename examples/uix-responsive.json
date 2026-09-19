@@ -1,0 +1,90 @@
+{
+  "schemaVersion": "1",
+  "ownership": { "key": "uix-responsive-example" },
+  "slot": { "key": "root", "name": "ResoLoop_Test_UixResponsive", "parent": "Root", "position": [0, 1.5, 2] },
+  "children": [
+    {
+      "slot": { "key": "assets", "name": "Assets" },
+      "children": [
+        { "slot": { "key": "font-provider", "name": "Shared font" }, "components": [
+          { "key": "font", "type": "FrooxEngine.StaticFont", "fields": { "URL": "https://raw.githubusercontent.com/google/fonts/main/ofl/spacegrotesk/SpaceGrotesk%5Bwght%5D.ttf" } }
+        ] }
+      ]
+    },
+    {
+      "slot": { "key": "canvas", "name": "Canvas", "scale": [0.003, 0.003, 0.003] },
+      "components": [
+        { "key": "canvas-rect", "type": "FrooxEngine.UIX.RectTransform" },
+        { "key": "canvas-component", "type": "FrooxEngine.UIX.Canvas", "fields": { "Size": [480, 240], "UnitScale": 1, "PixelScale": 1 } }
+      ],
+      "children": [
+        {
+          "slot": { "key": "viewport", "name": "Viewport" },
+          "components": [
+            { "key": "viewport-rect", "type": "FrooxEngine.UIX.RectTransform" },
+            { "key": "viewport-image", "type": "FrooxEngine.UIX.Image", "fields": { "InteractionTarget": true } },
+            { "key": "viewport-mask", "type": "FrooxEngine.UIX.Mask", "fields": { "ShowMaskGraphic": false } }
+          ],
+          "children": [
+            {
+              "slot": { "key": "content", "name": "Content" },
+              "components": [
+                { "key": "content-rect", "type": "FrooxEngine.UIX.RectTransform" },
+                { "key": "content-layout", "type": "FrooxEngine.UIX.VerticalLayout", "fields": { "Spacing": 16, "PaddingBottom": 8, "ForceExpandWidth": true, "ForceExpandHeight": false } },
+                { "key": "content-fit", "type": "FrooxEngine.UIX.ContentSizeFitter", "fields": { "HorizontalFit": "Disabled", "VerticalFit": "PreferredSize" } },
+                { "key": "content-scroll", "type": "FrooxEngine.UIX.ScrollRect", "fields": { "ViewportOverride": "$component:viewport-rect" }, "initialFields": { "NormalizedPosition": [0, 0] } }
+              ],
+              "children": [
+                {
+                  "slot": { "key": "row", "name": "Equal width cards" },
+                  "components": [
+                    { "key": "row-rect", "type": "FrooxEngine.UIX.RectTransform" },
+                    { "key": "row-layout", "type": "FrooxEngine.UIX.HorizontalLayout", "fields": { "Spacing": 12, "VerticalAlign": "Top", "ForceExpandWidth": false, "ForceExpandHeight": false } }
+                  ],
+                  "children": [
+                    { "$prototype": "card", "$with": { "key": "first", "label": "Shared assets, stable layout", "color": [0.15, 0.55, 0.7, 1] } },
+                    { "$prototype": "card", "$with": { "key": "second", "label": "Resize the Canvas and keep readable text.", "color": [0.3, 0.4, 0.65, 1] } }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "prototypes": {
+    "card": {
+      "slot": { "key": "${key}", "name": "${key}" },
+      "components": [
+        { "key": "${key}-rect", "type": "FrooxEngine.UIX.RectTransform" },
+        { "key": "${key}-metrics", "type": "FrooxEngine.UIX.LayoutElement", "fields": { "MinWidth": 0, "MinHeight": 120, "PreferredWidth": 0, "FlexibleWidth": 1, "UseZeroMetrics": true } },
+        { "key": "${key}-layout", "type": "FrooxEngine.UIX.VerticalLayout", "fields": { "PaddingLeft": 12, "PaddingRight": 12, "PaddingTop": 12, "PaddingBottom": 12, "ForceExpandWidth": true, "ForceExpandHeight": false } }
+      ],
+      "children": [
+        { "slot": { "key": "${key}-background", "name": "Background" }, "components": [
+          { "key": "${key}-background-rect", "type": "FrooxEngine.UIX.RectTransform", "fields": { "AnchorMin": [0, 0], "AnchorMax": [1, 1] } },
+          { "key": "${key}-image", "type": "FrooxEngine.UIX.Image", "fields": { "Tint": "${color}", "InteractionTarget": false } },
+          { "key": "${key}-ignore", "type": "FrooxEngine.UIX.IgnoreLayout" }
+        ] },
+        { "slot": { "key": "${key}-label", "name": "Label" }, "components": [
+          { "key": "${key}-label-rect", "type": "FrooxEngine.UIX.RectTransform" },
+          { "key": "${key}-text", "type": "FrooxEngine.UIX.Text", "fields": { "Content": "${label}", "Font": "$component:font", "Size": 20, "Color": [1, 1, 1, 1], "HorizontalAutoSize": false, "VerticalAutoSize": false } },
+          { "key": "${key}-label-size", "type": "FrooxEngine.UIX.LayoutElement", "fields": { "MinHeight": 28 } }
+        ] }
+      ]
+    }
+  },
+  "cameras": { "main": { "position": [0, 1.5, 0], "target": [0, 1.5, 2], "width": 1000, "height": 700 } },
+  "tests": [
+    { "name": "narrow and long content", "probe": { "kind": "set-members", "safe": true, "restore": true, "values": {
+      "$member:canvas-component.Size": [320, 240],
+      "$member:first-text.Content": "A longer paragraph should wrap within its own equal-width card instead of taking space from its neighbor."
+    } }, "assertions": [
+      { "target": "$member:canvas-component.Size", "expected": [320, 240], "phase": "after" },
+      { "target": "$member:first-metrics.PreferredWidth", "expected": 0 },
+      { "target": "$member:second-metrics.UseZeroMetrics", "expected": true }
+    ] }
+  ]
+}
+

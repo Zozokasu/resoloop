@@ -1,0 +1,30 @@
+---
+name: resonite-uix
+description: Build, adapt, or debug native Resonite UIX controls and responsive panels through resoloop, including shared assets, layout, input, and state-preserving changes.
+---
+
+# Resonite UIX
+
+Use the bundled `resonite-build` workflow for connection, bounded observation, Reflection, owned apply state, exact-target deletion, and post-change inspection. Before designing a UIX hierarchy, decide which root will be saved or distributed, which controls must work, and which dimensions follow available space or content. A draggable gallery board is not necessarily a portable item by itself.
+
+Read the relevant references before building:
+
+- [Assets and portable parts](references/assets.md) when arranging fonts, sprites, materials, shared resources, or standalone exports; use its background material recipe for world-space UI.
+- [Layout](references/layout.md) for new panels, responsive controls, scrolling, wrapping, sizing, or clipping problems.
+- [Interaction and migration](references/interaction-and-migration.md) for inputs, state-driven visuals, existing hierarchy changes, or component recreation.
+
+Start with a representative functioning control or small panel before generating the whole library. For a design import, list required interactions first: editable input/caret, dropdown opening and selection, radio exclusivity, toggle, tabs, slider and progress as applicable. A static collection of state variants is not evidence that these interactions work. Inspect user-supplied examples within a bounded subtree; use them as evidence, not as authorization to edit them. Verify types, members, enum values, and reference targets in the current runtime. The examples in these references were observed on Resonite 2026.9.9.1136 and 2026.9.14.1239 / ResoniteLink 0.13.1.0; they are not universal engine invariants.
+
+Keep shared providers near the top of the saved item and outside its content layout. Give providers and logic stable, role-specific Slots and keys. Reuse matching provider configurations across parts. Separate reusable inner UIX controls from optional standalone Canvas/gallery wrappers.
+
+Give siblings distinct names as well as stable keys; duplicate names are rejected before apply. Exact names containing slashes or spaces can be addressed with `path:["Root","A/B"," Label "]`; prefer stable selectors for owned content. Checkpoint schema 2 preserves name segments across connections; a display path alone can be ambiguous.
+
+The audit also reports observed texture settings, sprite/material references and Button color drivers. It does not report texture readiness: a configured URL or successful structural audit does not prove the pixels loaded. Use the asset diagnostic sequence for placeholders and compare captures.
+
+For layout, assign control of each axis: parent layout, content fitting, fixed dimension, or runtime driver. Change Canvas.Size to test available UI space; Slot.Scale changes world presentation. Preserve the requested typography, border thickness, and small moving controls while adjusting layout. Keep Image and Text on separate Slots, exclude background/outline/shadow layers from layout with a verified IgnoreLayout configuration, and inspect world-space material/depth settings when ordering is wrong.
+
+For world-space UI, the usual Resonite UI placement, assign the background Image an explicit UI_UnlitMaterial using the [world-space background settings](references/assets.md#world-space-background-material). Make this part of normal panel construction: leaving the background material at its defaults can let elements behind the panel show through. Apply the recipe to the background role and verify the foreground remains visible.
+
+Before declaring completion, check the relevant normal/narrow/wide sizes, long content, scroll endpoints, and control states in actual captures. Restore temporary values and positions and read them back. Distinguish structure, field-driven behavior, user input, visual checks, reapply convergence, and save/reload portability. Directly setting IsPressed verifies a downstream effect; it does not prove a real click. Report manual or multiplayer checks that remain unperformed. Reapply should preserve user-entered state and converge without writes.
+
+Use `resoloop uix audit '$slot:panel' --state .resoloop/state/panel.json --depth 6 --max-slots 128 --json` for a compact read-only view of layout, fitting, scrolling, and driver fields. Narrow the selected subtree if truncated. The audit detects structural issues such as competing Image/Text; `--strict` also rejects warnings. Computed size remains `unknown`, so use captures to judge clipping and wrapping. The Slot budget bounds detailed reads and output; the API still returns each visited Slot's immediate child list. Avoid auditing Root. See `examples/uix-responsive.json` in the source repository for shared fonts, equal-width cards, decoration exclusion, scrolling, and a multi-field probe. For large libraries, `limits.expandedNodes` explicitly raises the default 10000 JSON-node budget up to 250000; includes share that budget and the 10 MiB limit remains. Keep one ownership/state when splitting solely for authoring convenience.

@@ -112,11 +112,11 @@ public static class ProjectInitializer
                 """ + "\n";
 
         var skillHashes = new Dictionary<string, string>(StringComparer.Ordinal);
-        foreach (var skillName in BundledSkillManager.Names)
+        foreach (var file in BundledSkillManager.Files)
         {
-            var content = BundledSkillManager.LoadBundledSkill(skillName);
-            files[Path.Combine(".agents", "skills", skillName, "SKILL.md")] = content;
-            skillHashes[skillName] = BundledSkillManager.Hash(content);
+            var content = BundledSkillManager.LoadBundledFile(file);
+            files[Path.Combine(".agents", "skills", file.Replace('/', Path.DirectorySeparatorChar))] = content;
+            skillHashes[file] = BundledSkillManager.Hash(content);
         }
         files[BundledSkillManager.LockRelativePath.Replace('/', Path.DirectorySeparatorChar)] =
             BundledSkillManager.SerializeLock(skillHashes);

@@ -17,6 +17,13 @@ public static class ApplyDocumentCompiler
     {
         var context = new Context();
         var root = LoadMerged(Path.GetFullPath(path), context, []);
+        if (root.Remove("limits", out var limits))
+        {
+            if (limits is not JsonObject settings || settings.Any(pair => pair.Key != "expandedNodes") ||
+                settings["expandedNodes"] is not JsonValue limit || !limit.TryGetValue<int>(out var value) || value is < 1 or > 250_000)
+                Fail("APPLY_LIMITS_INVALID", "limits must contain only expandedNodes, an integer from 1 to 250000. The default is 10000 JSON nodes.");
+            context.NodeLimit = limits!["expandedNodes"]!.GetValue<int>();
+        }
         var variables = ReadObject(root["parameters"] as JsonObject);
         MergeVariables(variables, root["variables"] as JsonObject, "variables");
         var prototypes = root["prototypes"] as JsonObject ?? new JsonObject();
@@ -28,14 +35,16 @@ public static class ApplyDocumentCompiler
         ExpandValue(root, variables, prototypes, context, "$", allowPrototype: false);
         DetectStableKeyConflicts(root);
         context.ExpandedNodes = CountNodes(root);
-        if (context.ExpandedNodes > MaxExpandedNodes)
-            Fail("APPLY_EXPANDED_NODE_LIMIT", $"Expanded document contains {context.ExpandedNodes} nodes; the limit is {MaxExpandedNodes}.");
+        if (context.ExpandedNodes > context.NodeLimit)
+            throw new RLoopException("APPLY_EXPANDED_NODE_LIMIT", $"Expanded document contains {context.ExpandedNodes} JSON nodes; the limit is {context.NodeLimit}.",
+                ExitCodes.ValidationFailed, new Dictionary<string, object?> { ["expandedJsonNodes"] = context.ExpandedNodes, ["limit"] = context.NodeLimit },
+                ["JSON nodes include fields and values, not just Slots. Includes share one budget. Review content size before setting limits.expandedNodes (maximum 250000); the 10 MiB byte limit still applies."]);
         var json = root.ToJsonString(new JsonSerializerOptions { WriteIndented = true });
         var bytes = System.Text.Encoding.UTF8.GetByteCount(json);
         if (bytes > MaxExpandedBytes)
             Fail("APPLY_EXPANDED_SIZE_LIMIT", $"Expanded document is {bytes} bytes; the limit is {MaxExpandedBytes}.");
         return new Result(json, new ApplyCompilationSummary(context.Files.Count, context.Prototypes,
-            context.Instances, context.Repeated, context.ExpandedNodes, bytes));
+            context.Instances, context.Repeated, context.ExpandedNodes, bytes, context.NodeLimit));
     }
 
     private static JsonObject LoadMerged(string path, Context context, IReadOnlyList<string> stack)
@@ -279,5 +288,6 @@ public static class ApplyDocumentCompiler
         public int Instances { get; set; }
         public int Repeated { get; set; }
         public int ExpandedNodes { get; set; }
+        public int NodeLimit { get; set; } = MaxExpandedNodes;
     }
 }

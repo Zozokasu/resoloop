@@ -579,7 +579,13 @@ public static class ValueCodec
         CancellationToken cancellationToken = default, TimeSpan? requestTimeout = null,
         Action<string, double>? requestCompleted = null)
     {
-        if (definition is Link.ReferenceDefinition) return new Link.Reference { TargetID = raw.Equals("null", StringComparison.OrdinalIgnoreCase) ? null : raw };
+        if (definition is Link.ReferenceDefinition)
+        {
+            if (raw.StartsWith('"') || raw.EndsWith('"'))
+                throw new RLoopException("REFERENCE_VALUE_QUOTED", "Reference values must contain the ID itself, without literal JSON quote characters.", ExitCodes.ValidationFailed,
+                    suggestions: ["Pass Reso_123 as the reference value. Shell quotes may group an argument, but literal quote characters are not part of an ID."]);
+            return new Link.Reference { TargetID = raw.Equals("null", StringComparison.OrdinalIgnoreCase) ? null : raw };
+        }
         if (definition is Link.ListDefinition list) return await ParseListAsync(link, list, raw, cancellationToken, requestTimeout, requestCompleted);
         if (definition is Link.DictionaryDefinition dictionary) return await ParseDictionaryAsync(link, dictionary, raw, cancellationToken, requestTimeout, requestCompleted);
         if (definition is Link.SyncObjectMemberDefinition syncObject) return await ParseSyncObjectAsync(link, syncObject, raw, cancellationToken, requestTimeout, requestCompleted);
