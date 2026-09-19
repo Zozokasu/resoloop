@@ -59,7 +59,7 @@ release自動化とnuget.org Trusted Publishingの設定は[docs/RELEASING.md](d
 dotnet build ResoLoop.slnx
 dotnet test ResoLoop.slnx --no-build
 dotnet pack src/RLoop.Cli/RLoop.Cli.csproj -c Release -o artifacts
-dotnet tool update --global --add-source .\artifacts ResoLoop --version 0.1.0-preview.11
+dotnet tool update --global --add-source .\artifacts ResoLoop --version 0.1.0-preview.12
 ~~~
 
 開発中は次でも実行できます。
@@ -70,7 +70,9 @@ dotnet run --project src/RLoop.Cli -- help
 
 ## ResoniteLink configuration
 
-最低限、Resoniteに表示された現在のportを設定します。portは起動ごとに変わるためハードコードされていません。
+preview.12のローカルビルドには[ResoniteLinkセッション探索](docs/DISCOVERY.md)があります。`resoloop discover --json`で候補を取得し、`resoloop status --url auto --json`で一意な候補へ接続できます。複数ある場合は`--session '正確な名前またはID'`で選択します。既定12秒間のUDP通知受信で、ポート総当たりは行いません。通常URLの設定優先順位は維持します。
+
+手動指定する場合はResoniteに表示された現在のportを設定します。portは起動ごとに変わるためハードコードされていません。
 
 ~~~powershell
 $env:RESONITE_LINK_URL="ws://localhost:12449"
@@ -120,6 +122,8 @@ resoloop component set $component Scalable false --json
 resoloop inspect $slot --members --json
 resoloop slot delete $slot --yes --json
 ~~~
+
+member payloadを省いた小さな観測には`resoloop hierarchy --under Root --depth 1 --include-components --summary --json`を使えます。必要なsubtreeが分かれば`--under`をそのSlotへ絞ります。宣言したSlotのfieldをnative driverへ接続する場合は`$slot-member:crystal.Rotation`、Componentのfieldには`$member:componentKey.MemberName`を使い、接続前にdriverの型を確認します。[宣言形式](docs/DECLARATIVE.md)と[鍛冶屋テストの改善](docs/BLACKSMITH-FEEDBACK.md)を参照してください。
 
 Reflectionでmemberがlistだと確認できた場合、対応済みのfield/reference要素はJSON arrayで設定できます。たとえばMeshRendererへmaterial providerを割り当てる場合:
 
@@ -199,6 +203,44 @@ resoloop test content/main.json --json
 ~~~
 
 applyの最終JSONはstdout、進捗はstderrへ分離されます。plan/diffのJSONは常に全変更を `changes` 配列へ分離し、`--changes-only` / `--creates-only` / `--deletes-only` / `--summary` は `operations` の表示量だけを絞ります。`--prune --yes`はstaleな親Slot配下を1回の親削除へ集約します。機械処理できる進捗が必要なら `--ndjson-progress`、表示を抑えるなら `--quiet` を使います。`--timeout` は各ResoniteLink request、`--command-timeout` はcommand全体のdeadlineです。Ctrl+Cやdeadlineで中断した場合はstate fileと完了件数が報告され、同じapplyで再開できます。
+
+## Blender modeling
+
+`resoloop blender find`、`blender run SCRIPT.py`、`blender export FILE.blend`で、背景Pythonによるモデル制作からResoniteへのimportまで進められます。BlenderはPATH登録なしでも検出でき、事前に起動しておく必要はありません。同梱の`resonite-blender`スキルは造形、VR向け資源設計、静的meshのUV・法線・texture・materialのimportを扱います。未インストールの場合はユーザーの許可を確認し、CLIが勝手にインストールすることはありません。
+
+exportはレビュー可能なapply bundleを新しい出力directoryへ生成します。この時点ではrenderやworldの変更は行いません。
+
+~~~powershell
+resoloop blender find --json
+resoloop blender run modeling/model.py --arg=artifacts/prop.blend --json
+resoloop blender export artifacts/prop.blend --output content/prop-v1 --name Prop --parent VERIFIED_PARENT --json
+# 独立した部品・pivotと、対応する直接接続PBR data画像を保持する場合
+resoloop blender export artifacts/prop.blend --output content/prop-v2 --name Prop --parent VERIFIED_PARENT --preserve-hierarchy --pack-pbr --json
+resoloop validate content/prop-v1/model.apply.json --strict --json
+resoloop diff content/prop-v1/model.apply.json --state .resoloop/state/prop.json --json
+resoloop apply content/prop-v1/model.apply.json --state .resoloop/state/prop.json --json
+~~~
+
+`modeling/model.py`は自分のprojectの制作script、`VERIFIED_PARENT`は現在のworldで確認した親Slotに置き換えます。`--preserve-hierarchy`は部品の階層とpivotを保持し、`--pack-pbr`は対応する直接接続のPBR data画像をResonite向けにまとめます。検出pathの上書き、texture packing、対応shader、テスト手順と制約は[Blender workflow](docs/BLENDER.md)を参照してください。
+
+UVを持つn-gonと、生成・編集された画像bufferの現在のpixelに対応しています。textureのcolor profileは`resoloop type describe FrooxEngine.StaticTexture2D --member PreferredProfile --json`で実行環境のenumを確認します。item auditが返す外部参照候補と未使用allow指定も確認してください。[制作テストの改善と検証](docs/BLENDER-FEEDBACK.md)に記録があります。
+
+新しいexportはproviderを名前付きSlotへ分け、中断したapplyからの復旧に備えます。既存のroot直下provider配置を保つには`--legacy-root-providers`を使用できます。strict validation、nested SyncObjectの差分、Slot fieldの観測、geometry／partial／pivotのbounds区別は後述の観測・検証手順に従います。[時計塔・戦車テストの改善](docs/CLOCKTOWER-FEEDBACK.md)も参照してください。
+
+制作では要求する見た目を先に満たし、不要な重複などを省いて資源量を調整します。モデル単体の合否にセッション全体のFPSを使わず、モデルに帰属するgeometry、material、画像などを評価します。制作のためにBlenderで最終renderを実行することは必須ではありません。
+
+## UIX authoring
+
+同梱の`resonite-uix`スキルは共有Assets、Layout metrics、fitting、scrolling、入力状態、階層移行を扱います。既存UIX Slotは移動先のComponentを準備してからrelocateし、新しいComponent keyはprune予定のIDを再利用しません。スキルのreference配布と利用者編集の保護は後述のCodex Skillsを参照してください。
+
+~~~powershell
+resoloop uix audit '$slot:panel' --state .resoloop/state/panel.json --depth 6 --max-slots 128 --json
+resoloop validate examples/uix-responsive.json --strict --json
+~~~
+
+UIX auditはread-onlyの部分的な構造観測です。計算後のsizeはunknownのままで、texture/material設定やButton color driverが確認できても画像の読込・描画成功は保証しません。`--strict`はwarningも失敗として扱います。[responsive example](examples/uix-responsive.json)は共有font、等幅card、複数fieldを一時変更して復元するprobeを示します。`set-members`と明示的な展開上限は[宣言形式](docs/DECLARATIVE.md)、検証済みの挙動と残る課題は[UIX feedback](docs/UIX-FEEDBACK.md)を参照してください。
+
+schema 2のexact Slot名保持、同名兄弟・不正assetの事前検証、ライフサイクル変更後の参照再検証、checkpointの単一writerとreaderの共存、市松模様を圧縮設定だけに帰因させない調査結果は[test14改善記録](docs/UIX-TEST14-FEEDBACK.md)にまとめています。
 
 ## Flux-SDK
 
