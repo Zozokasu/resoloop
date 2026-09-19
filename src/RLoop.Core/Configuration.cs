@@ -107,7 +107,7 @@ public static class ConfigResolver
                 "RESONITE_LINK_URL_MISSING",
                 "No ResoniteLink WebSocket URL was configured.",
                 ExitCodes.ConfigurationError,
-                suggestions: ["Set RESONITE_LINK_URL=ws://localhost:<port> or pass --url ws://localhost:<port>."]);
+                suggestions: ["Run resoloop discover --json, use --url auto, or set RESONITE_LINK_URL=ws://localhost:<port> / --url ws://localhost:<port>."]);
         if (!Uri.TryCreate(config.ResoniteLinkUrl, UriKind.Absolute, out var uri) || (uri.Scheme != "ws" && uri.Scheme != "wss"))
             throw new RLoopException("INVALID_RESONITE_LINK_URL", $"'{config.ResoniteLinkUrl}' is not a valid ws:// or wss:// URL.", ExitCodes.ConfigurationError);
         return uri;

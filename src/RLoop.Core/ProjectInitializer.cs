@@ -94,7 +94,7 @@ public static class ProjectInitializer
             files["AGENTS.md"] = """
                 # ResoLoop project guide
 
-                Use `resoloop` as the only mutation interface for Resonite content in this project. Start with `resoloop doctor --json`, then use the project skills under `.agents/skills/` for the requested workflow.
+                Use `resoloop` as the only mutation interface for Resonite content in this project. Use the project skills under `.agents/skills/` for the requested workflow. If no connection URL is configured, follow resonite-build's automatic discovery workflow: discover first, connect if there is one candidate, or ask the user to choose if there are multiple. Run `resoloop doctor --json` with the selected URL before world work.
 
                 ## Required workflow
 
@@ -153,7 +153,7 @@ public static class ProjectInitializer
 
         return new ProjectInitResult(root, projectName, created, unchanged,
         [
-            "Set RESONITE_LINK_URL to the current ResoniteLink WebSocket URL.",
+            "If no URL is configured, run resoloop discover --json; connect to one candidate or ask the user to choose among multiple, following resonite-build.",
             "Run resoloop doctor, then validate, diff, and apply content/main.json.",
             "Restart Codex if it does not detect the project skills under .agents/skills immediately.",
             "Capture the live world with resoloop capture content/main.json --camera main --output artifacts/main.jpg --json; use .svg for offline projection.",

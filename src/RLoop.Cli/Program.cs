@@ -87,12 +87,26 @@ public static class Program
             var commandToken = commandCancellation.Token;
             if (parsed.Has("verbose")) Console.Error.WriteLine(JsonSerializer.Serialize(new { configSources = resolution.Sources }));
 
+            if (parsed.Positionals[0].Equals("discover", StringComparison.OrdinalIgnoreCase))
+            {
+                if (parsed.Positionals.Count != 1)
+                    throw new RLoopException("UNEXPECTED_ARGUMENT", "discover takes no positional arguments.", ExitCodes.InvalidArguments);
+                var seconds = parsed.IntOption("discovery-seconds", SessionDiscovery.DefaultSeconds, 1, 60);
+                var sessions = await new ResoniteSessionDiscovery().DiscoverAsync(TimeSpan.FromSeconds(seconds), commandToken);
+                output.Success(new { durationSeconds = seconds, count = sessions.Count, sessions }, writer =>
+                {
+                    if (sessions.Count == 0) writer.WriteLine("No ResoniteLink sessions discovered. Enable ResoniteLink in the intended world or use an explicit URL.");
+                    foreach (var session in sessions) writer.WriteLine($"{session.Url}  {session.SessionId}  {session.SessionName}");
+                });
+                return ExitCodes.Success;
+            }
+
             if (parsed.Positionals[0].Equals("blender", StringComparison.OrdinalIgnoreCase))
                 return await RunBlender(parsed, output, resolution.Config, commandToken);
 
             var flux = new FluxProcessTool(resolution.Config.FluxExecutable ?? "flux-sdk", new FluxSdkDeployer());
             if (parsed.Positionals[0].Equals("doctor", StringComparison.OrdinalIgnoreCase))
-                return await RunDoctor(output, resolution.Config, flux, commandToken);
+                return await RunDoctor(parsed, output, resolution.Config, flux, commandToken);
             if (parsed.Positionals[0].Equals("flux", StringComparison.OrdinalIgnoreCase))
                 return await RunFlux(parsed, output, resolution.Config, flux, commandToken);
             if (parsed.Positionals[0].Equals("logs", StringComparison.OrdinalIgnoreCase))
@@ -149,7 +163,7 @@ public static class Program
                     result = await SceneArtifactService.CaptureAsync(document, camera, captureOutput, width, height, commandToken);
                 else
                 {
-                    var captureUri = ConfigResolver.RequireUrl(resolution.Config);
+                    var captureUri = await ResolveConnectionUrlAsync(parsed, resolution.Config, commandToken);
                     if (!captureUri.IsLoopback && resolution.Config.ScreenshotsDirectory is null)
                         throw new RLoopException("CAPTURE_DIRECTORY_REQUIRED", "Remote Resonite requires --screenshots-dir pointing to its locally accessible screenshot export folder.", ExitCodes.InvalidArguments);
                     var screenshots = resolution.Config.ScreenshotsDirectory ?? ScreenshotDirectoryResolver.ResolveDefault();
@@ -162,7 +176,7 @@ public static class Program
                 return ExitCodes.Success;
             }
 
-            var uri = ConfigResolver.RequireUrl(resolution.Config);
+            var uri = await ResolveConnectionUrlAsync(parsed, resolution.Config, commandToken);
             await using var client = new ResoniteLinkClientAdapter(TimeSpan.FromSeconds(resolution.Config.TimeoutSeconds));
             await client.ConnectAsync(uri, TimeSpan.FromSeconds(resolution.Config.TimeoutSeconds), commandToken);
             var world = new WorldService(client, GeneratedContentMetadata.SourceForVersion(ProductVersion()));
@@ -242,14 +256,18 @@ public static class Program
         return ExitCodes.Success;
     }
 
-    private static async Task<int> RunDoctor(OutputWriter output, RLoopConfig config, IFluxTool flux,
+    private static Task<Uri> ResolveConnectionUrlAsync(ParsedArguments args, RLoopConfig config, CancellationToken token) =>
+        SessionDiscovery.ResolveUrlAsync(config, new ResoniteSessionDiscovery(),
+            args.IntOption("discovery-seconds", SessionDiscovery.DefaultSeconds, 1, 60), args.Option("session"), token);
+
+    private static async Task<int> RunDoctor(ParsedArguments args, OutputWriter output, RLoopConfig config, IFluxTool flux,
         CancellationToken cancellationToken)
     {
         var checks = new List<DoctorCheck>();
         Uri? uri = null;
         try
         {
-            uri = ConfigResolver.RequireUrl(config);
+            uri = await ResolveConnectionUrlAsync(args, config, cancellationToken);
             checks.Add(new DoctorCheck("resonite-link-url", "pass", true, uri.ToString()));
         }
         catch (RLoopException ex)
@@ -753,7 +771,7 @@ public static class Program
         {
             var manifestPath = Path.GetFullPath(args.Positional(2, "Flux manifest"));
             var manifest = FluxManifestOrchestrator.Inspect(manifestPath);
-            var uri = ConfigResolver.RequireUrl(config);
+            var uri = await ResolveConnectionUrlAsync(args, config, ct);
             await using var client = new ResoniteLinkClientAdapter(TimeSpan.FromSeconds(config.TimeoutSeconds));
             await client.ConnectAsync(uri, TimeSpan.FromSeconds(config.TimeoutSeconds), ct);
             var world = new WorldService(client, GeneratedContentMetadata.SourceForVersion(ProductVersion()));
@@ -836,7 +854,7 @@ public static class Program
         }
         else if (sub == "deploy")
         {
-            var uri = ConfigResolver.RequireUrl(config);
+            var uri = await ResolveConnectionUrlAsync(args, config, ct);
             var project = Path.GetFullPath(args.RequireOption("project"));
             var module = args.RequireOption("module");
             await using var client = new ResoniteLinkClientAdapter(TimeSpan.FromSeconds(config.TimeoutSeconds));
@@ -961,6 +979,7 @@ Project setup:
   resoloop doctor [--url ws://localhost:PORT] [--json]
 
 Connection and observation:
+  resoloop discover [--discovery-seconds 12] [--json]
   resoloop status|ping [--url ws://localhost:PORT] [--json]
   resoloop hierarchy [--under ID_OR_PATH_OR_STABLE --state FILE] [--depth 2] [--include-components] [--summary] [--json]
   resoloop find (--name TEXT [--exact] | --component TYPE) [--under SLOT] [--direct-children] [--depth 8] [--json]
@@ -1015,6 +1034,8 @@ Diagnostics:
   resoloop logs [--path FILE_OR_DIRECTORY] [--tail 200]
 
 Global options: --url, --timeout SECONDS, --command-timeout SECONDS, --json, --verbose
+Discovery: --url auto [--session EXACT_SESSION_ID_OR_NAME] [--discovery-seconds 12] (1..60 seconds)
+List announcements with discover; auto requires exactly one match. Explicit URLs keep their existing precedence.
 Exact Slot path (PowerShell): 'path:["Root","A/B"," Label "]' preserves separators and spaces in names.
 Configuration priority: CLI > environment > .resoloop.json > ~/.resoloop/config.json
 Environment: RESONITE_LINK_URL, RESOLOOP_TIMEOUT_SECONDS, RESOLOOP_COMMAND_TIMEOUT_SECONDS, RESOLOOP_FLUX_EXECUTABLE, RESONITE_MANAGED_DATA_PATH, RESONITE_LOG_PATH, RESOLOOP_BLENDER_EXECUTABLE
