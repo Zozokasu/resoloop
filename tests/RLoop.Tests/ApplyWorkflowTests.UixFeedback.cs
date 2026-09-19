@@ -188,6 +188,40 @@ public sealed partial class ApplyWorkflowTests
     }
 
     [Fact]
+    public async Task CheckpointReaderRecoversAfterTemporarySharingViolation()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        var path = Path.Combine(_root, "temporarily-locked.json");
+        const string content = "{\"sequence\":42}";
+        CheckpointFiles.Write(path, content);
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        Task<string> read;
+        using (var blocker = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.None))
+        {
+            read = Task.Run(() =>
+            {
+                started.SetResult();
+                return CheckpointFiles.Read(path);
+            });
+            await started.Task;
+            await Task.Delay(300);
+        }
+        Assert.Equal(content, await read.WaitAsync(TimeSpan.FromSeconds(10)));
+    }
+
+    [Fact]
+    public async Task CheckpointReaderReportsPersistentSharingViolation()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        var path = Path.Combine(_root, "persistently-locked.json");
+        CheckpointFiles.Write(path, "{}");
+        using var blocker = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.None);
+        var read = Task.Run(() => Assert.Throws<IOException>(() => CheckpointFiles.Read(path)));
+        var error = await read.WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.Equal(32, error.HResult & 0xffff);
+    }
+
+    [Fact]
     public async Task ConcurrentCheckpointReadersAlwaysSeeACompleteSnapshot()
     {
         var path = Path.Combine(_root, "snapshot.json");

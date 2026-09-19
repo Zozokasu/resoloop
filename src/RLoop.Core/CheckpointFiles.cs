@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text;
 
 namespace RLoop.Core;
@@ -18,6 +19,7 @@ internal static class CheckpointFiles
     // Readers keep the old complete snapshot open while Windows atomically replaces its name.
     internal static string Read(string path)
     {
+        var timer = Stopwatch.StartNew();
         for (var attempt = 0; ; attempt++)
         {
             try
@@ -26,10 +28,16 @@ internal static class CheckpointFiles
                 using var reader = new StreamReader(stream, Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
                 return reader.ReadToEnd();
             }
-            catch (IOException ex) when (attempt < 5 && (ex.HResult & 0xffff) is 2 or 3 or 32 or 33)
+            catch (IOException ex) when ((ex.HResult & 0xffff) switch
             {
-                // Windows can briefly expose a rename/delete-pending window to a new opener.
-                Thread.Sleep(10 * (attempt + 1));
+                2 or 3 => attempt < 5,
+                32 or 33 => timer.Elapsed < TimeSpan.FromSeconds(2),
+                _ => false
+            })
+            {
+                // Repeated atomic replacements can deny a new Windows opener for longer
+                // than one rename. Bound contention retries without hiding a persistent lock.
+                Thread.Sleep(Math.Min(10 * (attempt + 1), 100));
             }
         }
     }
