@@ -14,6 +14,8 @@ Background, border and shadow Slots should not consume layout space. Separate th
 
 For the background Image of a world-space panel, use the [UI Unlit background material recipe](assets.md#world-space-background-material) to prevent unwanted show-through. Treat this separately from layout exclusion and child ordering.
 
+Normally include a [reverse-culling rear cover](assets.md#rear-cover-with-reverse-culling) that follows the background's RectTransform bounds. Keep it out of content layout and input targeting, and inspect front and rear views at the tested Canvas sizes. Cover the panel boundary once rather than adding a rear duplicate to every nested visual.
+
 For a pressed-button depth effect, keep the layout-managed outer Rect and hit target steady. Move the inner surface and text padding while keeping the shadow fixed. The tested effect used a 2px right/down offset; use the requested design's depth. Runtime-driven offsets belong to the driver, not competing fixed manifest fields.
 
 Do not apply panel stretching to every descendant. Switch knobs, checkbox marks, slider fills and handles have their own dimensions and drivers. Test both extrema/states after conversion. In test13, stretching the knob border created a thick frame that extended left when off; keeping the knob's intended fixed dimensions fixed it. The 20x20 example is not a universal knob size.

@@ -1,6 +1,6 @@
 # ResoniteLinkセッション探索
 
-preview.12のローカルビルドで利用可能（nuget.org未公開）。公式`YellowDogMan.ResoniteLink` 0.13.1に含まれる`LinkSessionListener`をadapter内で使用し、UnitySDKと同じセッション通知を受信する。依存バージョンの更新やポート総当たりは不要。
+preview.13からNuGet配布版でも利用可能。公式`YellowDogMan.ResoniteLink` 0.13.1に含まれる`LinkSessionListener`をadapter内で使用し、UnitySDKと同じセッション通知を受信する。依存バージョンの更新やポート総当たりは不要。
 
 ```powershell
 resoloop discover --json

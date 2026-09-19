@@ -47,3 +47,28 @@ The reflected spelling is `OffsetFactor`, not `OffestFactor`. `ZWrite` and `ZTes
 Set the background Image's field to `"Material": "$component:background-material"`. Keep the material under the saved item's Assets/Materials and share it among backgrounds requiring the same configuration. This is a background material, distinct from UI_TextUnlitMaterial; do not propagate these settings indiscriminately to text, icons, foreground decoration or intentionally translucent layers. Hierarchy order and IgnoreLayout alone do not supply this depth behavior. After applying, inspect the actual Image.Material target and all four values, then check overlapping UI from relevant viewing angles for both unwanted show-through and hidden foreground content.
 
 On 2026-09-19, read-only inspection of the user's `UIX Template/Canvas/Background mask` Image confirmed its Material reference targets UI_UnlitMaterial with exactly these four values; runtime Reflection confirmed the member names and types. The user supplied the visual failure and remedy; this inspection verified the configuration, without modifying the example or running a before/after visual experiment. Reuse the configuration, not the example's session-scoped IDs.
+
+## Rear cover with reverse culling
+
+By default, add a rear cover to a world-space UI panel as part of its background construction. Users can walk around or turn a panel, and a front-facing background alone can disappear from behind. Skip the extra cover only when the intended design is one-sided or see-through, or an existing backing already closes the rear. Apply this at the panel's background boundary; it does not require duplicating every button, label or decorative layer.
+
+1. Add a dedicated child Slot under the front backdrop (or an equivalent background layer), with its own RectTransform and Image/GradientImage. Match the front background's bounds, rounded sprite, nine-slice sizing, tint and gradient; let the cover follow resizing. Keep it outside content layout and set `InteractionTarget=false` so it remains decorative.
+2. Keep the front-facing material and create a separate UI_UnlitMaterial for the rear with `Sidedness=Back`. The observed front material used `Sidedness=Front`. Verify `Sidedness` through runtime Reflection; these values select the rendered side, so do not confuse them with which face a generic culling API removes. Retain the background depth recipe: `ZWrite=On`, `ZTest=LessOrEqual`, `OffsetFactor=1`, `OffsetUnits=100`.
+3. Bind only the rear Image's `Material` to the new material. Keep its provider under the saved item's Assets/Materials, reusing the front sprite when its configuration matches. Preserve alpha clipping for rounded transparent corners; the tested material used `AlphaClip=true` and `AlphaCutoff=0.01`, but match the actual sprite/front configuration rather than treating that cutoff as universal. Share a rear material only among matching rear-cover roles.
+4. Inspect both material references and their sidedness after apply. Capture the front and rear: the rear should show the intended background, while front controls and text remain visible, with no edge gaps or flicker. Check resized bounds and interaction targets, then reapply to confirm convergence. Keep the cover and its required providers in the standalone panel's saved root.
+
+Example rear material fields, in addition to the background Image's own sprite/color configuration:
+
+```json
+{
+  "Sidedness": "Back",
+  "ZWrite": "On",
+  "ZTest": "LessOrEqual",
+  "OffsetFactor": 1,
+  "OffsetUnits": 100
+}
+```
+
+A dedicated rear background avoids making foreground text and controls visible in reverse. Do not change a shared front material to Back or switch the whole UI to Double as a shortcut. With an unrotated duplicate, reversing material sidedness is sufficient in the observed setup; do not also rotate it 180 degrees by default. If a particular hierarchy still clips the cover, inspect Canvas culling and depth behavior through Reflection and captures before changing global settings.
+
+Evidence: the final revision of test15's `content/build_aqua.py` added `Backdrop/Backdrop - reverse culling` with a GradientImage and its own Back material. The referenced task checked front/rear captures and read back the five material fields; reapply reported zero changes. Its inner reusable controls were not duplicated for the rear. This provides a working panel recipe, not proof that every clipping/material combination behaves identically.

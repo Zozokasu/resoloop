@@ -41,14 +41,14 @@ Resonite本体のデコンパイルはビルド・実行の必須依存ではあ
 ## Installation
 
 ~~~powershell
-dotnet tool install --global ResoLoop --version 0.1.0-preview.5
+dotnet tool install --global ResoLoop --version 0.1.0-preview.13
 resoloop --version
 ~~~
 
 Preview版の更新:
 
 ~~~powershell
-dotnet tool update --global ResoLoop --version 0.1.0-preview.5
+dotnet tool update --global ResoLoop --version 0.1.0-preview.13
 ~~~
 
 release自動化とnuget.org Trusted Publishingの設定は[docs/RELEASING.md](docs/RELEASING.md)を参照してください。
@@ -59,7 +59,7 @@ release自動化とnuget.org Trusted Publishingの設定は[docs/RELEASING.md](d
 dotnet build ResoLoop.slnx
 dotnet test ResoLoop.slnx --no-build
 dotnet pack src/RLoop.Cli/RLoop.Cli.csproj -c Release -o artifacts
-dotnet tool update --global --add-source .\artifacts ResoLoop --version 0.1.0-preview.12
+dotnet tool update --global --add-source .\artifacts ResoLoop --version 0.1.0-preview.13
 ~~~
 
 開発中は次でも実行できます。
@@ -70,7 +70,7 @@ dotnet run --project src/RLoop.Cli -- help
 
 ## ResoniteLink configuration
 
-preview.12のローカルビルドには[ResoniteLinkセッション探索](docs/DISCOVERY.md)があります。`resoloop discover --json`で候補を取得し、`resoloop status --url auto --json`で一意な候補へ接続できます。複数ある場合は`--session '正確な名前またはID'`で選択します。既定12秒間のUDP通知受信で、ポート総当たりは行いません。通常URLの設定優先順位は維持します。
+preview.13には[ResoniteLinkセッション探索](docs/DISCOVERY.md)があります。`resoloop discover --json`で候補を取得し、`resoloop status --url auto --json`で一意な候補へ接続できます。複数ある場合は`--session '正確な名前またはID'`で選択します。既定12秒間のUDP通知受信で、ポート総当たりは行いません。通常URLの設定優先順位は維持します。
 
 手動指定する場合はResoniteに表示された現在のportを設定します。portは起動ごとに変わるためハードコードされていません。
 

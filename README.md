@@ -25,14 +25,14 @@ Requirements:
 Install resoloop in PowerShell:
 
 ~~~powershell
-dotnet tool install --global ResoLoop --version 0.1.0-preview.12
+dotnet tool install --global ResoLoop --version 0.1.0-preview.13
 resoloop --version
 ~~~
 
 If resoloop is already installed, update it with the following command:
 
 ~~~powershell
-dotnet tool update --global ResoLoop --version 0.1.0-preview.12
+dotnet tool update --global ResoLoop --version 0.1.0-preview.13
 ~~~
 
 ## Usage

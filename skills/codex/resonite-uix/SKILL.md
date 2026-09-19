@@ -9,7 +9,7 @@ Use the bundled `resonite-build` workflow for connection, bounded observation, R
 
 Read the relevant references before building:
 
-- [Assets and portable parts](references/assets.md) when arranging fonts, sprites, materials, shared resources, or standalone exports; use its background material recipe for world-space UI.
+- [Assets and portable parts](references/assets.md) when arranging fonts, sprites, materials, shared resources, or standalone exports; use its background material and reverse-culling rear-cover recipes for world-space UI.
 - [Layout](references/layout.md) for new panels, responsive controls, scrolling, wrapping, sizing, or clipping problems.
 - [Interaction and migration](references/interaction-and-migration.md) for inputs, state-driven visuals, existing hierarchy changes, or component recreation.
 
@@ -24,6 +24,8 @@ The audit also reports observed texture settings, sprite/material references and
 For layout, assign control of each axis: parent layout, content fitting, fixed dimension, or runtime driver. Change Canvas.Size to test available UI space; Slot.Scale changes world presentation. Preserve the requested typography, border thickness, and small moving controls while adjusting layout. Keep Image and Text on separate Slots, exclude background/outline/shadow layers from layout with a verified IgnoreLayout configuration, and inspect world-space material/depth settings when ordering is wrong.
 
 For world-space UI, the usual Resonite UI placement, assign the background Image an explicit UI_UnlitMaterial using the [world-space background settings](references/assets.md#world-space-background-material). Make this part of normal panel construction: leaving the background material at its defaults can let elements behind the panel show through. Apply the recipe to the background role and verify the foreground remains visible.
+
+Include a [reverse-culling rear cover](references/assets.md#rear-cover-with-reverse-culling) as a normal part of world-space panel construction, without waiting for a separate request. Add a background-only Image/GradientImage with a dedicated back-facing material so the panel does not disappear when viewed from behind. Omit it when the design intentionally calls for a one-sided or see-through panel, or an existing backing already covers the rear. Include the cover in standalone panel exports and check both front and rear views before completion.
 
 Before declaring completion, check the relevant normal/narrow/wide sizes, long content, scroll endpoints, and control states in actual captures. Restore temporary values and positions and read them back. Distinguish structure, field-driven behavior, user input, visual checks, reapply convergence, and save/reload portability. Directly setting IsPressed verifies a downstream effect; it does not prove a real click. Report manual or multiplayer checks that remain unperformed. Reapply should preserve user-entered state and converge without writes.
 
