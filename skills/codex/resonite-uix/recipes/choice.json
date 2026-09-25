@@ -1,0 +1,13 @@
+{
+  "prototypes": {
+    "uix.choice": {
+      "slot": { "key": "${key}", "name": "${key}" },
+      "components": [
+        { "key": "${key}-rect", "type": "[FrooxEngine]FrooxEngine.UIX.RectTransform", "fields": "${rect}" },
+        { "key": "${key}-button", "type": "[FrooxEngine]FrooxEngine.UIX.Button", "fields": { "ColorDrivers": [], "SendSlotEvents": true } },
+        { "key": "${key}-selected", "type": "[FrooxEngine]FrooxEngine.ValueField<bool>" },
+        { "key": "${key}-choice", "type": "[FrooxEngine]FrooxEngine.UIX.ValueRadio<${valueType}>", "fields": { "TargetValue": "${state}", "OptionValue": "${option}", "CheckVisual": "$member:${key}-selected.Value" } }
+      ]
+    }
+  }
+}

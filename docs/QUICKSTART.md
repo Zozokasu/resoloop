@@ -56,19 +56,17 @@ resoloop doctor
 
 ## 4. 最初のコンテンツを適用する
 
-初期ファイルはschema v1、ownership、stable root keyを含み、`Root` 直下にプロジェクト名を含む `ResoLoop_Test_*` Slotを作って `FrooxEngine.Grabbable` を追加します。変更前にoffline validation、runtime validation、planの順で確認します。
+初期ファイルはschema v1、ownership、stable root keyを含み、`Root` 直下にプロジェクト名を含む `ResoLoop_Test_*` Slotを作って `FrooxEngine.Grabbable` を追加します。変更前にdiffで対象と理由を確認します。diff自身がoffline/runtime validationを実行するため、通常はvalidateの別実行を重ねません。
 
 ~~~powershell
-resoloop validate content/main.json --json
-resoloop validate content/main.json --strict --json
-resoloop plan content/main.json --json
+resoloop diff content/main.json --brief --json
 $apply = resoloop apply content/main.json --json | ConvertFrom-Json
 $slotId = $apply.data.slotId
 
 resoloop inspect $slotId --members --json
 ~~~
 
-`content/main.json` のposition、scale、Component fieldsなどを編集して、validateとplanを通してから同じapplyを再実行します。stateは `.resoloop/state/` にcheckpointされ、変更なしの対象にはworld書き込みを行いません。
+`content/main.json` のposition、scale、Component fieldsなどを編集して、diffの対象と理由を確認してから同じapplyを再実行します。stateは `.resoloop/state/` にcheckpointされ、変更なしの対象にはworld書き込みを行いません。
 
 適用時には作業ルートへ `AI_GeneratedContent` が自動で付き、`Source` に実行中の resoloop のバージョンが記録されます。`runtimeRelocatable` の子ルートや、`Grabbable`、`RawDataTool`、`AvatarRoot`、`ObjectRoot` を持つ子ルートも個別にタグ付けされます。
 
@@ -157,7 +155,7 @@ Codexはcurrent directoryからrepository rootまでの `.agents/skills/` を読
 1. `doctor` とboundedな `hierarchy` / `find` で現在状態を観測する。
 2. `type search` / `type describe` でruntime APIを確認する。
 3. checked-in JSONまたは `.pg` sourceを編集する。
-4. JSONは `validate`、`validate --strict`、`plan` の順に検証する。
+4. JSONは `diff --brief` で検証と変更対象の確認を行う。単独の `validate` はオフライン作業、`validate --strict` はruntime型問題の切り分けに使う。
 5. applyまたはFlux deployを実行する。
 6. `inspect --members` で結果を再観測し、差があれば修正する。
 

@@ -6,6 +6,26 @@ namespace RLoop.Tests;
 public sealed class ModelMappingTests
 {
     [Fact]
+    public void RendersGenericArgumentsInsideDeclaringTypePlaceholders()
+    {
+        Assert.Equal("[FrooxEngine]FrooxEngine.UIX.Slider<float>+Direction", ModelMapper.Render(new Link.TypeReference
+        {
+            Type = "[FrooxEngine]FrooxEngine.UIX.Slider<>+Direction",
+            GenericArguments = [new() { Type = "float" }]
+        }));
+        Assert.Equal("Outer<int,bool>+Inner<string>", ModelMapper.Render(new Link.TypeReference
+        {
+            Type = "Outer<,>+Inner<>",
+            GenericArguments = [new() { Type = "int" }, new() { Type = "bool" }, new() { Type = "string" }]
+        }));
+        Assert.Equal("Nullable<Inner<float>>", ModelMapper.Render(new Link.TypeReference
+        {
+            Type = "Nullable<>", GenericArguments = [new() { Type = "Inner<>", GenericArguments = [new() { Type = "float" }] }]
+        }));
+        Assert.Equal("Existing<float>", ModelMapper.Render(new Link.TypeReference { Type = "Existing<float>" }));
+    }
+
+    [Fact]
     public void PreservesPlaybackTypeForFluxElementBindingsAndPlaybackState()
     {
         var mapped = ModelMapper.MapMember(new Link.SyncPlayback

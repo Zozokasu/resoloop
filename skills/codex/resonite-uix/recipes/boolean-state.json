@@ -1,0 +1,17 @@
+{
+  "prototypes": {
+    "uix.boolean-state": {
+      "slot": { "key": "${key}", "name": "${key}" },
+      "components": [
+        {
+          "key": "${key}-driver", "type": "[FrooxEngine]FrooxEngine.BooleanValueDriver<${valueType}>",
+          "fields": { "TargetField": "${target}", "FalseValue": "${off}", "TrueValue": "${on}" }
+        },
+        {
+          "key": "${key}-copy", "type": "[FrooxEngine]FrooxEngine.ValueCopy<bool>",
+          "fields": { "Source": "${source}", "Target": "$member:${key}-driver.State", "WriteBack": false }
+        }
+      ]
+    }
+  }
+}

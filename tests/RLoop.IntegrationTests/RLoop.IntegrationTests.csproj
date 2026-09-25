@@ -15,5 +15,6 @@
   </ItemGroup>
   <ItemGroup>
     <None Include="../../examples/uix-responsive.json" Link="examples/uix-responsive.json" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="../fixtures/uix-controls-recipes.json" Link="fixtures/uix-controls-recipes.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

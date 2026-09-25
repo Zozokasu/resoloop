@@ -2,6 +2,18 @@
 
 # resoloop
 
+## UIX制作の効率化
+
+`uix recipe list --json` で機能構造のレシピ、`uix recipe describe button --json` で引数と接続口を確認できます。button・boolean-state・scroll-contentに加え、text-input・toggle・choice・slider・value-stateを同梱しています。共通の選択状態からタブや開閉パネルも構成できます。色・形・文字・寸法・押下時の表現はレシピに固定せず、利用側で自由に構成します。
+
+```powershell
+resoloop uix recipe export button --output content/recipes/button.json --json
+resoloop diff content/main.json --brief --report artifacts/plan-01.json --json
+resoloop apply content/main.json --brief --json
+```
+
+エクスポートした通常のprototype JSONをincludeして使います。[レシピの接続方法](skills/codex/resonite-uix/references/recipes.md)を参照してください。`--brief`は差分・監査などの表示量を減らし、`--report`は省略前の詳細を新規ファイルに保存します。既存ファイルは上書きしません。diffには宣言・runtime型検証が含まれるため、通常作業でvalidateの2モードを重ねる必要はありません。apply自身の直前検証は維持します。
+
 ![resoloop_logo](./resource/resoloop_resonite_16_9.png)
 
 resoloop は、Codex や Claude Code などの AI エージェントから Resonite のワールドを操作するための CLI です。

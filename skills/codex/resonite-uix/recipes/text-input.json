@@ -1,0 +1,13 @@
+{
+  "prototypes": {
+    "uix.text-input": {
+      "slot": { "key": "${key}", "name": "${key}" },
+      "components": [
+        { "key": "${key}-rect", "type": "[FrooxEngine]FrooxEngine.UIX.RectTransform", "fields": "${rect}" },
+        { "key": "${key}-button", "type": "[FrooxEngine]FrooxEngine.UIX.Button", "fields": { "ColorDrivers": [], "ClearFocusOnPress": false } },
+        { "key": "${key}-editor", "type": "[FrooxEngine]FrooxEngine.TextEditor", "fields": { "Text": "${text}" } },
+        { "key": "${key}-input", "type": "[FrooxEngine]FrooxEngine.UIX.TextField", "fields": { "Editor": "$component:${key}-editor", "__text": "${text}" } }
+      ]
+    }
+  }
+}

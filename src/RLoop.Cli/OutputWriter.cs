@@ -4,16 +4,38 @@ using RLoop.Core;
 
 namespace RLoop.Cli;
 
-public sealed class OutputWriter(bool json)
+public sealed class OutputWriter(bool json, bool brief = false) : IDisposable
 {
     private static readonly JsonSerializerOptions Compact = CreateOptions(false);
     private static readonly JsonSerializerOptions Indented = CreateOptions(true);
 
-    public void Success(object? data, Action<TextWriter>? human = null)
+    private StreamWriter? report;
+    public string? ReportPath { get; private set; }
+
+    // Reserve before connecting or mutating. Never overwrite a manifest/checkpoint by accident.
+    public void OpenReport(string path)
     {
-        if (json)
+        var fullPath = Path.GetFullPath(path);
+        try
         {
-            Console.Out.WriteLine(JsonSerializer.Serialize(new { ok = true, data }, Compact));
+            Directory.CreateDirectory(Path.GetDirectoryName(fullPath)!);
+            report = new StreamWriter(new FileStream(fullPath, FileMode.CreateNew, FileAccess.Write, FileShare.Read));
+            ReportPath = fullPath;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            throw new RLoopException("REPORT_CREATE_FAILED", "--report requires a writable, new file: " + fullPath,
+                ExitCodes.InvalidArguments, suggestions: ["Choose a new report filename; existing files are never overwritten."], innerException: ex);
+        }
+    }
+
+    public void Success(object? data, Action<TextWriter>? human = null, object? briefData = null)
+    {
+        WriteReport(new { ok = true, data });
+        var visible = brief ? briefData ?? BriefOutput.Project(data) : data;
+        if (json || brief || ReportPath is not null)
+        {
+            Console.Out.WriteLine(JsonSerializer.Serialize(new { ok = true, data = visible, report = ReportPath }, Compact));
             return;
         }
         if (human is not null) human(Console.Out);
@@ -27,13 +49,34 @@ public sealed class OutputWriter(bool json)
             ok = false,
             error = new { code = error.Code, message = error.Message, context = error.Context, suggestions = error.Suggestions }
         };
-        if (json) Console.Error.WriteLine(JsonSerializer.Serialize(payload, Compact));
+        WriteReport(payload);
+        if (json || brief || ReportPath is not null)
+        {
+            var context = brief && error.Context is not null
+                ? error.Context.ToDictionary(pair => pair.Key, pair => BriefOutput.Project(pair.Value))
+                : error.Context;
+            Console.Error.WriteLine(JsonSerializer.Serialize(new
+            {
+                ok = false,
+                error = new { code = error.Code, message = error.Message, context, suggestions = error.Suggestions },
+                report = ReportPath
+            }, Compact));
+        }
         else
         {
             Console.Error.WriteLine($"{error.Code}: {error.Message}");
             foreach (var suggestion in error.Suggestions) Console.Error.WriteLine($"  next: {suggestion}");
         }
     }
+
+    private void WriteReport(object payload)
+    {
+        if (report is null) return;
+        report.WriteLine(JsonSerializer.Serialize(payload, Compact));
+        report.Flush();
+    }
+
+    public void Dispose() => report?.Dispose();
 
     public void Progress(ApplyProgress progress, bool ndjson)
     {

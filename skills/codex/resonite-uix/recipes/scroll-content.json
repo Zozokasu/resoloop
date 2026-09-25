@@ -1,0 +1,11 @@
+{
+  "prototypes": {
+    "uix.scroll-content": {
+      "slot": { "key": "${key}", "name": "${key}" },
+      "components": [
+        { "key": "${key}-rect", "type": "[FrooxEngine]FrooxEngine.UIX.RectTransform", "fields": "${rect}" },
+        { "key": "${key}-scroll", "type": "[FrooxEngine]FrooxEngine.UIX.ScrollRect", "fields": { "ViewportOverride": "${viewport}" } }
+      ]
+    }
+  }
+}

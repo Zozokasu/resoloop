@@ -20,7 +20,9 @@ public static class BundledSkillManager
     // Only these packaged paths are writable. Never use paths supplied by the installed lock.
     public static IReadOnlyList<string> Files { get; } = Names.Select(name => name + "/SKILL.md")
         .Concat(["resonite-uix/references/assets.md", "resonite-uix/references/layout.md",
-            "resonite-uix/references/interaction-and-migration.md"]).ToArray();
+            "resonite-uix/references/interaction-and-migration.md", "resonite-uix/references/recipes.md",
+            "resonite-uix/references/control-verification.md"])
+        .Concat(UixRecipes.Catalog.Select(recipe => $"resonite-uix/recipes/{recipe.Name}.json")).ToArray();
 
     public static SkillSyncResult Sync(string targetDirectory, bool update)
     {

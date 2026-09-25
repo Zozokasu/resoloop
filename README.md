@@ -84,11 +84,29 @@ If Blender is installed on your PC, resoloop detects and uses it automatically.
 
 You do not need to have Blender open.
 
-## Learn more
+## Efficient UIX authoring
+
+UIX recipes provide reusable button, text-input, toggle, exclusive-choice, slider, shared-state, boolean binding and scroll-content structures. Choice/state bindings also compose tabs and open/closed panels. They leave shapes, colors, fonts, dimensions and feedback to the caller. Discover a recipe's parameters and connection points, then export it as a normal declaration prototype:
+
+~~~powershell
+resoloop uix recipe list --json
+resoloop uix recipe describe button --json
+resoloop uix recipe describe text-input --json
+resoloop uix recipe export button --output content/recipes/button.json --json
+resoloop diff content/main.json --brief --report artifacts/plan-01.json --json
+resoloop apply content/main.json --brief --json
+resoloop uix audit '$slot:panel' --state .resoloop/state/panel.json --brief --report artifacts/audit-01.json --json
+~~~
+
+Include the exported recipe and instantiate its prototype as described in [Structural recipes](skills/codex/resonite-uix/references/recipes.md). Recipe export and reports require new filenames. `--brief` reduces displayed evidence, not validation: diff already performs offline and runtime checks, and apply repeats preflight against the current world. Standalone validate remains useful for offline authoring or diagnosis. Full reports preserve the existing JSON format.
+
+## Documentation
 
 - [Detailed documentation](README-DETAILS.md) — commands, architecture, declaration format, Flux-SDK, and limitations
 - [Quick start](docs/QUICKSTART.md) — detailed steps including applying, verifying, and using ProtoFlux
 - [Declaration format](docs/DECLARATIVE.md) — specification for `content/*.json`
+- [UIX agent efficiency](docs/AGENT-EFFICIENCY.md) — implementation and measured before/after token usage
+- [Control recipe efficiency](docs/CONTROL-RECIPE-EFFICIENCY.md) — expanded controls and a separate before/after benchmark
 - [Roadmap](docs/ROADMAP.md)
 
 ## License

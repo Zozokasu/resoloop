@@ -1,0 +1,14 @@
+{
+  "prototypes": {
+    "uix.slider": {
+      "slot": { "key": "${key}", "name": "${key}" },
+      "components": [
+        { "key": "${key}-rect", "type": "[FrooxEngine]FrooxEngine.UIX.RectTransform", "fields": "${rect}" },
+        { "key": "${key}-slider", "type": "[FrooxEngine]FrooxEngine.UIX.Slider<float>",
+          "fields": { "ColorDrivers": [], "Min": "${min}", "Max": "${max}", "SlideDirection": "${direction}", "AnchorOffset": "${anchorOffset}", "HandleAnchorMinDrive": "$member:${handle}.AnchorMin", "HandleAnchorMaxDrive": "$member:${handle}.AnchorMax" },
+          "initialFields": { "Value": "${initial}" }
+        }
+      ]
+    }
+  }
+}

@@ -99,7 +99,7 @@ public static class ProjectInitializer
                 ## Required workflow
 
                 - Inspect unfamiliar Component types, members, methods, and Flux nodes through Reflection or Flux-SDK metadata. Never guess runtime names.
-                - Before mutation, run offline validation, strict validation when connected, and plan/diff. Re-run the same apply and confirm it converges without writes.
+                - Before mutation, review `diff --brief` targets and reasons. Diff already includes offline and runtime Reflection validation; standalone validate is for offline authoring or diagnosis. Apply repeats preflight. Re-run the same apply and confirm it converges without writes.
                 - Keep declarative content in `content/`, ProtoGraph source in `flux/`, and session state under `.resoloop/`.
                 - Prefer stable selectors such as `$slot:key`, `$component:key`, and `$member:key.Member`; pass `--state` after reconnecting.
 
@@ -154,7 +154,7 @@ public static class ProjectInitializer
         return new ProjectInitResult(root, projectName, created, unchanged,
         [
             "If no URL is configured, run resoloop discover --json; connect to one candidate or ask the user to choose among multiple, following resonite-build.",
-            "Run resoloop doctor, then validate, diff, and apply content/main.json.",
+            "Run resoloop doctor, then diff --brief and apply content/main.json; diff includes runtime validation.",
             "Restart Codex if it does not detect the project skills under .agents/skills immediately.",
             "Capture the live world with resoloop capture content/main.json --camera main --output artifacts/main.jpg --json; use .svg for offline projection.",
             "For ProtoFlux, set RESONITE_MANAGED_DATA_PATH and use flux/resoloop.flux.json."

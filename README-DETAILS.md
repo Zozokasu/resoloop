@@ -166,9 +166,7 @@ Exit codeは、2=引数、3=設定、4=接続、5=not found、6=validation、7=�
 [examples/agent-test.json](examples/agent-test.json)を参照してください。
 
 ~~~powershell
-resoloop validate examples/agent-test.json --json
-resoloop validate examples/agent-test.json --strict --json
-resoloop plan examples/agent-test.json --json
+resoloop diff examples/agent-test.json --brief --report artifacts/plan-01.json --json
 resoloop apply examples/agent-test.json --json
 ~~~
 
@@ -241,6 +239,16 @@ resoloop validate examples/uix-responsive.json --strict --json
 UIX auditはread-onlyの部分的な構造観測です。計算後のsizeはunknownのままで、texture/material設定やButton color driverが確認できても画像の読込・描画成功は保証しません。`--strict`はwarningも失敗として扱います。[responsive example](examples/uix-responsive.json)は共有font、等幅card、複数fieldを一時変更して復元するprobeを示します。`set-members`と明示的な展開上限は[宣言形式](docs/DECLARATIVE.md)、検証済みの挙動と残る課題は[UIX feedback](docs/UIX-FEEDBACK.md)を参照してください。
 
 schema 2のexact Slot名保持、同名兄弟・不正assetの事前検証、ライフサイクル変更後の参照再検証、checkpointの単一writerとreaderの共存、市松模様を圧縮設定だけに帰因させない調査結果は[test14改善記録](docs/UIX-TEST14-FEEDBACK.md)にまとめています。
+
+### 構造レシピと要約出力
+
+`uix recipe list`、`uix recipe describe NAME`、`uix recipe export NAME --output NEW_FILE.json`は接続不要です。button・boolean-state・scroll-content・value-state・text-input・toggle・choice・sliderを通常のprototypeとして配布します。色、形、文字、寸法、押下表現を固定せず、引数と接続口で利用側の任意の構成と接続します。choiceのselected出力からタブ、bool状態から開閉パネルも構成できます。[接続例と制約](skills/codex/resonite-uix/references/recipes.md)、[検証雛形](skills/codex/resonite-uix/references/control-verification.md)を参照してください。dropdownのフォーカス・外側クリック・キーボード操作は追加の実装が必要です。
+
+`--brief`を付けたdiff/planは変更対象・理由を一度だけ出力し、`--summary --brief`なら件数のみになります。UIX auditはSlot観測の全件列挙を省き、問題・打切り・partial状態を保持します。testは失敗または構造確認のみのケースを表示します。applyの進捗は抑制しますが、`--ndjson-progress`の明示指定は維持します。未対応の結果型は従来のdataを返します。
+
+`--report NEW_FILE.json`は省略前の成功/エラーJSONを保存します。既存ファイルを拒否し、接続/変更前に出力先を確保します。brief/report利用時は`--json`なしでもJSON出力になります。通常のJSON形式は変更しません。既存の`--summary`単独では従来どおりchanges配列が残ります。
+
+diff/planはofflineとruntime Reflectionの検証を内部で実行します。通常の変更ループでvalidateの両モードを先に重ねる必要はありません。単独validateはオフライン作業や診断用に維持し、apply直前の再検証も維持します。要約表示によって検証・観測範囲や削除の`--yes`要件は変わりません。
 
 ## Flux-SDK
 

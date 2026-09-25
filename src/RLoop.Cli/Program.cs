@@ -12,12 +12,13 @@ public static class Program
     public static async Task<int> Main(string[] args)
     {
         var parsed = ParsedArguments.Parse(args);
-        var output = new OutputWriter(parsed.Has("json"));
+        using var output = new OutputWriter(parsed.Has("json"), parsed.Has("brief"));
         using var userCancellation = new CancellationTokenSource();
         CancellationTokenSource? commandCancellation = null;
         Console.CancelKeyPress += (_, e) => { e.Cancel = true; userCancellation.Cancel(); };
         try
         {
+            if (parsed.Option("report") is { } reportPath) output.OpenReport(reportPath);
             if (parsed.Has("version") || parsed.Positionals.Count == 1 &&
                 parsed.Positionals[0].Equals("version", StringComparison.OrdinalIgnoreCase))
             {
@@ -69,6 +70,12 @@ public static class Program
                     writer.WriteLine($"skills {result.Mode}: synchronized={result.Synchronized}");
                     foreach (var skill in result.Skills) writer.WriteLine($"  {skill.Status,-20} {skill.Path}");
                 });
+                return ExitCodes.Success;
+            }
+
+            if (parsed.Positionals.Count >= 2 && parsed.Positionals[0] == "uix" && parsed.Positionals[1] == "recipe")
+            {
+                RunUixRecipe(parsed, output);
                 return ExitCodes.Success;
             }
 
@@ -224,6 +231,21 @@ public static class Program
         {
             commandCancellation?.Dispose();
         }
+    }
+
+    private static void RunUixRecipe(ParsedArguments args, OutputWriter output)
+    {
+        var operation = args.Positional(2, "recipe operation (list, describe, export)");
+        if (operation == "list" && args.Positionals.Count == 3)
+            output.Success(UixRecipes.Catalog.Select(recipe => new { recipe.Name, recipe.Prototype, recipe.Purpose }));
+        else if (operation == "describe" && args.Positionals.Count == 4)
+            output.Success(UixRecipes.Describe(args.Positional(3, "recipe name")));
+        else if (operation == "export" && args.Positionals.Count == 4)
+        {
+            var name = args.Positional(3, "recipe name");
+            output.Success(new { name, output = UixRecipes.Export(name, args.RequireOption("output")), prototype = UixRecipes.Describe(name).Prototype });
+        }
+        else throw UnknownCommand("uix recipe: use list, describe NAME, or export NAME --output NEW_FILE.json");
     }
 
     private static async Task<int> RunBlender(ParsedArguments args, OutputWriter output, RLoopConfig config, CancellationToken token)
@@ -486,7 +508,7 @@ public static class Program
                         w.WriteLine($"{operation.Action,-7} {operation.Kind,-9} {operation.Path}");
                     w.WriteLine($"creates={result.Creates} updates={result.Updates} renames={result.Renames} deletes={result.Deletes} no-ops={result.NoOps}");
                     w.WriteLine($"atomic={result.Atomic}; recovery={result.Recovery}");
-                });
+                }, args.Has("brief") ? BriefOutput.Plan(result, filters.Length == 0 ? result.Changes : displayed) : null);
                 break;
             }
             case "validate":
@@ -915,7 +937,7 @@ public static class Program
 
     private static ApplyOptions ApplyOptionsFrom(ParsedArguments args, OutputWriter output) => new(
         args.Option("state"), args.Has("adopt"), args.Has("profile"),
-        args.Has("quiet") ? null : progress => output.Progress(progress, args.Has("ndjson-progress")),
+        args.Has("quiet") || args.Has("brief") && !args.Has("ndjson-progress") ? null : progress => output.Progress(progress, args.Has("ndjson-progress")),
         args.Has("prune"), args.Has("yes"));
 
     private static string ProductVersion()
@@ -951,7 +973,9 @@ Validates and plans the complete document before mutation. State checkpoints mak
 resoloop plan|diff FILE.json [--state FILE] [--adopt]
   [--changes-only | --creates-only | --deletes-only | --summary]
 
-Never changes the world. JSON output always includes a separate changes array; output filters affect only operations.
+Never changes the world. Without --brief, JSON includes a separate changes array; output filters affect only operations.
+--brief emits one compact target/reason list (changes by default); --summary --brief emits counts only.
+--report NEW_FILE.json saves the full standard JSON, including all changes. Existing files are never overwritten.
 Review --deletes-only before apply --prune --yes.
 """,
             "find" => """
@@ -1014,6 +1038,9 @@ Editing:
   resoloop apply FILE.json [--state FILE] [--adopt] [--profile] [--ndjson-progress] [--prune --yes]
   resoloop test FILE.json [--state FILE] [--probe --yes]
   resoloop uix audit SLOT|$slot:key [--state FILE] [--depth 6] [--max-slots 256] [--strict]
+  resoloop uix recipe list
+  resoloop uix recipe describe NAME
+  resoloop uix recipe export NAME --output NEW_FILE.json (offline structural prototypes; no visual defaults)
   resoloop item audit SLOT [--strict] [--allow-external ID|PATH|$slot:key ...]
     [--allow-external-role COMPONENT_TYPE:MEMBER_PATH|COMPONENT_ID:MEMBER_PATH ...] [--state WORLD_STATE]
     Review externalRoleCandidates first; type roles cover all matching components, ID roles are session-scoped.
@@ -1034,6 +1061,9 @@ Diagnostics:
   resoloop logs [--path FILE_OR_DIRECTORY] [--tail 200]
 
 Global options: --url, --timeout SECONDS, --command-timeout SECONDS, --json, --verbose
+  --brief: compact diff/plan, validate, test and UIX audit; apply progress is suppressed unless --ndjson-progress.
+  --report NEW_FILE.json: save full success/error JSON before projection; never overwrite existing files.
+  Brief/report output is JSON even without --json. Unprojected commands retain their normal result data.
 Discovery: --url auto [--session EXACT_SESSION_ID_OR_NAME] [--discovery-seconds 12] (1..60 seconds)
 List announcements with discover; auto requires exactly one match. Explicit URLs keep their existing precedence.
 Exact Slot path (PowerShell): 'path:["Root","A/B"," Label "]' preserves separators and spaces in names.

@@ -1,0 +1,10 @@
+{
+  "prototypes": {
+    "uix.value-state": {
+      "slot": { "key": "${key}", "name": "${key}" },
+      "components": [
+        { "key": "${key}-state", "type": "[FrooxEngine]FrooxEngine.ValueField<${valueType}>", "initialFields": { "Value": "${initial}" } }
+      ]
+    }
+  }
+}

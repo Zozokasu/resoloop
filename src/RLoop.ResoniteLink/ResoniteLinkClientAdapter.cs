@@ -569,7 +569,23 @@ internal static class ModelMapper
     {
         if (reference is null) return null;
         var args = reference.GenericArguments;
-        return args is null || args.Count == 0 ? reference.Type : $"{reference.Type}<{string.Join(',', args.Select(Render))}>";
+        if (args is null || args.Count == 0) return reference.Type;
+        var rendered = args.Select(Render).ToArray();
+        // Upstream TypeReference.Type is an open definition. Arguments belong in its
+        // placeholders, including declaring types: Slider<>+Direction + float.
+        var placeholders = System.Text.RegularExpressions.Regex.Matches(reference.Type, @"<,*>");
+        if (placeholders.Count > 0 && placeholders.Sum(match => match.Length - 1) == rendered.Length)
+        {
+            var index = 0;
+            return System.Text.RegularExpressions.Regex.Replace(reference.Type, @"<,*>", match =>
+            {
+                var count = match.Length - 1;
+                var value = "<" + string.Join(',', rendered.Skip(index).Take(count)) + ">";
+                index += count;
+                return value;
+            });
+        }
+        return $"{reference.Type}<{string.Join(',', rendered)}>";
     }
 }
 

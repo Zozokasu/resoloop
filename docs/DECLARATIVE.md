@@ -4,6 +4,8 @@
 
 ## Include、parameter、prototype、repeat
 
+UIXの構造prototypeは `resoloop uix recipe list` / `describe NAME` / `export NAME --output NEW_FILE.json` で取得できます。通常のincludeと同じ予算・key衝突検査・所有stateを使い、新しいruntime言語は追加しません。button、boolean-state、scroll-content、value-state、text-input、toggle、choice、sliderの接続口とcaller側の見た目の構成は[レシピreference](../skills/codex/resonite-uix/references/recipes.md)を参照してください。init/skills syncでもJSON資産を配布し、利用者編集を保護します。
+
 ~~~json
 {
   "include": ["materials.json"],

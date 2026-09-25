@@ -1,0 +1,55 @@
+{
+  "schemaVersion": "1",
+  "ownership": { "key": "control-recipes" },
+  "slot": { "key": "canvas", "name": "Canvas", "parent": "Root" },
+  "components": [
+    { "key": "canvas-rect", "type": "FrooxEngine.UIX.RectTransform" },
+    { "key": "canvas-ui", "type": "FrooxEngine.UIX.Canvas", "fields": { "Size": [500, 400] } }
+  ],
+  "children": [
+    { "$prototype": "uix.value-state", "$with": { "key": "enabled", "valueType": "bool", "initial": false } },
+    { "$prototype": "uix.value-state", "$with": { "key": "selection", "valueType": "int", "initial": 1 } },
+    {
+      "$prototype": "uix.text-input", "$with": { "key": "input", "rect": {}, "text": "$component:editable-text" },
+      "components": [{ "key": "input-hit", "type": "FrooxEngine.UIX.Image", "fields": { "InteractionTarget": true } }],
+      "children": [{ "slot": { "key": "label", "name": "Caller Text" }, "components": [
+        { "key": "text-rect", "type": "FrooxEngine.UIX.RectTransform" },
+        { "key": "editable-text", "type": "FrooxEngine.UIX.Text", "initialFields": { "Content": "Initial" } }
+      ] }]
+    },
+    { "$prototype": "uix.toggle", "$with": { "key": "toggle", "rect": {}, "state": "$member:enabled-state.Value" } },
+    { "$prototype": "uix.choice", "$with": { "key": "option-a", "rect": {}, "valueType": "int", "state": "$member:selection-state.Value", "option": 1 } },
+    { "$prototype": "uix.choice", "$with": { "key": "option-b", "rect": {}, "valueType": "int", "state": "$member:selection-state.Value", "option": 2 } },
+    { "$prototype": "uix.slider", "$with": { "key": "slider", "rect": {}, "min": 0, "max": 1, "initial": 0.25, "direction": "Horizontal", "anchorOffset": [0, 0.5], "handle": "handle-rect" },
+      "children": [{ "slot": { "key": "handle", "name": "Caller Handle" }, "components": [
+        { "key": "handle-rect", "type": "FrooxEngine.UIX.RectTransform", "fields": { "OffsetMin": [-8, -8], "OffsetMax": [8, 8] } }
+      ] }]
+    },
+    { "slot": { "key": "page-a", "name": "Page A" } },
+    { "slot": { "key": "page-b", "name": "Page B" } },
+    { "$prototype": "uix.boolean-state", "$with": { "key": "page-a-visibility", "valueType": "bool", "source": "$member:option-a-selected.Value", "target": "$slot-member:page-a.IsActive", "off": false, "on": true } },
+    { "$prototype": "uix.boolean-state", "$with": { "key": "page-b-visibility", "valueType": "bool", "source": "$member:option-b-selected.Value", "target": "$slot-member:page-b.IsActive", "off": false, "on": true } },
+    { "$prototype": "uix.value-state", "$with": { "key": "toggle-observation", "valueType": "bool", "initial": false } },
+    { "$prototype": "uix.boolean-state", "$with": { "key": "toggle-binding", "valueType": "bool", "source": "$member:enabled-state.Value", "target": "$member:toggle-observation-state.Value", "off": false, "on": true } }
+  ],
+  "tests": [
+    { "name": "Edited values and downstream selection", "probe": { "kind": "set-members", "safe": true, "restore": true, "values": {
+      "$member:editable-text.Content": "Edited", "$member:enabled-state.Value": true, "$member:selection-state.Value": 2, "$member:slider-slider.Value": 0.75
+    } }, "assertions": [
+      { "target": "$member:editable-text.Content", "expected": "Edited", "phase": "after" },
+      { "target": "$member:toggle-observation-state.Value", "expected": true, "phase": "after" },
+      { "target": "$member:option-a-selected.Value", "expected": false, "phase": "after" },
+      { "target": "$member:option-b-selected.Value", "expected": true, "phase": "after" },
+      { "target": "$member:handle-rect.AnchorMin", "expected": [0.75, 0.5], "phase": "after" },
+      { "target": "$member:handle-rect.AnchorMax", "expected": [0.75, 0.5], "phase": "after" }
+    ] },
+    { "name": "Restored state", "assertions": [
+      { "target": "$member:editable-text.Content", "expected": "Initial" },
+      { "target": "$member:enabled-state.Value", "expected": false },
+      { "target": "$member:selection-state.Value", "expected": 1 },
+      { "target": "$member:option-a-selected.Value", "expected": true },
+      { "target": "$member:option-b-selected.Value", "expected": false },
+      { "target": "$member:slider-slider.Value", "expected": 0.25 }
+    ] }
+  ]
+}
