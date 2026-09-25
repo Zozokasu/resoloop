@@ -50,6 +50,8 @@ On 2026-09-19, read-only inspection of the user's `UIX Template/Canvas/Backgroun
 
 ## Rear cover with reverse culling
 
+Put new front/rear material providers in separate named Slots below Assets/Materials. `manifest scaffold --kind provider --key rear-material --type '[FrooxEngine]FrooxEngine.UI_UnlitMaterial' --output NEW_NODE.json` generates the structural node; append it to children, then fill the fields below. Colors and render settings remain caller-owned. Review identity warnings in diff; adding identityFields after an ambiguous checkpoint exists does not retroactively populate that checkpoint.
+
 By default, add a rear cover to a world-space UI panel as part of its background construction. Users can walk around or turn a panel, and a front-facing background alone can disappear from behind. Skip the extra cover only when the intended design is one-sided or see-through, or an existing backing already closes the rear. Apply this at the panel's background boundary; it does not require duplicating every button, label or decorative layer.
 
 1. Add a dedicated child Slot under the front backdrop (or an equivalent background layer), with its own RectTransform and Image/GradientImage. Match the front background's bounds, rounded sprite, nine-slice sizing, tint and gradient; let the cover follow resizing. Keep it outside content layout and set `InteractionTarget=false` so it remains decorative.

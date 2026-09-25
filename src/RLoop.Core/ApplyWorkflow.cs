@@ -20,6 +20,8 @@ public sealed record ApplyDocument(
     [JsonIgnore]
     public string? SourcePath { get; init; }
 
+    public string ResolveStatePath(string? explicitPath = null) => ApplyStateStore.ResolvePath(this, explicitPath);
+
     public static ApplyDocument Load(string path)
     {
         if (!File.Exists(path))
@@ -40,7 +42,7 @@ public sealed record ApplyDocument(
         catch (JsonException ex)
         {
             var unknown = Regex.Match(ex.Message, @"property '([^']+)'", RegexOptions.IgnoreCase).Groups[1].Value;
-            var suggestions = UnknownPropertySuggestions(unknown, ex.Path);
+            var suggestions = AuthoringSchema.ErrorHints(ex.Path, unknown) ?? UnknownPropertySuggestions(unknown, ex.Path);
             throw new RLoopException("APPLY_DOCUMENT_INVALID", $"Invalid apply document: {ex.Message}",
                 ExitCodes.ValidationFailed,
                 new Dictionary<string, object?> { ["jsonPath"] = ex.Path, ["unknownProperty"] = string.IsNullOrWhiteSpace(unknown) ? null : unknown },
@@ -234,8 +236,9 @@ public static class ApplyDocumentValidator
         foreach (var camera in document.Cameras ?? new Dictionary<string, ApplyCameraSpec>())
         {
             var path = "$.cameras." + camera.Key;
-            if (camera.Value.Position.Length != 3 || camera.Value.Target.Length != 3)
-                Issue("CAPTURE_CAMERA_INVALID", "Camera position and target require three numbers.", path);
+            if (camera.Value is null) { Issue("CAPTURE_CAMERA_INVALID", "Camera must be an object. Use schema describe camera --json.", path); continue; }
+            try { _ = LiveCaptureService.CameraRotation(camera.Value); }
+            catch (RLoopException ex) { Issue(ex.Code, ex.Message, path); }
             if (camera.Value.Width is < 64 or > 8192 || camera.Value.Height is < 64 or > 8192)
                 Issue("CAPTURE_RESOLUTION_INVALID", "Camera width and height must be between 64 and 8192.", path);
         }
@@ -488,7 +491,9 @@ public static class ApplyDocumentValidator
             }
         }
 
-        return new ApplyValidationResult(issues.Count == 0, document.SchemaVersion, slots, components, references, strict, issues);
+        var valid = issues.Count == 0;
+        if (valid) issues.AddRange(ComponentIdentityDiagnostics.Analyze(document, resolvedTypes));
+        return new ApplyValidationResult(valid, document.SchemaVersion, slots, components, references, strict, issues);
     }
 
     private static System.Text.Json.Nodes.JsonNode? PreflightValue(JsonElement value)

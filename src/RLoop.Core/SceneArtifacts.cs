@@ -13,7 +13,10 @@ public sealed record SceneSummary(string Source, SceneBounds Bounds, IReadOnlyLi
     IReadOnlyList<SceneIssue> Issues, int Slots, int Components, bool Valid);
 public sealed record CaptureArtifact(string Source, string Camera, int Width, int Height, string Output,
     string SummaryOutput, string Format, bool ScreenshotAvailable, string Capability, SceneSummary Summary,
-    CaptureOwnership? Ownership = null);
+    CaptureOwnership? Ownership = null)
+{
+    public CanvasFrame? Framing { get; init; }
+}
 
 public sealed record CaptureOwnership(string ParentId, string SlotId, string SlotName)
 {

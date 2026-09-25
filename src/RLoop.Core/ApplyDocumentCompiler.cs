@@ -133,13 +133,18 @@ public static class ApplyDocumentCompiler
         {
             foreach (var key in obj.Select(x => x.Key).ToArray())
             {
+                // Child instances own their parameter/repeat scope. Do not expand them twice
+                // or substitute their parameters before Instantiate has established that scope.
+                if (key == "children" && obj[key] is JsonArray children)
+                {
+                    ExpandNodeArray(children, variables, prototypes, context, path + ".children");
+                    continue;
+                }
                 if (obj[key] is JsonValue scalar && scalar.TryGetValue<string>(out var text))
                     obj[key] = Substitute(text, variables, path + "." + key);
                 else if (obj[key] is { } child)
                     ExpandValue(child, variables, prototypes, context, path + "." + key);
             }
-            foreach (var arrayName in new[] { "children" })
-                if (obj[arrayName] is JsonArray array) ExpandNodeArray(array, variables, prototypes, context, path + "." + arrayName);
             return;
         }
         if (node is JsonArray values)
@@ -155,7 +160,8 @@ public static class ApplyDocumentCompiler
         for (var i = 0; i < array.Count; i++)
         {
             var source = array[i] as JsonObject ?? throw new RLoopException("APPLY_NODE_INVALID", $"{path}[{i}] must be an object.", ExitCodes.ValidationFailed);
-            var repeat = source["$repeat"] as JsonObject;
+            var repeat = source["$repeat"]?.DeepClone() as JsonObject;
+            if (repeat is not null) SubstituteTree(repeat, variables, path + $"[{i}].$repeat");
             var count = repeat?["count"]?.GetValue<int>() ?? 1;
             if (count < 0 || count > MaxExpandedNodes) Fail("APPLY_REPEAT_LIMIT", $"{path}[{i}] repeat count is outside 0..{MaxExpandedNodes}.");
             var variable = repeat?["as"]?.GetValue<string>() ?? "index";
@@ -190,6 +196,36 @@ public static class ApplyDocumentCompiler
     private static JsonObject Instantiate(JsonObject source, IReadOnlyDictionary<string, JsonNode?> variables,
         JsonObject prototypes, Context context, string path)
     {
+        if (source.ContainsKey("$recipe"))
+        {
+            if (source.ContainsKey("$prototype") || source.ContainsKey("$instance"))
+                Fail("APPLY_RECIPE_INVALID", path + " cannot combine $recipe with $prototype/$instance.");
+            if (source["$recipe"] is not JsonValue recipeValue || !recipeValue.TryGetValue<string>(out var recipeName))
+                Fail("APPLY_RECIPE_INVALID", path + ".$recipe must be a recipe name.");
+            var recipe = UixRecipes.Describe(source["$recipe"]!.GetValue<string>());
+            if (source["$with"] is not JsonObject suppliedRecipe)
+                Fail("APPLY_RECIPE_INVALID", path + " requires $with containing the recipe parameters.");
+            var parameters = (JsonObject)source["$with"]!.DeepClone();
+            SubstituteTree(parameters, variables, path + ".$with");
+            var missing = recipe.Parameters.Keys.Where(key => !parameters.ContainsKey(key)).ToArray();
+            var unknown = parameters.Select(pair => pair.Key).Except(recipe.Parameters.Keys).ToArray();
+            if (missing.Length > 0 || unknown.Length > 0)
+                Fail("APPLY_RECIPE_PARAMETERS", $"{path} recipe '{recipe.Name}': missing [{string.Join(", ", missing)}]; unknown [{string.Join(", ", unknown)}].");
+            if (parameters["key"] is not JsonValue keyValue || !keyValue.TryGetValue<string>(out var localKey) ||
+                string.IsNullOrWhiteSpace(localKey) || localKey.Any(c => !char.IsAsciiLetterOrDigit(c) && c is not '-' and not '_'))
+                Fail("APPLY_RECIPE_KEY_INVALID", path + ".$with.key must use ASCII letters, digits, '-' or '_'.");
+            parameters["key"] = $"uix-{recipe.Name}--{parameters["key"]!.GetValue<string>()}";
+            var recipeScope = new Dictionary<string, JsonNode?>(variables, StringComparer.Ordinal);
+            foreach (var pair in parameters) recipeScope[pair.Key] = pair.Value?.DeepClone();
+            var builtIn = (JsonObject)JsonNode.Parse(UixRecipes.Read(recipe.Name))!["prototypes"]![recipe.Prototype]!.DeepClone();
+            SubstituteTree(builtIn, recipeScope, path);
+            var recipeOverrides = (JsonObject)source.DeepClone();
+            recipeOverrides.Remove("$recipe"); recipeOverrides.Remove("$with");
+            // Overrides remain caller-owned, including keys and all visual fields.
+            Merge(builtIn, recipeOverrides, includeLayer: false);
+            context.Instances++;
+            return builtIn;
+        }
         var prototypeName = source["$prototype"]?.GetValue<string>() ?? source["$instance"]?.GetValue<string>();
         if (prototypeName is null) return (JsonObject)source.DeepClone();
         var prototype = prototypes[prototypeName] as JsonObject ?? throw new RLoopException(

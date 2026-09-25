@@ -7,6 +7,8 @@ description: Build, adapt, or debug native Resonite UIX controls and responsive 
 
 Use the bundled `resonite-build` workflow for connection, bounded observation, Reflection, owned apply state, exact-target deletion, and post-change inspection. Before designing a UIX hierarchy, decide which root will be saved or distributed, which controls must work, and which dimensions follow available space or content. A draggable gallery board is not necessarily a portable item by itself.
 
+For new controls, use the direct `$recipe` declarations in the structural recipe reference. They bundle wiring and namespace keys by recipe role without supplying visuals. For known applied fields, use one `observe '$member:KEY.FIELD' [...] --state STATE --json` per verification phase to collect values and reference targets together; keep structural inspection and image checks for their separate evidence.
+
 Read the relevant references before building:
 
 - [Structural recipes](references/recipes.md) for button, input, toggle, exclusive choice, slider, shared state and scrolling wiring. Choice/state bindings also compose tabs and open/closed panels. Use `uix recipe list` / `describe` to choose a contract; include or export only recipes needed. Visual hierarchy, shape, dimensions, colors and feedback remain caller-owned. Read the linked verification templates only when authoring tests.
@@ -17,6 +19,10 @@ Read the relevant references before building:
 Start with a representative functioning control or small panel before generating the whole library. For a design import, list required interactions first: editable input/caret, dropdown opening and selection, radio exclusivity, toggle, tabs, slider and progress as applicable. A static collection of state variants is not evidence that these interactions work. Inspect user-supplied examples within a bounded subtree; use them as evidence, not as authorization to edit them. Verify types, members, enum values, and reference targets in the current runtime. The examples in these references were observed on Resonite 2026.9.9.1136 and 2026.9.14.1239 / ResoniteLink 0.13.1.0; they are not universal engine invariants.
 
 Keep shared providers near the top of the saved item and outside its content layout. Give providers and logic stable, role-specific Slots and keys. Reuse matching provider configurations across parts. Separate reusable inner UIX controls from optional standalone Canvas/gallery wrappers.
+
+Start new declarations with `manifest scaffold --output NEW_FILE.json --key KEY` and query only unfamiliar shapes with `schema describe camera|node|component|probe --json`. For new materials/providers, `manifest scaffold --kind provider --key KEY --type REFLECTED_TYPE --output NEW_NODE.json` generates one named provider Slot; append it to children and supply the visual fields yourself. Review `APPLY_COMPONENT_IDENTITY_RISK` warnings in validate/diff before creation. Distinct keys alone do not guarantee reconnect identity; existing ambiguous checkpoints need inspected recovery, not a guessed ordinal.
+
+For actual captures of an applied flat Canvas, prefer `capture FILE --frame '$slot:canvas' --state STATE --view front --output front.jpg --json` and the corresponding rear view. Framing uses the exact selected Slot's live Canvas collider and ancestor transforms, with optional `--margin`, `--fov`, `--width` and `--height`. It preserves target transforms. It does not include overflowing children, curved geometry or occlusion; use an explicit camera for those and inspect every returned image.
 
 Give siblings distinct names as well as stable keys; duplicate names are rejected before apply. Exact names containing slashes or spaces can be addressed with `path:["Root","A/B"," Label "]`; prefer stable selectors for owned content. Checkpoint schema 2 preserves name segments across connections; a display path alone can be ambiguous.
 

@@ -50,7 +50,7 @@ public static class ProjectInitializer
                 },
                 cameras = new Dictionary<string, object?>
                 {
-                    ["main"] = new { position = new[] { 0f, 2.5f, -6f }, target = new[] { 0f, 1.5f, 2f }, fieldOfView = 60, width = 1280, height = 720, representative = true }
+                    ["main"] = AuthoringSchema.CameraExample() with { Position = [0, 2.5f, -6], Target = [0, 1.5f, 2], Representative = true }
                 },
                 tests = new[]
                 {

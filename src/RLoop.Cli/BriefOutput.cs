@@ -28,7 +28,7 @@ public static class BriefOutput
     public static object Plan(ApplyPlanResult plan, IReadOnlyList<ApplyPlanEntry> displayed) => new
     {
         plan.Valid, plan.OwnershipKey, plan.StateFile, plan.Creates, plan.Updates, plan.Renames,
-        plan.Deletes, plan.NoOps, plan.Atomic, plan.Recovery,
+        plan.Deletes, plan.NoOps, plan.Atomic, plan.Recovery, plan.Warnings,
         // One list, no duplicated changes/diffs. Keep exact targets and reasons reviewable.
         operations = displayed.Select(entry => new
         {

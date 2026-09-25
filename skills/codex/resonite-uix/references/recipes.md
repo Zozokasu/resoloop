@@ -2,7 +2,27 @@
 
 Use recipes for recurring native wiring, while designing visuals for the current request. They contain no Image, Text, font, sprite, material, color, fixed dimensions, or pressed animation. Recipe `rect`, `off` and `on` values are supplied by the caller. A recipe alone is not a finished visible control.
 
-Discover contracts without dumping source:
+For new content, use `$recipe` directly in `children`; no export/include or prototype-copying helper is needed. `$with` takes the parameters in the table below. The compiler gives built-in instances the prefix `uix-<recipe>--<key>`: replace `<key>` in the port table with that entire prefix. Shared state and a control may use the same logical key without colliding. All parameters are required; missing and unknown names fail together before live mutation.
+
+```json
+{"children":[
+  {"$recipe":"value-state","$with":{"key":"enabled","valueType":"bool","initial":false}},
+  {"$recipe":"toggle","$with":{"key":"enabled","rect":{},"state":"$member:uix-value-state--enabled-state.Value"},
+   "children":[{"slot":{"key":"enabled-face","name":"Caller-designed face"},"components":[]}]}
+]}
+```
+
+The toggle Slot is `uix-toggle--enabled`, its button is `uix-toggle--enabled-button`, and its toggle Component is `uix-toggle--enabled-toggle`. Append caller-designed components/children normally. Override values and keys are literal; use explicit namespaced selectors. Keys use ASCII letters, digits, `-` or `_`. Same-recipe/same-key duplicates still fail global key validation. This syntax uses the installed CLI's recipes; retain exported prototypes when a project needs a pinned editable copy. Do not convert an already-applied prototype to `$recipe` without a deliberate key migration: its generated keys differ.
+
+After apply, batch the known values/references needed for one verification phase:
+
+```powershell
+resoloop observe '$member:uix-value-state--enabled-state.Value' '$member:uix-toggle--enabled-toggle.TargetValue' --state STATE --json
+```
+
+It returns member IDs, typed values and target IDs, without unrelated fields. Combine other control selectors in this same call; avoid one `component inspect` process per control when only known members are needed. Different Components are read sequentially, not atomically. Keep wider structural inspections, captures and reversible probes where those provide different evidence.
+
+Discover unfamiliar contracts or export a pinned copy without dumping source:
 
 ```powershell
 resoloop uix recipe list --json

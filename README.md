@@ -98,15 +98,35 @@ resoloop apply content/main.json --brief --json
 resoloop uix audit '$slot:panel' --state .resoloop/state/panel.json --brief --report artifacts/audit-01.json --json
 ~~~
 
-Include the exported recipe and instantiate its prototype as described in [Structural recipes](skills/codex/resonite-uix/references/recipes.md). Recipe export and reports require new filenames. `--brief` reduces displayed evidence, not validation: diff already performs offline and runtime checks, and apply repeats preflight against the current world. Standalone validate remains useful for offline authoring or diagnosis. Full reports preserve the existing JSON format.
+For new content, declare `{"$recipe":"button","$with":{"key":"accept","rect":{}}}` directly in `children`; no include/export is needed. Generated keys use `uix-button--accept` as their prefix. Exported prototypes remain supported for pinned editable wiring; their existing keys do not change. See [Structural recipes](skills/codex/resonite-uix/references/recipes.md) for parameters and ports. Recipe export and reports require new filenames. `--brief` reduces displayed evidence, not validation: diff already performs offline and runtime checks, and apply repeats preflight against the current world. Standalone validate remains useful for offline authoring or diagnosis. Full reports preserve the existing JSON format.
 
-## Documentation
+Batch known managed fields with `resoloop observe '$member:state.Value' '$member:toggle.TargetValue' --state STATE --json`. This read-only command accepts up to 64 selectors and returns typed values and reference IDs, failing if any selected field is missing. It uses normal stable re-resolution after reconnect. Cross-Component values are sequential observations, not an atomic snapshot.
+
+## Declaration and capture assistance
+
+New declarations can start from an offline structural scaffold. Inspect only the schema section you need; examples come from the parser DTOs. Provider scaffolds contain no visual settings.
+
+~~~powershell
+resoloop manifest scaffold --key panel --output content/panel.json --json
+resoloop schema describe camera --json
+resoloop manifest scaffold --kind provider --key front-material --type '[FrooxEngine]FrooxEngine.UI_UnlitMaterial' --output content/front.node.json --json
+resoloop validate content/panel.json --json
+# After appending the provider node, designing and applying the panel:
+resoloop capture content/panel.json --frame '$slot:canvas' --view front --output artifacts/front.jpg --json
+resoloop capture content/panel.json --frame '$slot:canvas' --view rear --output artifacts/rear.jpg --json
+~~~
+
+`--frame` requires the exact Slot containing one live planar Canvas, and uses its collider plus ancestor transforms. It preserves content scale; overflowing children, curved geometry, mirrored scales and occlusion require an explicit camera. `validate`/`diff` return conservative identity warnings for same-type Components sharing a Slot; separate named providers avoid this ambiguity for new content. See [authoring assistance](docs/AUTHORING-ASSISTANCE.md) for contracts and verification.
+
+## Further documentation
 
 - [Detailed documentation](README-DETAILS.md) — commands, architecture, declaration format, Flux-SDK, and limitations
 - [Quick start](docs/QUICKSTART.md) — detailed steps including applying, verifying, and using ProtoFlux
 - [Declaration format](docs/DECLARATIVE.md) — specification for `content/*.json`
 - [UIX agent efficiency](docs/AGENT-EFFICIENCY.md) — implementation and measured before/after token usage
 - [Control recipe efficiency](docs/CONTROL-RECIPE-EFFICIENCY.md) — expanded controls and a separate before/after benchmark
+- [Authoring assistance efficiency](docs/AUTHORING-EFFICIENCY.md) — two runs per version measuring declaration, material-reference and capture assistance
+- [Batched observation and direct recipes](docs/OBSERVATION-RECIPE-EFFICIENCY.md) — follow-up implementation, fixed-operation replay and independent authoring comparison
 - [Roadmap](docs/ROADMAP.md)
 
 ## License

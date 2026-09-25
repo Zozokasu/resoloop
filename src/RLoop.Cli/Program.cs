@@ -79,6 +79,31 @@ public static class Program
                 return ExitCodes.Success;
             }
 
+            if (parsed.Positionals[0] is "schema" or "manifest")
+            {
+                var command = parsed.Positional(1, "subcommand");
+                if (parsed.Positionals[0] == "schema")
+                {
+                    if (command == "list" && parsed.Positionals.Count == 2) output.Success(AuthoringSchema.List());
+                    else if (command == "describe" && parsed.Positionals.Count == 3) output.Success(AuthoringSchema.Describe(parsed.Positionals[2]));
+                    else throw UnknownCommand(string.Join(' ', parsed.Positionals));
+                }
+                else
+                {
+                    if (command != "scaffold" || parsed.Positionals.Count != 2) throw UnknownCommand(string.Join(' ', parsed.Positionals));
+                    var kind = parsed.Option("kind") ?? "document";
+                    object value = kind switch
+                    {
+                        "document" => AuthoringSchema.Scaffold(parsed.Option("key") ?? "panel"),
+                        "provider" => AuthoringSchema.Provider(parsed.RequireOption("key"), parsed.RequireOption("type")),
+                        _ => throw new RLoopException("INVALID_OPTION", "--kind must be document or provider.", ExitCodes.InvalidArguments)
+                    };
+                    var path = AuthoringSchema.WriteNew(value, parsed.RequireOption("output"));
+                    output.Success(new { kind, output = path, note = kind == "provider" ? "Append this node to children; fill caller-owned fields and reference $component:" + parsed.Option("key") : "Empty structural document; add caller-owned UI and adjust or auto-frame the camera." });
+                }
+                return ExitCodes.Success;
+            }
+
             var cliConfig = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase)
             {
                 ["url"] = parsed.Option("url"), ["timeout"] = parsed.Option("timeout"),
@@ -154,9 +179,13 @@ public static class Program
             if (parsed.Positionals[0].Equals("capture", StringComparison.OrdinalIgnoreCase))
             {
                 var document = ApplyDocument.Load(parsed.Positional(1, "Apply file"));
-                var camera = parsed.RequireOption("camera");
+                if (parsed.Has("camera") == parsed.Has("frame"))
+                    throw new RLoopException("CAPTURE_MODE_REQUIRED", "Use exactly one of --camera BOOKMARK or --frame SLOT.", ExitCodes.InvalidArguments);
+                if (!parsed.Has("frame") && new[] { "view", "margin", "fov" }.Any(parsed.Has))
+                    throw new RLoopException("INVALID_OPTION", "--view/--margin/--fov require --frame.", ExitCodes.InvalidArguments);
+                var camera = parsed.Option("camera") ?? "auto-frame";
                 var explicitCaptureOutput = parsed.Option("output");
-                var captureOutput = explicitCaptureOutput ?? document.Cameras?.GetValueOrDefault(camera)?.Output;
+                var captureOutput = explicitCaptureOutput ?? (parsed.Has("frame") ? null : document.Cameras?.GetValueOrDefault(camera)?.Output);
                 if (string.IsNullOrWhiteSpace(captureOutput))
                     throw new RLoopException("CAPTURE_OUTPUT_REQUIRED", "--output is required unless the camera bookmark declares output.", ExitCodes.InvalidArguments);
                 if (!Path.IsPathFullyQualified(captureOutput))
@@ -166,6 +195,8 @@ public static class Program
                 int? width = parsed.Option("width") is null ? null : parsed.IntOption("width", 1280, 64, 8192);
                 int? height = parsed.Option("height") is null ? null : parsed.IntOption("height", 720, 64, 8192);
                 CaptureArtifact result;
+                if (parsed.Has("frame") && Path.GetExtension(captureOutput).Equals(".svg", StringComparison.OrdinalIgnoreCase))
+                    throw new RLoopException("CAPTURE_FRAME_LIVE_REQUIRED", "--frame uses live Canvas geometry and requires .jpg/.png output.", ExitCodes.InvalidArguments);
                 if (Path.GetExtension(captureOutput).Equals(".svg", StringComparison.OrdinalIgnoreCase))
                     result = await SceneArtifactService.CaptureAsync(document, camera, captureOutput, width, height, commandToken);
                 else
@@ -176,8 +207,18 @@ public static class Program
                     var screenshots = resolution.Config.ScreenshotsDirectory ?? ScreenshotDirectoryResolver.ResolveDefault();
                     await using var captureClient = new ResoniteLinkClientAdapter(TimeSpan.FromSeconds(resolution.Config.TimeoutSeconds));
                     await captureClient.ConnectAsync(captureUri, TimeSpan.FromSeconds(resolution.Config.TimeoutSeconds), commandToken);
+                    CanvasFrame? framing = null;
+                    if (parsed.Option("frame") is { } frame)
+                    {
+                        var frameWorld = new WorldService(captureClient);
+                        var slotId = await frameWorld.ResolveSlotSelectorAsync(frame, document.ResolveStatePath(parsed.Option("state")), commandToken);
+                        framing = await CanvasFraming.ObserveAsync(captureClient, slotId, parsed.Option("view") ?? "front",
+                            width ?? 1280, height ?? 720, parsed.FloatOption("fov", 60, 5, 170), parsed.FloatOption("margin", 1.1f, 1, 3), commandToken);
+                        document = document with { Cameras = new Dictionary<string, ApplyCameraSpec> { [camera] = framing.Camera } };
+                    }
                     result = await new LiveCaptureService(captureClient).CaptureAsync(document, camera, captureOutput,
                         screenshots, width, height, parsed.IntOption("capture-timeout", 60, 1, 600), commandToken);
+                    result = result with { Framing = framing };
                 }
                 output.Success(result, writer => writer.WriteLine($"captured {result.Format} {result.Width}x{result.Height} -> {result.Output}"));
                 return ExitCodes.Success;
@@ -446,6 +487,12 @@ public static class Program
                 output.Success(matches, w => { foreach (var x in matches) w.WriteLine($"{x.Id}\t{x.Path}\t{string.Join(", ", x.Components.Select(c => c.Type))}"); });
                 break;
             }
+            case "observe":
+            {
+                var result = await world.ObserveAsync(args.Positionals.Skip(1).ToArray(), args.RequireOption("state"), cancellationToken);
+                output.Success(result);
+                break;
+            }
             case "inspect":
             {
                 var slotSelector = await world.ResolveSlotSelectorAsync(args.Positional(1, "Slot ID, path, or $slot:key"),
@@ -500,10 +547,11 @@ public static class Program
                     connectionIdScope = "ResoniteLink connection; stable keys and paths are used across connections",
                     operations = displayed,
                     changes = result.Changes,
-                    result.Creates, result.Updates, result.NoOps, result.Renames, result.Deletes, result.Atomic, result.Recovery
+                    result.Creates, result.Updates, result.NoOps, result.Renames, result.Deletes, result.Atomic, result.Recovery, result.Warnings
                 };
                 output.Success(response, w =>
                 {
+                    foreach (var warning in result.Warnings) w.WriteLine($"warning {warning.Code} {warning.Path}: {warning.Message}");
                     foreach (var operation in displayed)
                         w.WriteLine($"{operation.Action,-7} {operation.Kind,-9} {operation.Path}");
                     w.WriteLine($"creates={result.Creates} updates={result.Updates} renames={result.Renames} deletes={result.Deletes} no-ops={result.NoOps}");
@@ -999,6 +1047,10 @@ resoloop - agent-first Resonite CLI loop
 Project setup:
   resoloop --version [--json]
   resoloop init [DIRECTORY] [--json]
+  resoloop schema list | schema describe document|node|slot|component|camera|test|assertion|probe [--json]
+  resoloop observe '$member:KEY.NAME' [...] --state WORLD_STATE [--json]
+  resoloop manifest scaffold --output NEW_FILE.json [--key panel] [--json]
+  resoloop manifest scaffold --kind provider --key KEY --type REFLECTED_TYPE --output NEW_NODE.json [--json]
   resoloop skills sync [DIRECTORY] (--check | --update) [--json]
   resoloop doctor [--url ws://localhost:PORT] [--json]
 
@@ -1011,6 +1063,8 @@ Connection and observation:
   resoloop scene summary FILE.json [--output summary.json]
   resoloop capture FILE.json --camera BOOKMARK [--output capture.jpg] [--width 1280 --height 720]
     [--screenshots-dir DIR] [--capture-timeout 60] (live .png/.jpg; offline .svg)
+  resoloop capture FILE.json --frame SLOT|$slot:key --output capture.jpg [--state FILE]
+    [--view front|rear] [--margin 1.1] [--fov 60] [--width 1280 --height 720] (live planar Canvas only)
 
 Blender (offline; no installation or world mutation):
   resoloop blender find [--blender-executable PATH] [--json]

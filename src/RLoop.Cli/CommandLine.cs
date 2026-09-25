@@ -41,6 +41,16 @@ public sealed class ParsedArguments
         return value;
     }
 
+    public float FloatOption(string name, float defaultValue, float min, float max)
+    {
+        var text = Option(name);
+        if (text is null) return defaultValue;
+        if (!float.TryParse(text, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var value) ||
+            !float.IsFinite(value) || value < min || value > max)
+            throw new RLoopException("INVALID_OPTION", $"--{name} must be a finite number in {min}..{max}.", ExitCodes.InvalidArguments);
+        return value;
+    }
+
     public string Positional(int index, string description)
     {
         if (Positionals.Count <= index)

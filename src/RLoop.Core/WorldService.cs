@@ -7,7 +7,7 @@ using System.Text.Json.Nodes;
 
 namespace RLoop.Core;
 
-public sealed class WorldService(IResoniteClient client, string? generatedContentSource = null)
+public sealed partial class WorldService(IResoniteClient client, string? generatedContentSource = null)
 {
     public async Task<string> ResolveSlotIdAsync(string selector, CancellationToken cancellationToken = default)
     {
@@ -158,13 +158,21 @@ public sealed class WorldService(IResoniteClient client, string? generatedConten
         ResolveStableReferenceCoreAsync(stateFile, selector, currentConnectionId, new HashSet<string>(StringComparer.Ordinal), cancellationToken);
 
     private async Task<ResolvedWorldReference> ResolveStableReferenceCoreAsync(string stateFile, string selector,
-        string? currentConnectionId, HashSet<string> resolvingComponents, CancellationToken cancellationToken)
+        string? currentConnectionId, HashSet<string> resolvingComponents, CancellationToken cancellationToken,
+        Dictionary<string, ComponentInfo>? observedComponents = null)
     {
+        async Task<ComponentInfo> ReadComponent(string id)
+        {
+            if (observedComponents is not null && observedComponents.TryGetValue(id, out var observed)) return observed;
+            var result = await client.GetComponentAsync(id, cancellationToken);
+            if (observedComponents is not null) observedComponents[id] = result;
+            return result;
+        }
         var syntax = StableSelectorSyntax.Parse(selector);
         if (syntax.Kind == "slot-member")
         {
             var target = await ResolveStableReferenceCoreAsync(stateFile, "$slot:" + syntax.Key,
-                currentConnectionId, resolvingComponents, cancellationToken);
+                currentConnectionId, resolvingComponents, cancellationToken, observedComponents);
             var slot = await client.GetSlotAsync(target.Id, 0, false, cancellationToken);
             var member = RequireSlotMember(slot, syntax.MemberName!, selector);
             return new ResolvedWorldReference(selector, member.Id!, "member", member.Type ?? member.TargetType, target.Path);
@@ -203,14 +211,14 @@ public sealed class WorldService(IResoniteClient client, string? generatedConten
             ComponentInfo? component = null;
             if (stableComponent.SessionId == currentConnectionId && !string.IsNullOrWhiteSpace(stableComponent.Id))
             {
-                try { component = await client.GetComponentAsync(stableComponent.Id, cancellationToken); }
+                try { component = await ReadComponent(stableComponent.Id); }
                 catch (RLoopException ex) when (ex.Code is "COMPONENT_NOT_FOUND" or "RESONITE_OPERATION_FAILED") { }
             }
             if (component is null)
             {
                 var stableSlot = StableReferenceResolver.ResolveSlot(stateFile, "$slot:" + stableComponent.SlotKey);
                 var slotId = (await ResolveStableReferenceCoreAsync(stateFile, "$slot:" + stableComponent.SlotKey,
-                    currentConnectionId, resolvingComponents, cancellationToken)).Id;
+                    currentConnectionId, resolvingComponents, cancellationToken, observedComponents)).Id;
                 var slot = await client.GetSlotAsync(slotId, 0, true, cancellationToken);
                 Dictionary<string, string>? referenceTargets = null;
                 if (firstVisit && stableComponent.ReferenceSelectors is { Count: > 0 })
@@ -221,7 +229,7 @@ public sealed class WorldService(IResoniteClient client, string? generatedConten
                         var targetSyntax = StableSelectorSyntax.Parse(reference.Value);
                         if (targetSyntax.Kind is not ("slot" or "slot-member") && resolvingComponents.Contains(targetSyntax.Key)) continue;
                         var target = await ResolveStableReferenceCoreAsync(stateFile, reference.Value, currentConnectionId,
-                            resolvingComponents, cancellationToken);
+                            resolvingComponents, cancellationToken, observedComponents);
                         referenceTargets[reference.Key] = target.Id;
                     }
                 }
@@ -245,7 +253,7 @@ public sealed class WorldService(IResoniteClient client, string? generatedConten
                             ["slotPath"] = stableSlot.Path, ["candidateIds"] = matching.Select(candidate => candidate.Id).ToArray() },
                         ["Inspect candidateIds and preserve the existing state. Adding identityFields to a manifest does not populate an older checkpoint's identity values.",
                          "For new content use one named provider Slot per Component or initialize immutable identityFields at creation. Recover existing content only after verifying ownership and exact candidates; do not select by ordinal or discard state blindly."]);
-                component = await client.GetComponentAsync(matching[0].Id, cancellationToken);
+                component = await ReadComponent(matching[0].Id);
             }
 
             if (memberName is null)
@@ -364,7 +372,8 @@ public sealed class WorldService(IResoniteClient client, string? generatedConten
             prepared.Entries.Count(x => x.Action == "no-op"),
             prepared.Entries.Count(x => x.Action == "rename"),
             prepared.Entries.Count(x => x.Action == "delete"), false,
-            $"Non-atomic preview. State checkpoint: {prepared.StatePath}. Re-run apply to converge; deletion requires --prune --yes.");
+            $"Non-atomic preview. State checkpoint: {prepared.StatePath}. Re-run apply to converge; deletion requires --prune --yes.")
+            { Warnings = ComponentIdentityDiagnostics.Analyze(document) };
     }
 
     public async Task<ApplyResult> ApplyAsync(ApplyDocument document, ApplyOptions? options = null,

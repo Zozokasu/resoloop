@@ -1,5 +1,11 @@
 # resoloop schema v1 authoring
 
+組込UIXレシピは `children` 内で `{"$recipe":"button","$with":{"key":"accept","rect":{}}}` と直接使えます。引数契約は既存レシピと共通、生成キーは `uix-<recipe>--<key>` を接頭辞にします。引数の不足・余分をまとめて拒否し、visual指定は追加しません。子ノードは各instance/repeatのscope確定後に一度だけ展開します。既存 `$prototype`/includeは従来のキーを保持します。組込構文への変更はキー移行になるため、適用済みmanifestを機械的に書き換えないでください。[接続例](../skills/codex/resonite-uix/references/recipes.md)を参照。
+
+`observe '$member:KEY.FIELD' [...] --state STATE --json` は1〜64個の明示フィールドをread-onlyで取得します。重複selectorを除き、同じComponentは呼出し内で一度だけ読みます。戻り値は `count`, `components`, selectorをキーとする`values`。各値にComponent ID/typeと既存のMemberValue（kind/id/type/value/targetId等）を保持します。欠落memberは部分成功にせず失敗。通常のstable参照解決による再接続時の曖昧性拒否を維持します。Component間の読取はatomicではなく、64指定の上限はlist/nested member内のサイズを制限しません。
+
+新規宣言は `resoloop manifest scaffold --output NEW_FILE.json --key KEY` で生成できます。`schema list` / `schema describe TOPIC --json` はCLIの型定義に連動した部分契約と最小例を返します。原型/include等のソース展開とruntime ComponentのReflectionは別です。cameraのposition/targetは3数値、schemaVersionは文字列`"1"`、camerasはbookmark名をキーにしたobjectです。[生成・識別診断・自動撮影](AUTHORING-ASSISTANCE.md)も参照してください。
+
 `resoloop`は複数のJSON sourceを展開してから、schema v1として一括検証します。展開は接続なしで行われ、循環include、未解決parameter、stable key衝突、既定10,000 JSON node／10 MiB／64 source fileの上限違反をmutation前に拒否します。JSON node数にはfieldやvalueも含まれ、Slot数ではありません。include先も同じ予算へ合算します。大きな単一ownershipにはrootで `"limits": { "expandedNodes": 20000 }` を指定できます（整数1〜250000）。byte数・file数の上限は変わりません。compilation結果には展開node数・設定上限・byte数を返します。上限を増やしてもruntime側の処理時間や快適な規模を保証しません。
 
 ## Include、parameter、prototype、repeat

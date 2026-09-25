@@ -277,6 +277,7 @@ public sealed record ApplyPlanResult(
     bool Atomic = false,
     string? Recovery = null)
 {
+    public IReadOnlyList<ApplyValidationIssue> Warnings { get; init; } = [];
     public string? ConnectionId => SessionId;
     public string ConnectionIdScope => "ResoniteLink connection; stable keys and paths are used across connections";
     public IReadOnlyList<ApplyPlanEntry> Changes => Operations.Where(operation => operation.Action != "no-op").ToArray();
