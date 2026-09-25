@@ -15,7 +15,8 @@ public static class AuthoringSchema
         ["document"] = typeof(ApplyDocument), ["slot"] = typeof(ApplySlotSpec),
         ["node"] = typeof(ApplyNodeSpec), ["component"] = typeof(ApplyComponentSpec),
         ["camera"] = typeof(ApplyCameraSpec), ["test"] = typeof(ApplyTestSpec),
-        ["assertion"] = typeof(ApplyAssertionSpec), ["probe"] = typeof(ApplyProbeSpec)
+        ["assertion"] = typeof(ApplyAssertionSpec), ["probe"] = typeof(ApplyProbeSpec),
+        ["reflection"] = typeof(ReflectionRequest)
     };
     public static IEnumerable<string> List() => Topics.Keys;
     public static JsonSerializerOptions JsonOptions { get; } = new()
@@ -67,9 +68,13 @@ public static class AuthoringSchema
             "test" => new ApplyTestSpec("root exists", [new("$slot:panel", Exists: true)]),
             "assertion" => new ApplyAssertionSpec("$slot:panel", Exists: true),
             "probe" => new ApplyProbeSpec(Target: "$member:state.Value", Kind: "set-member", Safe: true, Value: JsonSerializer.SerializeToElement(true)),
+            "reflection" => new ReflectionRequest([new("[FrooxEngine]FrooxEngine.UI_UnlitMaterial", ["Sidedness"], ["Sidedness"],
+                new Dictionary<string, ReflectionExpectation> { ["Sidedness"] = new(Kind: "field") })]),
             _ => throw new InvalidOperationException()
         };
-        var note = topic == "camera"
+        var note = topic == "reflection"
+            ? "Save example as the --request JSON for type query/check. Select explicit members; enums requests enum candidates only for selected fields. Optional expect maps member names to kind/valueType/targetType/enumValues (required name/value subset). Up to 64 selections and 256 members total. Version-matched disk metadata is trusted by query/check/diff/apply; --refresh or --cache off requests fresh definitions."
+            : topic == "camera"
             ? "Place under cameras as an object keyed by bookmark name. position/target are finite 3-number vectors in Root space; they must differ. fieldOfView is vertical degrees (5..170); width/height are 64..8192. Use target, not rotation/lookAt."
             : "Expanded declaration DTO; required marks non-null parameters without defaults plus required document fields. Semantic validation still applies. Component fields/types require runtime Reflection. Source include/prototypes/parameters are expanded before this schema. Examples are structural, not a visible UI.";
         return new(topic, properties, example, note);

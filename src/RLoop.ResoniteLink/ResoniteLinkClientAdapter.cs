@@ -7,23 +7,36 @@ using Link = ResoniteLink;
 
 namespace RLoop.ResoniteLink;
 
-public sealed class ResoniteLinkClientAdapter : IResoniteClient, IResoniteClientDiagnostics
+public sealed class ResoniteLinkClientAdapter : IResoniteClient, IResoniteClientDiagnostics, IReflectionMetadataClient
 {
     private readonly Link.LinkInterface _link = new();
     private readonly TimeSpan _requestTimeout;
     private readonly Dictionary<string, Link.ComponentDefinition> _componentDefinitions = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, TypeInfo> _typeDefinitions = new(StringComparer.Ordinal);
     private readonly Dictionary<string, MutableMetric> _metrics = new(StringComparer.Ordinal);
     private IReadOnlyList<string>? _allComponentTypes;
     private int _cacheHits;
     private Uri? _uri;
+    private ReflectionCacheOptions _cacheOptions;
+    private ReflectionMetadataCache? _diskCache;
+    private SessionInfo? _cacheSession;
+    private bool _forceLiveMetadata;
+    private readonly Dictionary<string, (DateTimeOffset ObservedAt, bool Live)> _componentEvidence = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, (DateTimeOffset ObservedAt, bool Live)> _typeEvidence = new(StringComparer.Ordinal);
 
-    public ResoniteLinkClientAdapter(TimeSpan? requestTimeout = null)
+    public ResoniteLinkClientAdapter(TimeSpan? requestTimeout = null, ReflectionCacheOptions? reflectionCache = null)
     {
+        _cacheOptions = reflectionCache ?? new();
+        _cacheOptions.Validate();
         _requestTimeout = requestTimeout is { } value && value > TimeSpan.Zero ? value : TimeSpan.FromSeconds(30);
     }
 
     public async Task ConnectAsync(Uri uri, TimeSpan timeout, CancellationToken cancellationToken = default)
     {
+        ClearReflectionMemory();
+        _diskCache = null;
+        _cacheSession = null;
+        _forceLiveMetadata = false;
         using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeoutCts.CancelAfter(timeout);
         try
@@ -50,7 +63,7 @@ public sealed class ResoniteLinkClientAdapter : IResoniteClient, IResoniteClient
         EnsureConnected();
         var response = await Wait(_link.GetSessionData(), "session.get", cancellationToken);
         EnsureSuccess(response, "SESSION_INFO_FAILED");
-        return new SessionInfo(_uri!.ToString(), true, response.ResoniteVersion, response.ResoniteLinkVersion, response.UniqueSessionId);
+        return _cacheSession = new SessionInfo(_uri!.ToString(), true, response.ResoniteVersion, response.ResoniteLinkVersion, response.UniqueSessionId);
     }
 
     public async Task<SlotInfo> GetSlotAsync(string id, int depth, bool includeComponentData, CancellationToken cancellationToken = default)
@@ -113,22 +126,16 @@ public sealed class ResoniteLinkClientAdapter : IResoniteClient, IResoniteClient
         IReadOnlyDictionary<string, string> fields, CancellationToken cancellationToken = default)
     {
         EnsureConnected();
+        var members = await ParseMembersAsync(componentType, fields, cancellationToken);
         var definition = await GetComponentDefinitionCachedAsync(componentType, cancellationToken);
         var resolvedType = definition.Type.FullTypeName;
-
-        var members = new Dictionary<string, Link.Member>(StringComparer.Ordinal);
-        foreach (var assignment in fields)
-        {
-            if (!definition.Members.TryGetValue(assignment.Key, out var memberDefinition))
-                throw UnknownMember(resolvedType, assignment.Key, definition.Members.Keys);
-            members[assignment.Key] = await ValueCodec.ParseAsync(_link, memberDefinition, assignment.Value, cancellationToken, _requestTimeout, RecordMetric);
-        }
 
         var response = await Wait(_link.AddComponent(new Link.AddComponent
         {
             ContainerSlotId = slotId,
             Data = new Link.Component { ComponentType = resolvedType, Members = members }
         }), "component.add", cancellationToken);
+        if (!response.Success) InvalidateDiskEvidence();
         EnsureSuccess(response, "COMPONENT_ADD_FAILED", new Dictionary<string, object?> { ["slotId"] = slotId, ["componentType"] = resolvedType });
         return new ComponentCreateResult(response.EntityId, resolvedType);
     }
@@ -137,10 +144,7 @@ public sealed class ResoniteLinkClientAdapter : IResoniteClient, IResoniteClient
         CancellationToken cancellationToken = default)
     {
         EnsureConnected();
-        var definition = await GetComponentDefinitionCachedAsync(componentType, cancellationToken);
-        if (!definition.Members.TryGetValue(member, out var memberDefinition))
-            throw UnknownMember(componentType, member, definition.Members.Keys);
-        _ = await ValueCodec.ParseAsync(_link, memberDefinition, rawValue, cancellationToken, _requestTimeout, RecordMetric);
+        _ = await ParseMembersAsync(componentType, new Dictionary<string, string> { [member] = rawValue }, cancellationToken);
     }
 
     public async Task SetComponentMemberAsync(string componentId, string member, string rawValue,
@@ -158,18 +162,12 @@ public sealed class ResoniteLinkClientAdapter : IResoniteClient, IResoniteClient
     {
         EnsureConnected();
         if (fields.Count == 0) return;
-        var definition = await GetComponentDefinitionCachedAsync(componentType, cancellationToken);
-        var members = new Dictionary<string, Link.Member>(StringComparer.Ordinal);
-        foreach (var field in fields)
-        {
-            if (!definition.Members.TryGetValue(field.Key, out var memberDefinition))
-                throw UnknownMember(definition.Type.FullTypeName, field.Key, definition.Members.Keys);
-            members[field.Key] = await ValueCodec.ParseAsync(_link, memberDefinition, field.Value, cancellationToken, _requestTimeout, RecordMetric);
-        }
+        var members = await ParseMembersAsync(componentType, fields, cancellationToken);
         var response = await Wait(_link.UpdateComponent(new Link.UpdateComponent
         {
             Data = new Link.Component { ID = componentId, Members = members }
         }), "component.update", cancellationToken);
+        if (!response.Success) InvalidateDiskEvidence();
         EnsureSuccess(response, "COMPONENT_UPDATE_FAILED", new Dictionary<string, object?>
             { ["componentId"] = componentId, ["members"] = fields.Keys.ToArray() });
     }
@@ -195,16 +193,51 @@ public sealed class ResoniteLinkClientAdapter : IResoniteClient, IResoniteClient
     public async Task<ComponentTypeInfo> DescribeComponentTypeAsync(string type, CancellationToken cancellationToken = default)
     {
         EnsureConnected();
-        var definition = await GetComponentDefinitionCachedAsync(type, cancellationToken);
+        return (await DescribeComponentMetadataAsync(type, false, cancellationToken)).Value;
+    }
+
+    public async Task<ReflectionMetadata<ComponentTypeInfo>> DescribeComponentMetadataAsync(string type, bool refresh = false, CancellationToken ct = default)
+    {
+        EnsureConnected();
+        var definition = await GetComponentDefinitionCachedAsync(type, ct, refresh);
         var members = definition.Members.Select(x => ModelMapper.MapMemberDefinition(x.Key, x.Value)).ToArray();
         var methods = definition.Methods.Select(ModelMapper.MapMethodDefinition).ToArray();
-        return new ComponentTypeInfo(definition.Type.FullTypeName, definition.CategoryPath,
-            ModelMapper.Render(definition.Type.BaseType), definition.Type.IsGenericType, members, methods);
+        var evidence = _componentEvidence[type];
+        return new(new ComponentTypeInfo(definition.Type.FullTypeName, definition.CategoryPath,
+            ModelMapper.Render(definition.Type.BaseType), definition.Type.IsGenericType, members, methods), evidence.ObservedAt, evidence.Live);
     }
 
     public async Task<TypeInfo> DescribeTypeAsync(string type, CancellationToken cancellationToken = default)
     {
+        return (await DescribeTypeMetadataAsync(type, false, cancellationToken)).Value;
+    }
+
+    public async Task<ReflectionMetadata<TypeInfo>> DescribeTypeMetadataAsync(string type, bool refresh = false, CancellationToken ct = default)
+    {
+        var value = await DescribeTypeCoreAsync(type, ct, refresh);
+        var evidence = _typeEvidence[type];
+        return new(value, evidence.ObservedAt, evidence.Live);
+    }
+
+    private async Task<TypeInfo> DescribeTypeCoreAsync(string type, CancellationToken cancellationToken, bool refresh)
+    {
         EnsureConnected();
+        cancellationToken.ThrowIfCancellationRequested();
+        refresh |= _forceLiveMetadata;
+        if (_typeDefinitions.TryGetValue(type, out var cached) && (!refresh || _typeEvidence[type].Live))
+        {
+            Interlocked.Increment(ref _cacheHits);
+            return cached;
+        }
+        var disk = await GetReflectionCacheAsync(cancellationToken);
+        if (refresh) disk.Invalidate("type", type);
+        var stored = refresh ? null : disk.Read<TypeInfo>("type", type, t => !string.IsNullOrEmpty(t.FullTypeName) &&
+            (!t.IsEnum || t.EnumValues is not null && t.IsFlags is not null));
+        if (stored is not null)
+        {
+            RememberType(type, stored.Value, stored.ObservedAt, false);
+            return stored.Value;
+        }
         var response = await Wait(_link.GetTypeDefinition(type), "type.get", cancellationToken);
         if (!response.Success)
         {
@@ -219,7 +252,8 @@ public sealed class ResoniteLinkClientAdapter : IResoniteClient, IResoniteClient
                     ExitCodes.NotFound, suggestions: ["Copy the exact [Assembly]Namespace.Type from Reflection, or use type describe COMPONENT --member FIELD to inspect its field type and enum values."], innerException: ex);
             }
         }
-        EnsureSuccess(response, "TYPE_NOT_FOUND", suggestions: await Suggestions(type, cancellationToken));
+        if (!response.Success)
+            EnsureSuccess(response, "TYPE_NOT_FOUND", suggestions: await Suggestions(type, cancellationToken));
         IReadOnlyDictionary<string, long>? enumValues = null;
         bool? isFlags = null;
         if (response.Definition.IsEnum)
@@ -229,7 +263,12 @@ public sealed class ResoniteLinkClientAdapter : IResoniteClient, IResoniteClient
             enumValues = enumResponse.Definition.Values;
             isFlags = enumResponse.Definition.IsFlags;
         }
-        return ModelMapper.MapType(response.Definition, enumValues, isFlags);
+        var mapped = ModelMapper.MapType(response.Definition, enumValues, isFlags);
+        var observedAt = DateTimeOffset.UtcNow;
+        RememberType(type, mapped, observedAt, true);
+        disk.Write("type", type, mapped, observedAt);
+        if (type != mapped.FullTypeName) disk.Write("type", mapped.FullTypeName, mapped, observedAt);
+        return mapped;
     }
 
     public async Task<SyncMethodCallResult> CallComponentMethodAsync(string componentId, string method,
@@ -347,20 +386,31 @@ public sealed class ResoniteLinkClientAdapter : IResoniteClient, IResoniteClient
         await SearchComponentTypesAsync(query.Split('.').Last(), 10, cancellationToken);
 
     private async Task<Link.ComponentDefinition> GetComponentDefinitionCachedAsync(string type,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken, bool refresh = false)
     {
-        if (_componentDefinitions.TryGetValue(type, out var cached))
+        cancellationToken.ThrowIfCancellationRequested();
+        refresh |= _forceLiveMetadata;
+        if (_componentDefinitions.TryGetValue(type, out var cached) && (!refresh || _componentEvidence[type].Live))
         {
             Interlocked.Increment(ref _cacheHits);
             return cached;
+        }
+        var disk = await GetReflectionCacheAsync(cancellationToken);
+        if (refresh) disk.Invalidate("component-sdk", type);
+        var stored = refresh ? null : disk.Read<Link.ComponentDefinition>("component-sdk", type, ValidComponentDefinition);
+        if (stored is not null)
+        {
+            RememberComponent(type, stored.Value, stored.ObservedAt, false);
+            return stored.Value;
         }
         var response = await Wait(_link.GetComponentDefinition(type, true), "component-definition.get", cancellationToken);
         if (!response.Success)
         {
             var resolved = await ResolveComponentTypeAsync(type, cancellationToken);
-            if (_componentDefinitions.TryGetValue(resolved, out cached))
+            if (_componentDefinitions.TryGetValue(resolved, out cached) && (!refresh || _componentEvidence[resolved].Live))
             {
                 _componentDefinitions[type] = cached;
+                _componentEvidence[type] = _componentEvidence[resolved];
                 Interlocked.Increment(ref _cacheHits);
                 return cached;
             }
@@ -369,9 +419,103 @@ public sealed class ResoniteLinkClientAdapter : IResoniteClient, IResoniteClient
         if (!response.Success)
             EnsureSuccess(response, "COMPONENT_TYPE_NOT_FOUND", suggestions: await Suggestions(type, cancellationToken));
         var definition = response.Definition;
-        _componentDefinitions[type] = definition;
-        _componentDefinitions[definition.Type.FullTypeName] = definition;
+        var observedAt = DateTimeOffset.UtcNow;
+        RememberComponent(type, definition, observedAt, true);
+        disk.Write("component-sdk", type, definition, observedAt);
+        if (type != definition.Type.FullTypeName) disk.Write("component-sdk", definition.Type.FullTypeName, definition, observedAt);
         return definition;
+    }
+
+    public void ConfigureReflectionCache(ReflectionCacheOptions options)
+    {
+        options.Validate();
+        _cacheOptions = options;
+        _diskCache = null;
+        _forceLiveMetadata = false;
+        ClearReflectionMemory();
+    }
+
+    public ReflectionCacheStatistics SnapshotReflectionCache() => new(_diskCache?.DiskHits ?? 0, _diskCache?.DiskMisses ?? 0, _diskCache?.WriteFailures ?? 0);
+
+    private async Task<ReflectionMetadataCache> GetReflectionCacheAsync(CancellationToken ct)
+    {
+        if (_diskCache is not null) return _diskCache;
+        var session = _cacheSession ?? (_cacheOptions.Mode == "off"
+            ? new SessionInfo(_uri!.ToString(), true, null, null, null)
+            : await GetSessionInfoAsync(ct));
+        return _diskCache = new ReflectionMetadataCache(session, _cacheOptions);
+    }
+
+    private void ClearReflectionMemory()
+    {
+        _componentDefinitions.Clear(); _typeDefinitions.Clear(); _allComponentTypes = null;
+        _componentEvidence.Clear(); _typeEvidence.Clear();
+    }
+
+    private void RememberComponent(string name, Link.ComponentDefinition value, DateTimeOffset observedAt, bool live)
+    {
+        _componentDefinitions[name] = _componentDefinitions[value.Type.FullTypeName] = value;
+        _componentEvidence[name] = _componentEvidence[value.Type.FullTypeName] = (observedAt, live);
+    }
+
+    private void RememberType(string name, TypeInfo value, DateTimeOffset observedAt, bool live)
+    {
+        _typeDefinitions[name] = _typeDefinitions[value.FullTypeName] = value;
+        _typeEvidence[name] = _typeEvidence[value.FullTypeName] = (observedAt, live);
+    }
+
+    internal static bool ValidComponentDefinition(Link.ComponentDefinition value) =>
+        value.Type is { FullTypeName.Length: > 0 } && value.Members is not null && value.Methods is not null &&
+        value.Methods.All(m => m is not null && !string.IsNullOrEmpty(m.Name)) &&
+        value.Members.All(p => !string.IsNullOrEmpty(p.Key) && ValidMemberDefinition(p.Value));
+
+    private static bool ValidMemberDefinition(Link.MemberDefinition? value) => value switch
+    {
+        Link.FieldDefinition field => ValidTypeReference(field.ValueType),
+        Link.ReferenceDefinition reference => ValidTypeReference(reference.TargetType),
+        Link.ListDefinition list => ValidMemberDefinition(list.ElementDefinition),
+        Link.DictionaryDefinition dictionary => ValidTypeReference(dictionary.KeyType) && ValidMemberDefinition(dictionary.ElementDefinition),
+        Link.ArrayDefinition array => ValidTypeReference(array.ValueType),
+        Link.SyncObjectMemberDefinition sync => ValidTypeReference(sync.Type),
+        Link.EmptyMemberDefinition or Link.SyncPlaybackDefinition => true,
+        _ => false
+    };
+
+    private static bool ValidTypeReference(Link.TypeReference? value) => value is { Type.Length: > 0 } &&
+        (value.GenericArguments is null || value.GenericArguments.All(ValidTypeReference));
+
+    private async Task<Dictionary<string, Link.Member>> ParseMembersAsync(string componentType,
+        IReadOnlyDictionary<string, string> fields, CancellationToken ct)
+    {
+        for (var attempt = 0; ; attempt++)
+        {
+            try
+            {
+                var definition = await GetComponentDefinitionCachedAsync(componentType, ct);
+                var members = new Dictionary<string, Link.Member>();
+                foreach (var field in fields)
+                {
+                    if (!definition.Members.TryGetValue(field.Key, out var memberDefinition))
+                        throw UnknownMember(componentType, field.Key, definition.Members.Keys);
+                    members[field.Key] = await ValueCodec.ParseAsync(_link, memberDefinition, field.Value, ct, _requestTimeout, RecordMetric, DescribeTypeAsync);
+                }
+                return members;
+            }
+            catch (RLoopException ex) when (attempt == 0 && ex.ExitCode is ExitCodes.ValidationFailed or ExitCodes.NotFound &&
+                (_componentEvidence.Values.Any(e => !e.Live) || _typeEvidence.Values.Any(e => !e.Live)))
+            {
+                // Retry conversion only, before any mutation. Never replay a failed world write here.
+                InvalidateDiskEvidence();
+            }
+        }
+    }
+
+    private void InvalidateDiskEvidence()
+    {
+        foreach (var name in _componentEvidence.Where(p => !p.Value.Live).Select(p => p.Key)) _diskCache?.Invalidate("component-sdk", name);
+        foreach (var name in _typeEvidence.Where(p => !p.Value.Live).Select(p => p.Key)) _diskCache?.Invalidate("type", name);
+        ClearReflectionMemory();
+        _forceLiveMetadata = true;
     }
 
     private static RLoopException UnknownMember(string type, string member, IEnumerable<string> members)
@@ -438,6 +582,7 @@ public sealed class ResoniteLinkClientAdapter : IResoniteClient, IResoniteClient
     {
         lock (_metrics) _metrics.Clear();
         Interlocked.Exchange(ref _cacheHits, 0);
+        _diskCache?.ResetMetrics();
     }
 
     public ClientMetrics SnapshotMetrics()
@@ -447,7 +592,7 @@ public sealed class ResoniteLinkClientAdapter : IResoniteClient, IResoniteClient
             var operations = _metrics.OrderBy(x => x.Key, StringComparer.Ordinal)
                 .Select(x => new ClientOperationMetric(x.Key, x.Value.Requests, x.Value.ElapsedMs)).ToArray();
             return new ClientMetrics(operations.Sum(x => x.Requests), Volatile.Read(ref _cacheHits),
-                operations.Sum(x => x.ElapsedMs), operations);
+                operations.Sum(x => x.ElapsedMs), operations, SnapshotReflectionCache());
         }
     }
 
@@ -593,7 +738,8 @@ public static class ValueCodec
 {
     public static async Task<Link.Member> ParseAsync(Link.LinkInterface link, Link.MemberDefinition definition, string raw,
         CancellationToken cancellationToken = default, TimeSpan? requestTimeout = null,
-        Action<string, double>? requestCompleted = null)
+        Action<string, double>? requestCompleted = null,
+        Func<string, CancellationToken, Task<TypeInfo>>? describeType = null)
     {
         if (definition is Link.ReferenceDefinition)
         {
@@ -602,9 +748,9 @@ public static class ValueCodec
                     suggestions: ["Pass Reso_123 as the reference value. Shell quotes may group an argument, but literal quote characters are not part of an ID."]);
             return new Link.Reference { TargetID = raw.Equals("null", StringComparison.OrdinalIgnoreCase) ? null : raw };
         }
-        if (definition is Link.ListDefinition list) return await ParseListAsync(link, list, raw, cancellationToken, requestTimeout, requestCompleted);
-        if (definition is Link.DictionaryDefinition dictionary) return await ParseDictionaryAsync(link, dictionary, raw, cancellationToken, requestTimeout, requestCompleted);
-        if (definition is Link.SyncObjectMemberDefinition syncObject) return await ParseSyncObjectAsync(link, syncObject, raw, cancellationToken, requestTimeout, requestCompleted);
+        if (definition is Link.ListDefinition list) return await ParseListAsync(link, list, raw, cancellationToken, requestTimeout, requestCompleted, describeType);
+        if (definition is Link.DictionaryDefinition dictionary) return await ParseDictionaryAsync(link, dictionary, raw, cancellationToken, requestTimeout, requestCompleted, describeType);
+        if (definition is Link.SyncObjectMemberDefinition syncObject) return await ParseSyncObjectAsync(link, syncObject, raw, cancellationToken, requestTimeout, requestCompleted, describeType);
         if (definition is not Link.FieldDefinition field)
             throw new RLoopException("MEMBER_TYPE_UNSUPPORTED", $"Setting {definition.GetType().Name} members is not supported in v0.1.", ExitCodes.ValidationFailed);
 
@@ -633,7 +779,7 @@ public static class ValueCodec
                 "floatq" or "quaternion" => FloatQ(raw),
                 "color" => Color(raw),
                 "colorx" => ColorX(raw),
-                _ => await ParseEnumOrReflection(link, type, raw, cancellationToken, requestTimeout, requestCompleted)
+                _ => await ParseEnumOrReflection(link, type, raw, cancellationToken, requestTimeout, requestCompleted, describeType)
             };
         }
         catch (RLoopException) { throw; }
@@ -645,7 +791,8 @@ public static class ValueCodec
     }
 
     private static async Task<Link.SyncDictionary> ParseDictionaryAsync(Link.LinkInterface link, Link.DictionaryDefinition definition,
-        string raw, CancellationToken cancellationToken, TimeSpan? requestTimeout, Action<string, double>? requestCompleted)
+        string raw, CancellationToken cancellationToken, TimeSpan? requestTimeout, Action<string, double>? requestCompleted,
+        Func<string, CancellationToken, Task<TypeInfo>>? describeType)
     {
         if (definition.ElementDefinition is null)
             throw new RLoopException("DICTIONARY_ELEMENT_TYPE_MISSING", "The runtime dictionary definition did not include a value type.", ExitCodes.ValidationFailed);
@@ -667,14 +814,15 @@ public static class ValueCodec
         {
             var key = Convert.ChangeType(pair.Key, dictionaryKeyType, CultureInfo.InvariantCulture);
             var valueRaw = pair.Value is JsonValue jsonValue && jsonValue.TryGetValue<string>(out var text) ? text : pair.Value?.ToJsonString() ?? "null";
-            elements.Add(key!, await ParseAsync(link, definition.ElementDefinition, valueRaw, cancellationToken, requestTimeout, requestCompleted));
+            elements.Add(key!, await ParseAsync(link, definition.ElementDefinition, valueRaw, cancellationToken, requestTimeout, requestCompleted, describeType));
         }
         property.SetValue(result, elements);
         return result;
     }
 
     private static async Task<Link.SyncObject> ParseSyncObjectAsync(Link.LinkInterface link, Link.SyncObjectMemberDefinition member,
-        string raw, CancellationToken cancellationToken, TimeSpan? requestTimeout, Action<string, double>? requestCompleted)
+        string raw, CancellationToken cancellationToken, TimeSpan? requestTimeout, Action<string, double>? requestCompleted,
+        Func<string, CancellationToken, Task<TypeInfo>>? describeType)
     {
         JsonObject source;
         try { source = JsonNode.Parse(raw) as JsonObject ?? throw new JsonException("Expected an object."); }
@@ -691,13 +839,14 @@ public static class ValueCodec
                 throw new RLoopException("SYNC_OBJECT_MEMBER_NOT_FOUND", $"SyncObject member '{pair.Key}' was not found.", ExitCodes.ValidationFailed,
                     suggestions: definition.Members.Keys.Take(30).ToArray());
             var valueRaw = pair.Value is JsonValue value && value.TryGetValue<string>(out var text) ? text : pair.Value?.ToJsonString() ?? "null";
-            members[pair.Key] = await ParseAsync(link, memberDefinition, valueRaw, cancellationToken, requestTimeout, requestCompleted);
+            members[pair.Key] = await ParseAsync(link, memberDefinition, valueRaw, cancellationToken, requestTimeout, requestCompleted, describeType);
         }
         return new Link.SyncObject { Members = members };
     }
 
     private static async Task<Link.SyncList> ParseListAsync(Link.LinkInterface link, Link.ListDefinition definition,
-        string raw, CancellationToken cancellationToken, TimeSpan? requestTimeout, Action<string, double>? requestCompleted)
+        string raw, CancellationToken cancellationToken, TimeSpan? requestTimeout, Action<string, double>? requestCompleted,
+        Func<string, CancellationToken, Task<TypeInfo>>? describeType)
     {
         if (definition.ElementDefinition is null)
             throw new RLoopException("LIST_ELEMENT_TYPE_MISSING", "The runtime list definition did not include an element type.", ExitCodes.ValidationFailed);
@@ -727,16 +876,26 @@ public static class ValueCodec
 
         var elements = new List<Link.Member>(values.Count);
         foreach (var value in values)
-            elements.Add(await ParseAsync(link, definition.ElementDefinition, value, cancellationToken, requestTimeout, requestCompleted));
+            elements.Add(await ParseAsync(link, definition.ElementDefinition, value, cancellationToken, requestTimeout, requestCompleted, describeType));
         return new Link.SyncList { Elements = elements };
     }
 
     private static async Task<Link.Member> ParseEnumOrReflection(Link.LinkInterface link, string type, string raw,
-        CancellationToken cancellationToken, TimeSpan? requestTimeout, Action<string, double>? requestCompleted)
+        CancellationToken cancellationToken, TimeSpan? requestTimeout, Action<string, double>? requestCompleted,
+        Func<string, CancellationToken, Task<TypeInfo>>? describeType)
     {
         var reflected = TryParseReflectedField(type, raw);
         if (reflected is not null) return reflected;
         var underlying = ReflectedMemberType.UnwrapNullable(type);
+        if (describeType is not null)
+        {
+            TypeInfo? metadata = null;
+            try { metadata = await describeType(underlying, cancellationToken); }
+            catch (RLoopException ex) when (ex.Code is "TYPE_NOT_FOUND" or "COMPONENT_TYPE_NOT_FOUND") { }
+            if (metadata is { IsEnum: true, EnumValues: not null, IsFlags: not null })
+                return EnumField(underlying, underlying != type, metadata.EnumValues, metadata.IsFlags.Value, raw);
+            throw new RLoopException("VALUE_TYPE_UNSUPPORTED", $"Field type '{type}' is not supported by the v0.1 converter.", ExitCodes.ValidationFailed);
+        }
         var typeResponse = await WaitValueRequest(link.GetTypeDefinition(underlying), "type.get", requestTimeout, cancellationToken, requestCompleted);
         if (typeResponse.Success && typeResponse.Definition.IsEnum)
         {

@@ -41,14 +41,14 @@ resoloop が生成する作業ルートには `FrooxEngine.AI_GeneratedContent` 
 PowerShell で resoloop をインストールします。
 
 ~~~powershell
-dotnet tool install --global ResoLoop --version 0.1.0-preview.13
+dotnet tool install --global ResoLoop --version 0.1.0-preview.14
 resoloop --version
 ~~~
 
 すでにインストール済みの場合は、次のコマンドで更新できます。
 
 ~~~powershell
-dotnet tool update --global ResoLoop --version 0.1.0-preview.13
+dotnet tool update --global ResoLoop --version 0.1.0-preview.14
 ~~~
 
 ## 使い方
@@ -103,6 +103,8 @@ Blenderを立ち上げておく必要はありません。
 ## さらに詳しく
 
 宣言形式の推測を減らすため、`resoloop manifest scaffold --key panel --output content/panel.json --json` で外観を含まない宣言を作成できます。必要な項目だけ `resoloop schema describe camera --json` で照会してください。
+
+Reflectionは `type query --request FILE.json --json` で必要なmemberとenum候補を一括取得できます。要求形式は `schema describe reflection --json` で確認できます。保存した型定義はResonite・ResoniteLinkのバージョンとAdapter/Coreビルドが一致すれば、期限なしでcheck・diff・apply・値変換にも利用します。ローカル接続のポート変更では失効しません。`verified: true` はバージョン一致で信頼した結果も含み、`source: version-cache` と元の観測時刻で区別できます。`--refresh` は実機から更新、`--cache off` はディスクを読み書きせず実機照会、`--cache-dir DIR` は保存先の指定です。MOD/DLL構成を変えた場合は更新してください。ID・現在値・参照先は毎回実環境から確認します。`type check --manifest FILE.json --brief --json` はstrict検証を利用しますが、diff/apply直前の重複チェックは不要です。[設計・実測結果](docs/REFLECTION-EFFICIENCY.md)を参照してください。
 
 新規素材は `manifest scaffold --kind provider --key front-material --type '[FrooxEngine]FrooxEngine.UI_UnlitMaterial' --output NEW_NODE.json` で名前付きSlotを生成し、childrenへ追加して見た目の設定を記入します。validate/diffは同一Slot内の識別リスクを警告します。
 

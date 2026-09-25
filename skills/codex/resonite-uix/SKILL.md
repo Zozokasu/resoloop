@@ -5,6 +5,8 @@ description: Build, adapt, or debug native Resonite UIX controls and responsive 
 
 # Resonite UIX
 
+Gather known recipe/declaration requirements in one `type query --request FILE.json --json` (shape: `schema describe reflection --json`), selecting required members and enum candidates only. Visual choices stay with the caller. Version-matched metadata is trusted for check/diff/apply and conversion; `source: version-cache` retains its original observation time. Use `--refresh` after MOD/DLL changes or `--cache off` to diagnose against fresh definitions; these flags also work on check/diff/apply. IDs and current state are always re-observed. Use `type check --manifest FILE.json --brief --json` to isolate validation problems, not as an extra routine step before diff. Unknown names still require search/describe.
+
 Use the bundled `resonite-build` workflow for connection, bounded observation, Reflection, owned apply state, exact-target deletion, and post-change inspection. Before designing a UIX hierarchy, decide which root will be saved or distributed, which controls must work, and which dimensions follow available space or content. A draggable gallery board is not necessarily a portable item by itself.
 
 For new controls, use the direct `$recipe` declarations in the structural recipe reference. They bundle wiring and namespace keys by recipe role without supplying visuals. For known applied fields, use one `observe '$member:KEY.FIELD' [...] --state STATE --json` per verification phase to collect values and reference targets together; keep structural inspection and image checks for their separate evidence.

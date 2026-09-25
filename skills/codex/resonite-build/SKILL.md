@@ -5,6 +5,8 @@ description: Build or modify Resonite world content through resoloop when a requ
 
 # Resonite Build
 
+Batch known required type/member metadata with `type query --request FILE.json --json` (request example: `schema describe reflection --json`). Select explicit members and enum candidates only where needed. Version-matched disk definitions are trusted for check/diff/apply and value conversion, even across restarts; `source: version-cache` and `observedAt` distinguish them from fresh reads. Use `--refresh` after MOD/DLL changes or `--cache off` for a live-only diagnostic; both also work on check/diff/apply. `type check --request FILE.json --brief --json` compares contracts; `type check --manifest FILE.json --brief --json` reuses strict validation for diagnosis. Diff/apply already validate, so avoid a redundant check. IDs, current values and reference targets still require current-session observation. Continue using search/describe for unknown names. If a world write fails, inspect partial state and re-plan before retrying; do not blindly replay it.
+
 For known managed fields, batch `observe '$member:KEY.FIELD' [...] --state STATE --json` once per verification phase (up to 64 selectors). It preserves typed values and reference/member IDs and fails on missing members, using normal stable re-resolution after reconnect. Cross-Component reads are sequential, not atomic. Keep structural inspection, Reflection and captures for their different evidence.
 
 For native UIX controls, panels, shared UI resources, or responsive layout changes, also follow the bundled `resonite-uix` skill. It covers saved-item asset sharing, layout metrics and fitting, input wiring, state-driven visuals, and preservation during hierarchy changes.

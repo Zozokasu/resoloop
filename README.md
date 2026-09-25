@@ -25,14 +25,14 @@ Requirements:
 Install resoloop in PowerShell:
 
 ~~~powershell
-dotnet tool install --global ResoLoop --version 0.1.0-preview.13
+dotnet tool install --global ResoLoop --version 0.1.0-preview.14
 resoloop --version
 ~~~
 
 If resoloop is already installed, update it with the following command:
 
 ~~~powershell
-dotnet tool update --global ResoLoop --version 0.1.0-preview.13
+dotnet tool update --global ResoLoop --version 0.1.0-preview.14
 ~~~
 
 ## Usage
@@ -119,6 +119,8 @@ resoloop capture content/panel.json --frame '$slot:canvas' --view rear --output 
 `--frame` requires the exact Slot containing one live planar Canvas, and uses its collider plus ancestor transforms. It preserves content scale; overflowing children, curved geometry, mirrored scales and occlusion require an explicit camera. `validate`/`diff` return conservative identity warnings for same-type Components sharing a Slot; separate named providers avoid this ambiguity for new content. See [authoring assistance](docs/AUTHORING-ASSISTANCE.md) for contracts and verification.
 
 ## Further documentation
+
+Batch required Reflection metadata with `type query --request FILE.json --json`; obtain a request example from `schema describe reflection --json`. Explicit `members` select output; `enums` optionally adds candidate values. Persistent definitions are trusted when engine/link versions and adapter/Core builds match, with no default expiry. Local port changes do not invalidate them. Check, diff, apply and primitive conversion share this cache. `type check --request FILE.json --brief --json` checks contracts; `type check --manifest FILE.json --brief --json` reuses strict declaration validation. `--refresh` re-fetches definitions; `--cache off` bypasses disk reads/writes; `--cache-dir DIR` overrides storage. Refresh after MOD/DLL changes. Instance IDs, values and reference targets are still observed live. `--profile` includes request and cache counts. See [Reflection caching and measurements](docs/REFLECTION-EFFICIENCY.md).
 
 - [Detailed documentation](README-DETAILS.md) — commands, architecture, declaration format, Flux-SDK, and limitations
 - [Quick start](docs/QUICKSTART.md) — detailed steps including applying, verifying, and using ProtoFlux

@@ -7,6 +7,7 @@ TestResults/
 *.nupkg
 artifacts/
 **/.resoloop/state/
+**/.resoloop/cache/
 **/.resoloop/flux-state/
 # Ignore checkpoints created before the ResoLoop rename.
 **/.rloop/state/

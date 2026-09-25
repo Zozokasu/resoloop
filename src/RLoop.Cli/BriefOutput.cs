@@ -7,6 +7,7 @@ public static class BriefOutput
 {
     public static object? Project(object? data) => data switch
     {
+        ReflectionQueryReport reflection => Reflection(reflection),
         UixAuditReport audit => new
         {
             audit.RootId, audit.Valid, audit.StructuralOnly, audit.Verification, audit.Truncated,
@@ -23,6 +24,12 @@ public static class BriefOutput
             tests = tests.Tests.Where(test => !test.Passed || test.StructuralOnly).ToArray()
         },
         _ => data
+    };
+
+    public static object Reflection(ReflectionQueryReport report) => new
+    {
+        report.Complete, report.Verified, report.Compatible, report.RequestedTypes,
+        report.RequestedMembers, report.Differences, report.ElapsedMs, report.Profile
     };
 
     public static object Plan(ApplyPlanResult plan, IReadOnlyList<ApplyPlanEntry> displayed) => new

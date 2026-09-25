@@ -231,7 +231,8 @@ public sealed record ClientMetrics(
     int Requests,
     int CacheHits,
     double ElapsedMs,
-    IReadOnlyList<ClientOperationMetric> Operations);
+    IReadOnlyList<ClientOperationMetric> Operations,
+    ReflectionCacheStatistics? ReflectionCache = null);
 
 public sealed record ApplyProfile(
     double TotalElapsedMs,

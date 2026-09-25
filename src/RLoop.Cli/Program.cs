@@ -205,7 +205,7 @@ public static class Program
                     if (!captureUri.IsLoopback && resolution.Config.ScreenshotsDirectory is null)
                         throw new RLoopException("CAPTURE_DIRECTORY_REQUIRED", "Remote Resonite requires --screenshots-dir pointing to its locally accessible screenshot export folder.", ExitCodes.InvalidArguments);
                     var screenshots = resolution.Config.ScreenshotsDirectory ?? ScreenshotDirectoryResolver.ResolveDefault();
-                    await using var captureClient = new ResoniteLinkClientAdapter(TimeSpan.FromSeconds(resolution.Config.TimeoutSeconds));
+                    await using var captureClient = new ResoniteLinkClientAdapter(TimeSpan.FromSeconds(resolution.Config.TimeoutSeconds), ReflectionCacheFrom(parsed));
                     await captureClient.ConnectAsync(captureUri, TimeSpan.FromSeconds(resolution.Config.TimeoutSeconds), commandToken);
                     CanvasFrame? framing = null;
                     if (parsed.Option("frame") is { } frame)
@@ -225,7 +225,7 @@ public static class Program
             }
 
             var uri = await ResolveConnectionUrlAsync(parsed, resolution.Config, commandToken);
-            await using var client = new ResoniteLinkClientAdapter(TimeSpan.FromSeconds(resolution.Config.TimeoutSeconds));
+            await using var client = new ResoniteLinkClientAdapter(TimeSpan.FromSeconds(resolution.Config.TimeoutSeconds), ReflectionCacheFrom(parsed));
             await client.ConnectAsync(uri, TimeSpan.FromSeconds(resolution.Config.TimeoutSeconds), commandToken);
             var world = new WorldService(client, GeneratedContentMetadata.SourceForVersion(ProductVersion()));
             await RunResonite(parsed, output, client, world, commandToken);
@@ -342,7 +342,7 @@ public static class Program
         {
             try
             {
-                await using var client = new ResoniteLinkClientAdapter(TimeSpan.FromSeconds(config.TimeoutSeconds));
+                await using var client = new ResoniteLinkClientAdapter(TimeSpan.FromSeconds(config.TimeoutSeconds), ReflectionCacheFrom(args));
                 await client.ConnectAsync(uri, TimeSpan.FromSeconds(config.TimeoutSeconds), cancellationToken);
                 var session = await client.GetSessionInfoAsync(cancellationToken);
                 checks.Add(new DoctorCheck("resonite-connection", "pass", true,
@@ -738,6 +738,31 @@ public static class Program
     private static async Task RunType(ParsedArguments args, OutputWriter output, IResoniteClient client, CancellationToken ct)
     {
         var sub = args.Positional(1, "type subcommand").ToLowerInvariant();
+        if (sub is "query" or "check")
+        {
+            if (args.Positionals.Count != 2 || args.Has("manifest") && args.Has("request") ||
+                sub == "query" && args.Has("manifest"))
+                throw new RLoopException("INVALID_ARGUMENT", "Use type query --request FILE, type check --request FILE, or type check --manifest FILE.", ExitCodes.InvalidArguments);
+            if (sub == "check" && args.Option("manifest") is { } manifest)
+            {
+                var timer = System.Diagnostics.Stopwatch.StartNew();
+                var diagnostics = client as IResoniteClientDiagnostics;
+                if (args.Has("profile")) diagnostics?.ResetMetrics();
+                var validation = await ApplyDocumentValidator.ValidateAsync(ApplyDocument.Load(manifest), client, ct);
+                ApplyDocumentValidator.ThrowIfInvalid(validation);
+                output.Success(new { validation.Valid, verified = true, validation.Strict, validation.Slots, validation.Components,
+                    validation.References, validation.Issues, elapsedMs = timer.Elapsed.TotalMilliseconds,
+                    profile = args.Has("profile") ? diagnostics?.SnapshotMetrics() : null });
+                return;
+            }
+            var report = await ReflectionQuery.RunAsync(client, ReflectionRequest.Load(args.RequireOption("request")),
+                check: sub == "check", profile: args.Has("profile"), ct: ct);
+            if (!report.Complete)
+                throw new RLoopException("REFLECTION_CHECK_FAILED", "One or more requested members or contracts did not match.", ExitCodes.ValidationFailed,
+                    new Dictionary<string, object?> { ["result"] = report });
+            output.Success(report, briefData: sub == "check" ? BriefOutput.Reflection(report) : report);
+            return;
+        }
         var query = args.Positional(2, sub == "search" ? "Search query" : "Type name");
         switch (sub)
         {
@@ -842,7 +867,7 @@ public static class Program
             var manifestPath = Path.GetFullPath(args.Positional(2, "Flux manifest"));
             var manifest = FluxManifestOrchestrator.Inspect(manifestPath);
             var uri = await ResolveConnectionUrlAsync(args, config, ct);
-            await using var client = new ResoniteLinkClientAdapter(TimeSpan.FromSeconds(config.TimeoutSeconds));
+            await using var client = new ResoniteLinkClientAdapter(TimeSpan.FromSeconds(config.TimeoutSeconds), ReflectionCacheFrom(args));
             await client.ConnectAsync(uri, TimeSpan.FromSeconds(config.TimeoutSeconds), ct);
             var world = new WorldService(client, GeneratedContentMetadata.SourceForVersion(ProductVersion()));
             var currentSession = await client.GetSessionInfoAsync(ct);
@@ -927,7 +952,7 @@ public static class Program
             var uri = await ResolveConnectionUrlAsync(args, config, ct);
             var project = Path.GetFullPath(args.RequireOption("project"));
             var module = args.RequireOption("module");
-            await using var client = new ResoniteLinkClientAdapter(TimeSpan.FromSeconds(config.TimeoutSeconds));
+            await using var client = new ResoniteLinkClientAdapter(TimeSpan.FromSeconds(config.TimeoutSeconds), ReflectionCacheFrom(args));
             await client.ConnectAsync(uri, TimeSpan.FromSeconds(config.TimeoutSeconds), ct);
             var parentId = await new WorldService(client, GeneratedContentMetadata.SourceForVersion(ProductVersion()))
                 .ResolveSlotIdAsync(args.Option("parent") ?? "Root", ct);
@@ -981,6 +1006,18 @@ public static class Program
             result[assignment[..equals]] = assignment[(equals + 1)..];
         }
         return result;
+    }
+
+    private static ReflectionCacheOptions ReflectionCacheFrom(ParsedArguments args)
+    {
+        var options = new ReflectionCacheOptions(args.Option("cache") ?? "auto", args.Option("cache-dir"));
+        options.Validate();
+        if (args.Has("refresh"))
+        {
+            if (options.Mode == "off") throw new RLoopException("INVALID_ARGUMENT", "--refresh cannot be combined with --cache off.", ExitCodes.InvalidArguments);
+            options = options with { Mode = "refresh" };
+        }
+        return options;
     }
 
     private static ApplyOptions ApplyOptionsFrom(ParsedArguments args, OutputWriter output) => new(
@@ -1047,8 +1084,12 @@ resoloop - agent-first Resonite CLI loop
 Project setup:
   resoloop --version [--json]
   resoloop init [DIRECTORY] [--json]
-  resoloop schema list | schema describe document|node|slot|component|camera|test|assertion|probe [--json]
+  resoloop schema list | schema describe document|node|slot|component|camera|test|assertion|probe|reflection [--json]
   resoloop observe '$member:KEY.NAME' [...] --state WORLD_STATE [--json]
+  resoloop type query --request FILE.json [--cache auto|off|refresh] [--cache-dir DIR] [--refresh] [--profile] [--json]
+  resoloop type check --request FILE.json | --manifest FILE.json [--brief] [--profile] [--cache auto|off|refresh] [--json]
+  Reflection cache options for connected commands: --cache auto|off|refresh --cache-dir DIR --refresh
+  auto trusts matching endpoint/Resonite/ResoniteLink/CLI versions across restarts; no default expiry.
   resoloop manifest scaffold --output NEW_FILE.json [--key panel] [--json]
   resoloop manifest scaffold --kind provider --key KEY --type REFLECTED_TYPE --output NEW_NODE.json [--json]
   resoloop skills sync [DIRECTORY] (--check | --update) [--json]
