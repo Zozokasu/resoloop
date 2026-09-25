@@ -239,4 +239,33 @@ public sealed partial class ApplyWorkflowTests
         await Task.WhenAll(readers);
         Assert.Empty(Directory.GetFiles(_root, "*.tmp"));
     }
+
+    [Fact]
+    public async Task CheckpointReaderRecoversWhenSharingViolationBecomesMissingPath()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        var path = Path.Combine(_root, "reappearing.json");
+        CheckpointFiles.Write(path, "{\"sequence\":41}");
+        using var blocker = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Delete);
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var read = Task.Run(() =>
+        {
+            started.SetResult();
+            return CheckpointFiles.Read(path);
+        });
+        await started.Task;
+        await Task.Delay(300);
+        File.Move(path, path + ".old"); // Allowed by Delete sharing while reads still fail.
+        await Task.Delay(300); // Missing-path errors follow more than five sharing attempts.
+        CheckpointFiles.Write(path, "{\"sequence\":42}");
+        Assert.Equal("{\"sequence\":42}", await read.WaitAsync(TimeSpan.FromSeconds(10)));
+    }
+
+    [Fact]
+    public async Task CheckpointReaderReportsPersistentlyMissingSnapshot()
+    {
+        var path = Path.Combine(_root, "never-created.json");
+        var read = Task.Run(() => Assert.Throws<FileNotFoundException>(() => CheckpointFiles.Read(path)));
+        await read.WaitAsync(TimeSpan.FromSeconds(10));
+    }
 }

@@ -20,6 +20,8 @@ internal static class CheckpointFiles
     internal static string Read(string path)
     {
         var timer = Stopwatch.StartNew();
+        var observedContention = File.Exists(path);
+        var missingAttempts = 0;
         for (var attempt = 0; ; attempt++)
         {
             try
@@ -30,13 +32,14 @@ internal static class CheckpointFiles
             }
             catch (IOException ex) when ((ex.HResult & 0xffff) switch
             {
-                2 or 3 => attempt < 5,
+                2 or 3 => observedContention ? timer.Elapsed < TimeSpan.FromSeconds(2) : missingAttempts++ < 5,
                 32 or 33 => timer.Elapsed < TimeSpan.FromSeconds(2),
                 _ => false
             })
             {
-                // Repeated atomic replacements can deny a new Windows opener for longer
-                // than one rename. Bound contention retries without hiding a persistent lock.
+                // Existing snapshots may alternate missing-path and sharing errors during
+                // replacement. Keep first-time checkpoint creation's short missing-path wait.
+                if ((ex.HResult & 0xffff) is 32 or 33) observedContention = true;
                 Thread.Sleep(Math.Min(10 * (attempt + 1), 100));
             }
         }
