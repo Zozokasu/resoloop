@@ -1,0 +1,9 @@
+{
+  "schemaVersion": "1",
+  "ownership": { "key": "root" },
+  "slot": { "name": "Root", "key": "root" },
+  "components": [],
+  "children": [
+    { "slot": { "name": "NoKey", "key": "root/nokey#0" } }
+  ]
+}
