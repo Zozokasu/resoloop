@@ -88,6 +88,44 @@ resoloop status --json
 
 URLがなければRESONITE_LINK_URL_MISSINGを返します。設定例は[examples/resoloop.example.json](examples/resoloop.example.json)です。
 
+## Workbench backend
+
+`--backend` で接続先のtransportを選択します。既定の `link` は従来どおりResoniteLink WebSocketへ接続します。`workbench` はResonite Workbench Appが開くnamed pipe経由のRPCで、URL探索は行いません。
+
+| 設定 | CLI | 環境変数 | 既定値 |
+|---|---|---|---|
+| backend | `--backend link\|workbench` | `RESOLOOP_BACKEND` | `link` |
+| workbench pipe | `--workbench-pipe NAME` | `RESOLOOP_WORKBENCH_PIPE` | `ResoniteWorkbench.Rpc.v1` |
+
+`resoloop wb status [--json]` は `--backend` の値に関係なく常にWorkbenchへ接続し、handshakeとsession状態を返します。
+
+~~~powershell
+resoloop wb status --json
+~~~
+
+~~~json
+{"ok":true,"data":{"pipe":"ResoniteWorkbench.Rpc.v1","handshake":{"serverVersion":"1.0.0","selectedProtocol":1,"availableCapabilities":["session.read"],"grantedCapabilities":["session.read"]},"session":{"connected":true,"resoniteVersion":"2025.9.2.1234","resoniteLinkVersion":"0.13.1","uniqueSessionId":"..."}}}
+~~~
+
+`session.connected` が `false` の場合、Workbench自体は応答していますがResonite sessionへ未接続です。
+
+`--backend workbench` 時のコマンド対応（正本は `src/RLoop.Cli/BackendSupport.cs` の `WorkbenchSupport`、将来のmilestoneで順次対応予定）:
+
+| 対応予定 | コマンド |
+|---|---|
+| planned-w2 | status, ping, hierarchy, find, observe, inspect, type, validate, diff, plan, uix, item, tool, doctor, capture |
+| planned-w4 | slot, component, apply, test, flux |
+| link-only | scene, blender, logs |
+
+表内のコマンドを `--backend workbench` で実行すると `BACKEND_UNSUPPORTED` になります。表にないコマンド（help, init, schema, manifest, uix recipe, skills, discover など）は接続を開かないためbackendの影響を受けません。`wb` は表に含めず、常にWorkbenchへ接続します。
+
+Workbench関連のエラーコード:
+
+- `WORKBENCH_UNAVAILABLE`: pipeへ接続できない、またはhandshakeを完了できない（Workbench未起動など）
+- `WORKBENCH_PROTOCOL_INCOMPATIBLE`: Workbenchがprotocol versionを拒否。ResoLoopまたはWorkbench Appの更新が必要
+- `WORKBENCH_NOT_CONNECTED`: Workbenchは応答したがResonite sessionへ未接続。`wb status` では `connected: false` として正常出力されます
+- `BACKEND_UNSUPPORTED`: `--backend workbench` で未対応の接続コマンドを実行した
+
 ## Quick start
 
 自分のプロジェクトをゼロから開始する手順は[docs/QUICKSTART.md](docs/QUICKSTART.md)にまとめています。今後の実装順は[docs/ROADMAP.md](docs/ROADMAP.md)を参照してください。
