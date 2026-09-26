@@ -28,12 +28,28 @@ public static class ResoniteClientFactory
         if (string.Equals(config.Backend, "workbench", StringComparison.Ordinal))
         {
             var workbench = new WorkbenchResoniteClient();
-            await workbench.ConnectAsync(new Uri($"{WorkbenchResoniteClient.UriScheme}:///{config.WorkbenchPipe}"), timeout, cancellationToken);
-            return workbench;
+            try
+            {
+                await workbench.ConnectAsync(new Uri($"{WorkbenchResoniteClient.UriScheme}:///{config.WorkbenchPipe}"), timeout, cancellationToken);
+                return workbench;
+            }
+            catch
+            {
+                await workbench.DisposeAsync();
+                throw;
+            }
         }
         var uri = linkUri ?? await ResolveConnectionUrlAsync(args, config, cancellationToken);
         var link = new ResoniteLinkClientAdapter(timeout, reflectionCache);
-        await link.ConnectAsync(uri, timeout, cancellationToken);
-        return link;
+        try
+        {
+            await link.ConnectAsync(uri, timeout, cancellationToken);
+            return link;
+        }
+        catch
+        {
+            await link.DisposeAsync();
+            throw;
+        }
     }
 }
