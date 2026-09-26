@@ -107,6 +107,8 @@ AIエージェントからは --json を標準にしてください。
 
 ~~~powershell
 resoloop status --json
+resoloop hierarchy profile --json
+resoloop hierarchy query --component UIX.Image --select slot.path,component.type --limit 50 --json
 resoloop hierarchy --depth 2 --json
 resoloop find --name Cube --json
 resoloop inspect Root/MyObject --members --json
@@ -123,7 +125,13 @@ resoloop inspect $slot --members --json
 resoloop slot delete $slot --yes --json
 ~~~
 
-member payloadを省いた小さな観測には`resoloop hierarchy --under Root --depth 1 --include-components --summary --json`を使えます。必要なsubtreeが分かれば`--under`をそのSlotへ絞ります。宣言したSlotのfieldをnative driverへ接続する場合は`$slot-member:crystal.Rotation`、Componentのfieldには`$member:componentKey.MemberName`を使い、接続前にdriverの型を確認します。[宣言形式](docs/DECLARATIVE.md)と[鍛冶屋テストの改善](docs/BLACKSMITH-FEEDBACK.md)を参照してください。
+最初の観測には`resoloop hierarchy profile --json`を使うと、Slot一覧を受け取らずに総数・深さ分布・最大sibling数・Component型の内訳が分かります。対象を絞る段階では`resoloop hierarchy query`が`--name` / `--name-regex` / `--component` / `--member` / `--reference-to` / `--direct-children`でCore側でfilterし、`--select`で指定したfieldだけを返します。`--limit`は返す件数、`--max-slots`は走査量で、別々のbudgetです。
+
+結果は必ず`complete`を確認してください。`false`のとき`truncation.reason`は`max-slots` / `depth-boundary` / `result-limit`のいずれかです。`depth-boundary`は深さ上限にSlotが接しており、子の不在を証明できない状態を意味します。`result-limit`の続きは返却された`--cursor`で取得します。cursorは接続とqueryに束縛されるため、条件を変えたり再接続した場合は誤った続きを返さず拒否されます。
+
+更新前後の比較は巨大なJSONを読み比べるのではなく`resoloop snapshot create --under SLOT --output before.json`、変更、`after.json`作成、`resoloop snapshot diff before.json after.json`の順で行います。snapshot diffは接続不要です。snapshotは安定pathをkeyにした正規化IRを保存するため、property順や浮動小数の表記揺れは差分になりません。差分は新しい側が親を実際に観測した範囲でのみ削除を報告し、証明できない場合は`SNAPSHOT_PARTIAL`などのwarningを返します。
+
+member payloadを省いた小さな観測には`resoloop hierarchy --under Root --depth 1 --include-components --summary --json`も使えます。必要なsubtreeが分かれば`--under`をそのSlotへ絞ります。宣言したSlotのfieldをnative driverへ接続する場合は`$slot-member:crystal.Rotation`、Componentのfieldには`$member:componentKey.MemberName`を使い、接続前にdriverの型を確認します。[宣言形式](docs/DECLARATIVE.md)と[鍛冶屋テストの改善](docs/BLACKSMITH-FEEDBACK.md)を参照してください。
 
 Reflectionでmemberがlistだと確認できた場合、対応済みのfield/reference要素はJSON arrayで設定できます。たとえばMeshRendererへmaterial providerを割り当てる場合:
 
@@ -151,7 +159,8 @@ Exit codeは、2=引数、3=設定、4=接続、5=not found、6=validation、7=�
 |---|---|
 | Project | init, doctor |
 | Connection | status, ping |
-| Observe | hierarchy, find, inspect |
+| Observe | hierarchy profile, hierarchy query, hierarchy, find, inspect |
+| Compare | snapshot create, snapshot diff |
 | Slot | slot create, slot set, slot delete --yes |
 | Component | component list/inspect/add/set/remove |
 | Reflection | type search, type describe |
