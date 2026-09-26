@@ -107,12 +107,35 @@ public sealed class WorkbenchResoniteClient : IResoniteClient
             }
         }
 
-        if (!string.Equals(state, "Connected", StringComparison.Ordinal) || !hasConnection)
+        if (string.Equals(state, "Disconnected", StringComparison.Ordinal))
         {
             throw new RLoopException("WORKBENCH_NOT_CONNECTED",
                 "Workbench is not connected to a Resonite session.",
                 ExitCodes.ConnectionFailed,
                 suggestions: ["Connect the Workbench App to a Resonite session, then retry."]);
+        }
+
+        if (!string.Equals(state, "Connected", StringComparison.Ordinal))
+        {
+            throw Unavailable(
+                $"The Workbench session.status response is not a definite state (state: {state ?? "<missing>"}).");
+        }
+
+        string? connectionId = hasConnection ? ReadString(connection, "connectionId") : null;
+        if (string.IsNullOrEmpty(connectionId))
+        {
+            throw Unavailable(
+                "The Workbench session.status response reports Connected but has no connection.connectionId.");
+        }
+
+        if (response.Meta.Stale == true)
+        {
+            throw Unavailable("The Workbench session.status response is stale; the connection changed during the read.");
+        }
+
+        if (!string.Equals(response.Meta.ConnectionId, connectionId, StringComparison.Ordinal))
+        {
+            throw Unavailable("The Workbench session.status response meta does not match the reported connection.");
         }
 
         string? resoniteVersion = null;
@@ -184,7 +207,7 @@ public sealed class WorkbenchResoniteClient : IResoniteClient
             await client.DisposeAsync().ConfigureAwait(false);
     }
 
-    private static RLoopException Unavailable(string message, Exception innerException) =>
+    private static RLoopException Unavailable(string message, Exception? innerException = null) =>
         new("WORKBENCH_UNAVAILABLE", message, ExitCodes.ConnectionFailed, innerException: innerException);
 
     private static RLoopException Unsupported(string method) =>
