@@ -228,7 +228,10 @@ public static class Program
                 return ExitCodes.Success;
             }
 
-            await using var client = await ResoniteClientFactory.ConnectAsync(parsed, resolution.Config, ReflectionCacheFrom(parsed), commandToken);
+            Uri? linkUri = string.Equals(resolution.Config.Backend, "workbench", StringComparison.Ordinal)
+                ? null
+                : await ResoniteClientFactory.ResolveConnectionUrlAsync(parsed, resolution.Config, commandToken);
+            await using var client = await ResoniteClientFactory.ConnectAsync(parsed, resolution.Config, ReflectionCacheFrom(parsed), commandToken, linkUri);
             var world = new WorldService(client, GeneratedContentMetadata.SourceForVersion(ProductVersion()));
             await RunResonite(parsed, output, client, world, commandToken);
             return ExitCodes.Success;
