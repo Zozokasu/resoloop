@@ -16,3 +16,11 @@ examples/flux/build/
 examples/flux/.protograph/
 *.brson
 __pycache__/
+plan/
+feedback/
+# local agent tooling
+.ccg/
+.devin/config.local.json
+.test-runs/
+.claude/settings.local.json
+.claude/*.doctor-backup

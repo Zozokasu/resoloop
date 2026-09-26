@@ -1,5 +1,13 @@
 # Development guide
 
+## Agent workflow
+
+For `/ccg:go` work, read [the agent workflow](docs/dev/agent-workflow.md). It is the tracked source for roles, Devin SWE-2 instructions, worktree ownership, and verification tiers. `CLAUDE.md` is the Claude entry point and may be absent in a worktree.
+
+Preserve existing user changes and untracked files. Do not edit `.ccg/` managed files or `plan/` unless the user specifically asks; `feedback/` holds proposals and never replaces the plan. Do not commit, push, or release without a request.
+
+A live run must be explicitly authorized for the task. Report pass, fail, skip, target, and evidence status; a skipped live test is unverified, not passed. When reviewing, identify the exact commit or diff examined and distinguish any changes made afterward.
+
 ## Architecture
 
 Dependency direction is RLoop.Cli → RLoop.Core ← RLoop.ResoniteLink and RLoop.Cli → RLoop.Flux → IFluxDeployer ← RLoop.Flux.Deployer. Core must not reference ResoniteLink models or Flux-SDK types. Keep ResoniteLink Beta changes in the adapter and Flux-SDK API changes in the F# deployer.
