@@ -111,9 +111,11 @@ public static class Program
                 ["flux-executable"] = parsed.Option("flux-executable"), ["flux-deployer"] = parsed.Option("flux-deployer"),
                 ["library-path"] = parsed.Option("library-path"), ["log-path"] = parsed.Option("log-path"),
                 ["screenshots-dir"] = parsed.Option("screenshots-dir"),
-                ["blender-executable"] = parsed.Option("blender-executable")
+                ["blender-executable"] = parsed.Option("blender-executable"),
+                ["backend"] = parsed.Option("backend"), ["workbench-pipe"] = parsed.Option("workbench-pipe")
             };
             var resolution = ConfigResolver.Resolve(Environment.CurrentDirectory, cliConfig);
+            BackendSupport.RequireSupported(parsed.Positionals[0], resolution.Config.Backend);
             commandCancellation = CancellationTokenSource.CreateLinkedTokenSource(userCancellation.Token);
             commandCancellation.CancelAfter(TimeSpan.FromSeconds(resolution.Config.CommandTimeoutSeconds));
             var commandToken = commandCancellation.Token;
