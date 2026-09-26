@@ -20,10 +20,11 @@ public sealed class WorkbenchResoniteClientTests
     private static RpcWelcome Welcome(RpcActiveConnection? active = null) =>
         new("9.9.9-test", 1, [RpcCapabilities.SessionRead], [RpcCapabilities.SessionRead], active);
 
-    private static RpcResponse Response(string id, string resultJson) =>
+    private static RpcResponse Response(string id, string resultJson,
+        string? connectionId = "conn-meta-1", bool? stale = null) =>
         new(id,
             new ResultMeta(DateTimeOffset.UtcNow,
-                ConnectionId: "conn-meta-1", SessionId: "sess-meta-1", WorldRevision: 12),
+                ConnectionId: connectionId, SessionId: "sess-meta-1", WorldRevision: 12, Stale: stale),
             JsonDocument.Parse(resultJson).RootElement.Clone());
 
     /// <summary>Answers handshake with a welcome, then answers every request with the handler.</summary>
@@ -221,7 +222,7 @@ public sealed class WorkbenchResoniteClientTests
             }
             """;
         await using var server = FakeWorkbenchServer.Start(pipeName,
-            (s, ct) => RespondAsync(s, request => Response(request.Id, connected), ct));
+            (s, ct) => RespondAsync(s, request => Response(request.Id, connected, connectionId: "conn-1"), ct));
         await using var client = new WorkbenchResoniteClient();
         await client.ConnectAsync(PipeUri(pipeName), ConnectTimeout, guard.Token);
 
@@ -233,10 +234,269 @@ public sealed class WorkbenchResoniteClientTests
         Assert.Equal("0.13.1", info.ResoniteLinkVersion);
         Assert.Equal("uni-123", info.UniqueSessionId);
 
-        Assert.Equal("conn-meta-1", client.Meta.ConnectionId);
+        Assert.Equal("conn-1", client.Meta.ConnectionId);
         Assert.Equal("sess-meta-1", client.Meta.SessionId);
         Assert.Equal(12, client.Meta.WorldRevision);
         Assert.Null(client.Meta.ObservedScopeRootId);
+    }
+
+    [Fact]
+    public async Task GetSessionInfoAsync_MissingState_ThrowsUnavailable()
+    {
+        string pipeName = NewPipeName();
+        using var guard = new CancellationTokenSource(GuardTimeout);
+        const string noState = """{"connection":null}""";
+        await using var server = FakeWorkbenchServer.Start(pipeName,
+            (s, ct) => RespondAsync(s, request => Response(request.Id, noState), ct));
+        await using var client = new WorkbenchResoniteClient();
+        await client.ConnectAsync(PipeUri(pipeName), ConnectTimeout, guard.Token);
+
+        var ex = await Assert.ThrowsAsync<RLoopException>(() => client.GetSessionInfoAsync(guard.Token));
+
+        Assert.Equal("WORKBENCH_UNAVAILABLE", ex.Code);
+        Assert.Equal(ExitCodes.ConnectionFailed, ex.ExitCode);
+    }
+
+    [Fact]
+    public async Task GetSessionInfoAsync_TransitionalState_ThrowsUnavailable()
+    {
+        string pipeName = NewPipeName();
+        using var guard = new CancellationTokenSource(GuardTimeout);
+        const string connecting = """
+            {"state":"Connecting","targetSession":{"sessionId":"S-abc"},"connection":null,"reconnectAttempt":1,"disconnectReason":null}
+            """;
+        await using var server = FakeWorkbenchServer.Start(pipeName,
+            (s, ct) => RespondAsync(s, request => Response(request.Id, connecting), ct));
+        await using var client = new WorkbenchResoniteClient();
+        await client.ConnectAsync(PipeUri(pipeName), ConnectTimeout, guard.Token);
+
+        var ex = await Assert.ThrowsAsync<RLoopException>(() => client.GetSessionInfoAsync(guard.Token));
+
+        Assert.Equal("WORKBENCH_UNAVAILABLE", ex.Code);
+    }
+
+    [Fact]
+    public async Task GetSessionInfoAsync_ConnectedWithoutConnection_ThrowsUnavailable()
+    {
+        string pipeName = NewPipeName();
+        using var guard = new CancellationTokenSource(GuardTimeout);
+        const string connectedNoConnection = """
+            {"state":"Connected","targetSession":{"sessionId":"S-abc"},"connection":null,"reconnectAttempt":0,"disconnectReason":null}
+            """;
+        await using var server = FakeWorkbenchServer.Start(pipeName,
+            (s, ct) => RespondAsync(s, request => Response(request.Id, connectedNoConnection, connectionId: "conn-1"), ct));
+        await using var client = new WorkbenchResoniteClient();
+        await client.ConnectAsync(PipeUri(pipeName), ConnectTimeout, guard.Token);
+
+        var ex = await Assert.ThrowsAsync<RLoopException>(() => client.GetSessionInfoAsync(guard.Token));
+
+        Assert.Equal("WORKBENCH_UNAVAILABLE", ex.Code);
+    }
+
+    [Fact]
+    public async Task GetSessionInfoAsync_ConnectedWithoutConnectionId_ThrowsUnavailable()
+    {
+        string pipeName = NewPipeName();
+        using var guard = new CancellationTokenSource(GuardTimeout);
+        const string connectedNoId = """
+            {"state":"Connected","connection":{"connectionId":"","generation":0,"remote":{"resoniteVersion":"2025.9.2.1349"}}}
+            """;
+        await using var server = FakeWorkbenchServer.Start(pipeName,
+            (s, ct) => RespondAsync(s, request => Response(request.Id, connectedNoId, connectionId: "conn-1"), ct));
+        await using var client = new WorkbenchResoniteClient();
+        await client.ConnectAsync(PipeUri(pipeName), ConnectTimeout, guard.Token);
+
+        var ex = await Assert.ThrowsAsync<RLoopException>(() => client.GetSessionInfoAsync(guard.Token));
+
+        Assert.Equal("WORKBENCH_UNAVAILABLE", ex.Code);
+    }
+
+    [Fact]
+    public async Task GetSessionInfoAsync_ConnectionIdMismatch_ThrowsUnavailable()
+    {
+        string pipeName = NewPipeName();
+        using var guard = new CancellationTokenSource(GuardTimeout);
+        const string connected = """
+            {"state":"Connected","connection":{"connectionId":"conn-1","generation":0,"remote":{"resoniteVersion":"2025.9.2.1349"}}}
+            """;
+        await using var server = FakeWorkbenchServer.Start(pipeName,
+            (s, ct) => RespondAsync(s, request => Response(request.Id, connected), ct));
+        await using var client = new WorkbenchResoniteClient();
+        await client.ConnectAsync(PipeUri(pipeName), ConnectTimeout, guard.Token);
+
+        var ex = await Assert.ThrowsAsync<RLoopException>(() => client.GetSessionInfoAsync(guard.Token));
+
+        Assert.Equal("WORKBENCH_UNAVAILABLE", ex.Code);
+    }
+
+    [Fact]
+    public async Task GetSessionInfoAsync_StaleResponse_ThrowsUnavailable()
+    {
+        string pipeName = NewPipeName();
+        using var guard = new CancellationTokenSource(GuardTimeout);
+        const string connected = """
+            {"state":"Connected","connection":{"connectionId":"conn-1","generation":0,"remote":{"resoniteVersion":"2025.9.2.1349"}}}
+            """;
+        await using var server = FakeWorkbenchServer.Start(pipeName,
+            (s, ct) => RespondAsync(s, request => Response(request.Id, connected, connectionId: "conn-1", stale: true), ct));
+        await using var client = new WorkbenchResoniteClient();
+        await client.ConnectAsync(PipeUri(pipeName), ConnectTimeout, guard.Token);
+
+        var ex = await Assert.ThrowsAsync<RLoopException>(() => client.GetSessionInfoAsync(guard.Token));
+
+        Assert.Equal("WORKBENCH_UNAVAILABLE", ex.Code);
+    }
+
+    [Fact]
+    public async Task ConnectAsync_UnrequestedGrant_ThrowsUnavailable()
+    {
+        string pipeName = NewPipeName();
+        using var guard = new CancellationTokenSource(GuardTimeout);
+        await using var server = FakeWorkbenchServer.Start(pipeName, async (s, ct) =>
+        {
+            await s.WaitForConnectionAsync(ct);
+            _ = await s.ReadAsync(ct); // hello
+            await s.WriteAsync(new RpcWelcome("9.9.9-test", 1,
+                [RpcCapabilities.SessionRead, RpcCapabilities.WorldRead],
+                [RpcCapabilities.SessionRead, RpcCapabilities.WorldRead],
+                null), ct);
+            await Task.Delay(Timeout.Infinite, ct);
+        });
+        await using var client = new WorkbenchResoniteClient();
+
+        var ex = await Assert.ThrowsAsync<RLoopException>(
+            () => client.ConnectAsync(PipeUri(pipeName), ConnectTimeout, guard.Token));
+
+        Assert.Equal("WORKBENCH_UNAVAILABLE", ex.Code);
+        Assert.Equal(ExitCodes.ConnectionFailed, ex.ExitCode);
+    }
+
+    [Fact]
+    public async Task GetSessionInfoAsync_CapabilityNotGranted_ThrowsUnavailable()
+    {
+        string pipeName = NewPipeName();
+        using var guard = new CancellationTokenSource(GuardTimeout);
+        await using var server = FakeWorkbenchServer.Start(pipeName, async (s, ct) =>
+        {
+            await s.WaitForConnectionAsync(ct);
+            _ = await s.ReadAsync(ct); // hello
+            await s.WriteAsync(new RpcWelcome("9.9.9-test", 1,
+                [RpcCapabilities.SessionRead], [], new RpcActiveConnection("conn-1", "sess-1")), ct);
+            while (await s.ReadAsync(ct) is { } message)
+            {
+                if (message is RpcRequest request)
+                {
+                    await s.WriteAsync(new RpcError(request.Id,
+                        new RpcErrorDetail(RpcErrorCodes.CapabilityNotGranted, "session.read is not granted.")), ct);
+                }
+            }
+        });
+        await using var client = new WorkbenchResoniteClient();
+        await client.ConnectAsync(PipeUri(pipeName), ConnectTimeout, guard.Token);
+
+        var ex = await Assert.ThrowsAsync<RLoopException>(() => client.GetSessionInfoAsync(guard.Token));
+
+        Assert.Equal("WORKBENCH_UNAVAILABLE", ex.Code);
+        Assert.Equal(ExitCodes.ConnectionFailed, ex.ExitCode);
+    }
+
+    [Fact]
+    public async Task ConnectAsync_ZeroLengthFrameHeader_FailsWithoutHanging()
+    {
+        string pipeName = NewPipeName();
+        using var guard = new CancellationTokenSource(GuardTimeout);
+        await using var server = FakeWorkbenchServer.Start(pipeName, async (s, ct) =>
+        {
+            await s.WaitForConnectionAsync(ct);
+            _ = await s.ReadAsync(ct); // hello
+            byte[] header = new byte[4];
+            BinaryPrimitives.WriteInt32LittleEndian(header, 0);
+            await s.WriteRawAsync(header, ct);
+            await Task.Delay(Timeout.Infinite, ct);
+        });
+        await using var client = new WorkbenchResoniteClient();
+
+        var watch = Stopwatch.StartNew();
+        var ex = await Assert.ThrowsAsync<RLoopException>(
+            () => client.ConnectAsync(PipeUri(pipeName), ConnectTimeout, guard.Token));
+        watch.Stop();
+
+        Assert.Equal("WORKBENCH_UNAVAILABLE", ex.Code);
+        Assert.True(watch.Elapsed < TimeSpan.FromSeconds(15), $"zero-length frame handling took {watch.Elapsed}");
+    }
+
+    [Fact]
+    public async Task ConnectAsync_TruncatedFrame_ThrowsUnavailable()
+    {
+        string pipeName = NewPipeName();
+        using var guard = new CancellationTokenSource(GuardTimeout);
+        await using var server = FakeWorkbenchServer.Start(pipeName, async (s, ct) =>
+        {
+            await s.WaitForConnectionAsync(ct);
+            _ = await s.ReadAsync(ct); // hello
+            byte[] header = new byte[4];
+            BinaryPrimitives.WriteInt32LittleEndian(header, 100);
+            await s.WriteRawAsync(header, ct);
+            s.Disconnect();
+            await Task.Delay(Timeout.Infinite, ct);
+        });
+        await using var client = new WorkbenchResoniteClient();
+
+        var ex = await Assert.ThrowsAsync<RLoopException>(
+            () => client.ConnectAsync(PipeUri(pipeName), ConnectTimeout, guard.Token));
+
+        Assert.Equal("WORKBENCH_UNAVAILABLE", ex.Code);
+    }
+
+    [Fact]
+    public async Task GetSessionInfoAsync_TruncatedFrame_ThrowsUnavailable()
+    {
+        string pipeName = NewPipeName();
+        using var guard = new CancellationTokenSource(GuardTimeout);
+        await using var server = FakeWorkbenchServer.Start(pipeName, async (s, ct) =>
+        {
+            await s.WaitForConnectionAsync(ct);
+            _ = await s.ReadAsync(ct); // hello
+            await s.WriteAsync(Welcome(new RpcActiveConnection("conn-1", "sess-1")), ct);
+            _ = await s.ReadAsync(ct); // session.status request
+            byte[] header = new byte[4];
+            BinaryPrimitives.WriteInt32LittleEndian(header, 100);
+            await s.WriteRawAsync(header, ct);
+            s.Disconnect();
+            await Task.Delay(Timeout.Infinite, ct);
+        });
+        await using var client = new WorkbenchResoniteClient();
+        await client.ConnectAsync(PipeUri(pipeName), ConnectTimeout, guard.Token);
+
+        var ex = await Assert.ThrowsAsync<RLoopException>(() => client.GetSessionInfoAsync(guard.Token));
+
+        Assert.Equal("WORKBENCH_UNAVAILABLE", ex.Code);
+    }
+
+    [Fact]
+    public async Task GetSessionInfoAsync_NoResponse_ObservesCallerCancellation()
+    {
+        string pipeName = NewPipeName();
+        using var guard = new CancellationTokenSource(GuardTimeout);
+        await using var server = FakeWorkbenchServer.Start(pipeName, async (s, ct) =>
+        {
+            await s.WaitForConnectionAsync(ct);
+            _ = await s.ReadAsync(ct); // hello
+            await s.WriteAsync(Welcome(new RpcActiveConnection("conn-1", "sess-1")), ct);
+            _ = await s.ReadAsync(ct); // session.status request; never answered
+            await Task.Delay(Timeout.Infinite, ct);
+        });
+        await using var client = new WorkbenchResoniteClient();
+        await client.ConnectAsync(PipeUri(pipeName), ConnectTimeout, guard.Token);
+
+        using var callTimeout = CancellationTokenSource.CreateLinkedTokenSource(guard.Token);
+        callTimeout.CancelAfter(TimeSpan.FromMilliseconds(300));
+        var watch = Stopwatch.StartNew();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => client.GetSessionInfoAsync(callTimeout.Token));
+        watch.Stop();
+
+        Assert.True(watch.Elapsed < TimeSpan.FromSeconds(15), $"session.status cancellation took {watch.Elapsed}");
     }
 
     [Fact]
