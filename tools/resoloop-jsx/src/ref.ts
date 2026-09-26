@@ -4,7 +4,6 @@
 //   $component:key           -> Component ID
 //   $member:key.Member       -> Component member ID
 //   $slot-member:key.Member  -> Slot's own exposed field ID
-//   $asset:key               -> imported/declared asset
 
 export const ref = {
   /** `$slot:${key}` — reference to a Slot declared with this stable key. */
@@ -19,6 +18,4 @@ export const ref = {
    *  OrderOffset). */
   slotMember: (slotKey: string, member: string) =>
     `$slot-member:${slotKey}.${member}`,
-  /** `$asset:${key}` — reference to a declared/imported asset. */
-  asset: (key: string) => `$asset:${key}`,
 };

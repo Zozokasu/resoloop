@@ -52,15 +52,15 @@ Every `<Slot>` and `<Component>` requires an explicit stable `key` prop.
 warning per generated key is printed to stderr.
 
 `ref.slot(key)` / `ref.component(key)` / `ref.member(key, member)` /
-`ref.slotMember(key, member)` / `ref.asset(key)` produce the `$slot:` /
-`$component:` / `$member:` / `$slot-member:` / `$asset:` selector strings.
+`ref.slotMember(key, member)` produce the `$slot:` / `$component:` /
+`$member:` / `$slot-member:` selector strings.
 
 ## Exit codes
 
 | code | meaning |
 | --- | --- |
 | 0 | success; JSON written |
-| 1 | input or build error (bad arguments, missing entry, `EXPLICIT_KEY_REQUIRED`, `DUPLICATE_KEY`, `DUPLICATE_SIBLING_NAME`, `INVALID_CHILD`, `ROOT_MUST_BE_SINGLE_SLOT`, `SLOT_NAME_MISSING`, module load failure) |
+| 1 | input or build error (bad arguments, missing entry, `EXPLICIT_KEY_REQUIRED`, `DUPLICATE_KEY`, `DUPLICATE_SIBLING_NAME`, `INVALID_CHILD`, `ROOT_MUST_BE_SINGLE_SLOT`, `SLOT_NAME_MISSING`, `NON_FINITE_NUMBER`, module load failure) |
 | 2 | the entry file has TypeScript diagnostics and was not executed |
 
 `npm run contract` additionally uses exit code `3` when `resoloop.dll` was not
@@ -75,4 +75,5 @@ Emitted documents contain only `schemaVersion` (`"1"`), `ownership`, `slot`,
 `relocationTransform`, `runtimeRelocatable`. `ApplyComponentSpec` fields:
 `type` (required), `key`, `fields`, `migrateFrom`, `initialFields`,
 `identityFields`. `assets`, `cameras`, `tests`, `include`, `prototypes`,
-`parameters`, and `variables` are out of scope.
+`parameters`, and `variables` are out of scope; because `assets` declarations
+are not yet supported, no `ref.asset` helper is exposed.

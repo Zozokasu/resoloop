@@ -28,7 +28,7 @@ export interface SlotProps {
   /** ApplySlotSpec.Name (required) */
   name: string;
   /** ApplySlotSpec.Key — required unless building with --draft */
-  key: string;
+  key?: string;
   /** ApplySlotSpec.Parent — only meaningful on the root <Slot> */
   parent?: string;
   /** ApplySlotSpec.Position — exactly 3 numbers */
@@ -58,7 +58,7 @@ export interface ComponentProps {
   /** ApplyComponentSpec.Type — fully-qualified Resonite Component type name */
   type: string;
   /** ApplyComponentSpec.Key — required unless building with --draft */
-  key: string;
+  key?: string;
   /** ApplyComponentSpec.Fields */
   fields?: Record<string, JsonValue>;
   /** ApplyComponentSpec.MigrateFrom */

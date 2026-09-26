@@ -145,6 +145,27 @@ function slug(s: string): string {
   return s.toLowerCase().replace(/[^a-z0-9_-]/g, "_");
 }
 
+/** Recursively verify that every number in a JSON-bound value is finite;
+ *  JSON.stringify would otherwise silently emit NaN/Infinity as null. */
+function assertFiniteNumbers(value: unknown, path: string): void {
+  if (typeof value === "number") {
+    if (!Number.isFinite(value))
+      throw new BuildError(
+        "NON_FINITE_NUMBER",
+        `Non-finite number at ${path}: ${value}`
+      );
+    return;
+  }
+  if (Array.isArray(value)) {
+    value.forEach((item, i) => assertFiniteNumbers(item, `${path}[${i}]`));
+    return;
+  }
+  if (value !== null && typeof value === "object") {
+    for (const [k, v] of Object.entries(value as Record<string, unknown>))
+      assertFiniteNumbers(v, `${path}.${k}`);
+  }
+}
+
 export interface EvaluateOptions {
   draft?: boolean;
 }
@@ -196,7 +217,7 @@ export function evaluate(
     path: string
   ): string {
     const key = props.key;
-    if (typeof key === "string" && key.length > 0) return key;
+    if (typeof key === "string" && key.trim().length > 0) return key;
     if (!draft)
       throw new BuildError(
         "EXPLICIT_KEY_REQUIRED",
@@ -236,9 +257,15 @@ export function evaluate(
     const key = resolveKey("component", props, type, parentKey, siblingIndex, path);
     registerKey(componentKeys, key, "component", path);
     const spec: ApplyComponentSpec = { type, key };
-    if (props.fields !== undefined) spec.fields = props.fields;
+    if (props.fields !== undefined) {
+      assertFiniteNumbers(props.fields, `${path}.fields`);
+      spec.fields = props.fields;
+    }
     if (props.migrateFrom !== undefined) spec.migrateFrom = props.migrateFrom;
-    if (props.initialFields !== undefined) spec.initialFields = props.initialFields;
+    if (props.initialFields !== undefined) {
+      assertFiniteNumbers(props.initialFields, `${path}.initialFields`);
+      spec.initialFields = props.initialFields;
+    }
     if (props.identityFields !== undefined) spec.identityFields = props.identityFields;
     return spec;
   }
@@ -286,7 +313,10 @@ export function evaluate(
     const spec: ApplySlotSpec = { name, key };
     if (isRoot && props.parent !== undefined) spec.parent = props.parent;
     for (const field of SLOT_SCALAR_PROPS)
-      if (props[field] !== undefined) (spec as any)[field] = props[field];
+      if (props[field] !== undefined) {
+        assertFiniteNumbers(props[field], `${path}.${field}`);
+        (spec as any)[field] = props[field];
+      }
 
     const components: ApplyComponentSpec[] = [];
     const children: ApplyNodeSpec[] = [];

@@ -87,6 +87,46 @@ describe("key rules", () => {
     );
   });
 
+  test("root slot with a whitespace-only key fails with EXPLICIT_KEY_REQUIRED", () => {
+    throws(
+      () => evaluate(slot({ name: "R", key: "   " })),
+      buildError("EXPLICIT_KEY_REQUIRED")
+    );
+    const { document } = evaluate(slot({ name: "R", key: "   " }), { draft: true });
+    equal(document.slot.key, "root/r#0");
+    equal(document.ownership.key, "root/r#0");
+  });
+
+  test("child slot with a whitespace-only key fails with EXPLICIT_KEY_REQUIRED", () => {
+    throws(
+      () =>
+        evaluate(
+          slot({ name: "R", key: "r", children: [slot({ name: "Kid", key: " \t " })] })
+        ),
+      buildError("EXPLICIT_KEY_REQUIRED")
+    );
+    const { document } = evaluate(
+      slot({ name: "R", key: "r", children: [slot({ name: "Kid", key: " \t " })] }),
+      { draft: true }
+    );
+    equal(document.children[0].slot.key, "r/kid#0");
+  });
+
+  test("component with a whitespace-only key fails with EXPLICIT_KEY_REQUIRED", () => {
+    throws(
+      () =>
+        evaluate(
+          slot({ name: "R", key: "r", children: [component({ type: "T", key: "  " })] })
+        ),
+      buildError("EXPLICIT_KEY_REQUIRED")
+    );
+    const { document } = evaluate(
+      slot({ name: "R", key: "r", children: [component({ type: "T", key: "  " })] }),
+      { draft: true }
+    );
+    equal(document.components[0].key, "r/t#0");
+  });
+
   test("slot and component key namespaces are independent", () => {
     const { document } = evaluate(
       slot({
@@ -269,5 +309,56 @@ describe("shape checks", () => {
     deepEqual(document.children[0].slot, { name: "C", key: "c" });
     // structural props never leak into the emitted spec
     ok(!("children" in document.slot));
+  });
+});
+
+describe("non-finite numbers", () => {
+  test("NaN in a slot position fails with NON_FINITE_NUMBER naming the path", () => {
+    throws(
+      () => evaluate(slot({ name: "R", key: "r", position: [0, Number.NaN, 1] })),
+      (err: any) =>
+        err instanceof BuildError &&
+        err.code === "NON_FINITE_NUMBER" &&
+        /\$\.position\[1\]/.test(err.message)
+    );
+  });
+
+  test("Infinity nested in component fields fails with NON_FINITE_NUMBER naming the path", () => {
+    throws(
+      () =>
+        evaluate(
+          slot({
+            name: "R",
+            key: "r",
+            children: [
+              component({
+                type: "T",
+                key: "c",
+                fields: { Limits: { Min: 0, Max: Number.POSITIVE_INFINITY } },
+              }),
+            ],
+          })
+        ),
+      (err: any) =>
+        err instanceof BuildError &&
+        err.code === "NON_FINITE_NUMBER" &&
+        /\$\.components\[0\]\.fields\.Limits\.Max/.test(err.message)
+    );
+  });
+
+  test("non-finite numbers in initialFields are rejected too", () => {
+    throws(
+      () =>
+        evaluate(
+          slot({
+            name: "R",
+            key: "r",
+            children: [
+              component({ type: "T", key: "c", initialFields: { Speed: [0, -Infinity] } }),
+            ],
+          })
+        ),
+      buildError("NON_FINITE_NUMBER")
+    );
   });
 });
