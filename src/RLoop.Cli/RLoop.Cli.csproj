@@ -20,10 +20,14 @@
     <PackageRequireLicenseAcceptance>false</PackageRequireLicenseAcceptance>
   </PropertyGroup>
   <ItemGroup>
+    <InternalsVisibleTo Include="RLoop.Tests" />
+  </ItemGroup>
+  <ItemGroup>
     <ProjectReference Include="../RLoop.Core/RLoop.Core.csproj" />
     <ProjectReference Include="../RLoop.ResoniteLink/RLoop.ResoniteLink.csproj" />
     <ProjectReference Include="../RLoop.Flux/RLoop.Flux.csproj" />
     <ProjectReference Include="../RLoop.Flux.Deployer/RLoop.Flux.Deployer.fsproj" />
+    <ProjectReference Include="../RLoop.Workbench/RLoop.Workbench.csproj" />
   </ItemGroup>
   <ItemGroup>
     <None Include="../../README.md" Pack="true" PackagePath="\" />

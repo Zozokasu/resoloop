@@ -4,6 +4,7 @@ using RLoop.Core;
 using RLoop.Flux;
 using RLoop.Flux.Deployer;
 using RLoop.ResoniteLink;
+using RLoop.Workbench;
 
 namespace RLoop.Cli;
 
@@ -111,9 +112,11 @@ public static class Program
                 ["flux-executable"] = parsed.Option("flux-executable"), ["flux-deployer"] = parsed.Option("flux-deployer"),
                 ["library-path"] = parsed.Option("library-path"), ["log-path"] = parsed.Option("log-path"),
                 ["screenshots-dir"] = parsed.Option("screenshots-dir"),
-                ["blender-executable"] = parsed.Option("blender-executable")
+                ["blender-executable"] = parsed.Option("blender-executable"),
+                ["backend"] = parsed.Option("backend"), ["workbench-pipe"] = parsed.Option("workbench-pipe")
             };
             var resolution = ConfigResolver.Resolve(Environment.CurrentDirectory, cliConfig);
+            BackendSupport.RequireSupported(parsed.Positionals[0], resolution.Config.Backend);
             commandCancellation = CancellationTokenSource.CreateLinkedTokenSource(userCancellation.Token);
             commandCancellation.CancelAfter(TimeSpan.FromSeconds(resolution.Config.CommandTimeoutSeconds));
             var commandToken = commandCancellation.Token;
@@ -135,6 +138,8 @@ public static class Program
 
             if (parsed.Positionals[0].Equals("blender", StringComparison.OrdinalIgnoreCase))
                 return await RunBlender(parsed, output, resolution.Config, commandToken);
+            if (parsed.Positionals[0].Equals("wb", StringComparison.OrdinalIgnoreCase))
+                return await RunWorkbench(parsed, output, resolution.Config, commandToken);
 
             var flux = new FluxProcessTool(resolution.Config.FluxExecutable ?? "flux-sdk", new FluxSdkDeployer());
             if (parsed.Positionals[0].Equals("doctor", StringComparison.OrdinalIgnoreCase))
@@ -201,12 +206,11 @@ public static class Program
                     result = await SceneArtifactService.CaptureAsync(document, camera, captureOutput, width, height, commandToken);
                 else
                 {
-                    var captureUri = await ResolveConnectionUrlAsync(parsed, resolution.Config, commandToken);
+                    var captureUri = await ResoniteClientFactory.ResolveConnectionUrlAsync(parsed, resolution.Config, commandToken);
                     if (!captureUri.IsLoopback && resolution.Config.ScreenshotsDirectory is null)
                         throw new RLoopException("CAPTURE_DIRECTORY_REQUIRED", "Remote Resonite requires --screenshots-dir pointing to its locally accessible screenshot export folder.", ExitCodes.InvalidArguments);
                     var screenshots = resolution.Config.ScreenshotsDirectory ?? ScreenshotDirectoryResolver.ResolveDefault();
-                    await using var captureClient = new ResoniteLinkClientAdapter(TimeSpan.FromSeconds(resolution.Config.TimeoutSeconds), ReflectionCacheFrom(parsed));
-                    await captureClient.ConnectAsync(captureUri, TimeSpan.FromSeconds(resolution.Config.TimeoutSeconds), commandToken);
+                    await using var captureClient = await ResoniteClientFactory.ConnectAsync(parsed, resolution.Config, ReflectionCacheFrom(parsed), commandToken, captureUri);
                     CanvasFrame? framing = null;
                     if (parsed.Option("frame") is { } frame)
                     {
@@ -224,9 +228,10 @@ public static class Program
                 return ExitCodes.Success;
             }
 
-            var uri = await ResolveConnectionUrlAsync(parsed, resolution.Config, commandToken);
-            await using var client = new ResoniteLinkClientAdapter(TimeSpan.FromSeconds(resolution.Config.TimeoutSeconds), ReflectionCacheFrom(parsed));
-            await client.ConnectAsync(uri, TimeSpan.FromSeconds(resolution.Config.TimeoutSeconds), commandToken);
+            Uri? linkUri = string.Equals(resolution.Config.Backend, "workbench", StringComparison.Ordinal)
+                ? null
+                : await ResoniteClientFactory.ResolveConnectionUrlAsync(parsed, resolution.Config, commandToken);
+            await using var client = await ResoniteClientFactory.ConnectAsync(parsed, resolution.Config, ReflectionCacheFrom(parsed), commandToken, linkUri);
             var world = new WorldService(client, GeneratedContentMetadata.SourceForVersion(ProductVersion()));
             await RunResonite(parsed, output, client, world, commandToken);
             return ExitCodes.Success;
@@ -319,9 +324,53 @@ public static class Program
         return ExitCodes.Success;
     }
 
-    private static Task<Uri> ResolveConnectionUrlAsync(ParsedArguments args, RLoopConfig config, CancellationToken token) =>
-        SessionDiscovery.ResolveUrlAsync(config, new ResoniteSessionDiscovery(),
-            args.IntOption("discovery-seconds", SessionDiscovery.DefaultSeconds, 1, 60), args.Option("session"), token);
+    private static async Task<int> RunWorkbench(ParsedArguments args, OutputWriter output, RLoopConfig config, CancellationToken token)
+    {
+        if (args.Positionals.Count != 2 || !args.Positionals[1].Equals("status", StringComparison.OrdinalIgnoreCase))
+            throw UnknownCommand(string.Join(' ', args.Positionals));
+        var pipe = config.WorkbenchPipe ?? "ResoniteWorkbench.Rpc.v1";
+        // wb always inspects the Workbench transport itself, regardless of --backend.
+        await using var client = new WorkbenchResoniteClient();
+        await client.ConnectAsync(new Uri($"{WorkbenchResoniteClient.UriScheme}:///{pipe}"),
+            TimeSpan.FromSeconds(config.TimeoutSeconds), token);
+        var handshake = client.Handshake!;
+        SessionInfo? session = null;
+        try
+        {
+            session = await client.GetSessionInfoAsync(token);
+        }
+        catch (RLoopException ex) when (ex.Code == "WORKBENCH_NOT_CONNECTED")
+        {
+            // The Workbench is reachable but not attached to a Resonite session; report it.
+        }
+        var data = new
+        {
+            pipe,
+            handshake = new
+            {
+                serverVersion = handshake.ServerVersion,
+                selectedProtocol = handshake.SelectedProtocol,
+                availableCapabilities = handshake.AvailableCapabilities,
+                grantedCapabilities = handshake.GrantedCapabilities
+            },
+            session = new
+            {
+                connected = session?.Connected ?? false,
+                resoniteVersion = session?.ResoniteVersion,
+                resoniteLinkVersion = session?.ResoniteLinkVersion,
+                uniqueSessionId = session?.UniqueSessionId
+            }
+        };
+        output.Success(data, writer =>
+        {
+            writer.WriteLine($"pipe {pipe} | workbench {handshake.ServerVersion} | protocol {handshake.SelectedProtocol}");
+            writer.WriteLine($"capabilities: {string.Join(", ", handshake.AvailableCapabilities)} (granted: {string.Join(", ", handshake.GrantedCapabilities)})");
+            writer.WriteLine(session?.Connected == true
+                ? $"session connected | Resonite {session.ResoniteVersion ?? "unknown"} | Link {session.ResoniteLinkVersion ?? "unknown"} | {session.UniqueSessionId ?? "unknown"}"
+                : "session not connected");
+        });
+        return ExitCodes.Success;
+    }
 
     private static async Task<int> RunDoctor(ParsedArguments args, OutputWriter output, RLoopConfig config, IFluxTool flux,
         CancellationToken cancellationToken)
@@ -330,7 +379,7 @@ public static class Program
         Uri? uri = null;
         try
         {
-            uri = await ResolveConnectionUrlAsync(args, config, cancellationToken);
+            uri = await ResoniteClientFactory.ResolveConnectionUrlAsync(args, config, cancellationToken);
             checks.Add(new DoctorCheck("resonite-link-url", "pass", true, uri.ToString()));
         }
         catch (RLoopException ex)
@@ -342,8 +391,7 @@ public static class Program
         {
             try
             {
-                await using var client = new ResoniteLinkClientAdapter(TimeSpan.FromSeconds(config.TimeoutSeconds), ReflectionCacheFrom(args));
-                await client.ConnectAsync(uri, TimeSpan.FromSeconds(config.TimeoutSeconds), cancellationToken);
+                await using var client = await ResoniteClientFactory.ConnectAsync(args, config, ReflectionCacheFrom(args), cancellationToken, uri);
                 var session = await client.GetSessionInfoAsync(cancellationToken);
                 checks.Add(new DoctorCheck("resonite-connection", "pass", true,
                     $"Connected to Resonite {session.ResoniteVersion ?? "unknown"} through ResoniteLink {session.ResoniteLinkVersion ?? "unknown"}."));
@@ -866,9 +914,8 @@ public static class Program
         {
             var manifestPath = Path.GetFullPath(args.Positional(2, "Flux manifest"));
             var manifest = FluxManifestOrchestrator.Inspect(manifestPath);
-            var uri = await ResolveConnectionUrlAsync(args, config, ct);
-            await using var client = new ResoniteLinkClientAdapter(TimeSpan.FromSeconds(config.TimeoutSeconds), ReflectionCacheFrom(args));
-            await client.ConnectAsync(uri, TimeSpan.FromSeconds(config.TimeoutSeconds), ct);
+            var uri = await ResoniteClientFactory.ResolveConnectionUrlAsync(args, config, ct);
+            await using var client = await ResoniteClientFactory.ConnectAsync(args, config, ReflectionCacheFrom(args), ct, uri);
             var world = new WorldService(client, GeneratedContentMetadata.SourceForVersion(ProductVersion()));
             var currentSession = await client.GetSessionInfoAsync(ct);
             var fluxStatus = await flux.GetStatusAsync(ct);
@@ -949,11 +996,10 @@ public static class Program
         }
         else if (sub == "deploy")
         {
-            var uri = await ResolveConnectionUrlAsync(args, config, ct);
+            var uri = await ResoniteClientFactory.ResolveConnectionUrlAsync(args, config, ct);
             var project = Path.GetFullPath(args.RequireOption("project"));
             var module = args.RequireOption("module");
-            await using var client = new ResoniteLinkClientAdapter(TimeSpan.FromSeconds(config.TimeoutSeconds), ReflectionCacheFrom(args));
-            await client.ConnectAsync(uri, TimeSpan.FromSeconds(config.TimeoutSeconds), ct);
+            await using var client = await ResoniteClientFactory.ConnectAsync(args, config, ReflectionCacheFrom(args), ct, uri);
             var parentId = await new WorldService(client, GeneratedContentMetadata.SourceForVersion(ProductVersion()))
                 .ResolveSlotIdAsync(args.Option("parent") ?? "Root", ct);
             result = await flux.DeployAsync(new FluxDeployRequest(project, module, parentId, uri,
@@ -1098,6 +1144,7 @@ Project setup:
 Connection and observation:
   resoloop discover [--discovery-seconds 12] [--json]
   resoloop status|ping [--url ws://localhost:PORT] [--json]
+  resoloop wb status [--workbench-pipe NAME] [--json]
   resoloop hierarchy [--under ID_OR_PATH_OR_STABLE --state FILE] [--depth 2] [--include-components] [--summary] [--json]
   resoloop find (--name TEXT [--exact] | --component TYPE) [--under SLOT] [--direct-children] [--depth 8] [--json]
   resoloop inspect SLOT|$slot:key [--state WORLD_STATE] [--depth 1] [--members] [--component TYPE] [--member NAME] [--components-only] [--json]
@@ -1155,7 +1202,7 @@ Diagnostics:
   resoloop doctor
   resoloop logs [--path FILE_OR_DIRECTORY] [--tail 200]
 
-Global options: --url, --timeout SECONDS, --command-timeout SECONDS, --json, --verbose
+Global options: --url, --timeout SECONDS, --command-timeout SECONDS, --json, --verbose, --backend link|workbench
   --brief: compact diff/plan, validate, test and UIX audit; apply progress is suppressed unless --ndjson-progress.
   --report NEW_FILE.json: save full success/error JSON before projection; never overwrite existing files.
   Brief/report output is JSON even without --json. Unprojected commands retain their normal result data.
@@ -1163,7 +1210,7 @@ Discovery: --url auto [--session EXACT_SESSION_ID_OR_NAME] [--discovery-seconds 
 List announcements with discover; auto requires exactly one match. Explicit URLs keep their existing precedence.
 Exact Slot path (PowerShell): 'path:["Root","A/B"," Label "]' preserves separators and spaces in names.
 Configuration priority: CLI > environment > .resoloop.json > ~/.resoloop/config.json
-Environment: RESONITE_LINK_URL, RESOLOOP_TIMEOUT_SECONDS, RESOLOOP_COMMAND_TIMEOUT_SECONDS, RESOLOOP_FLUX_EXECUTABLE, RESONITE_MANAGED_DATA_PATH, RESONITE_LOG_PATH, RESOLOOP_BLENDER_EXECUTABLE
+Environment: RESONITE_LINK_URL, RESOLOOP_TIMEOUT_SECONDS, RESOLOOP_COMMAND_TIMEOUT_SECONDS, RESOLOOP_FLUX_EXECUTABLE, RESONITE_MANAGED_DATA_PATH, RESONITE_LOG_PATH, RESOLOOP_BLENDER_EXECUTABLE, RESOLOOP_BACKEND, RESOLOOP_WORKBENCH_PIPE
 """);
     }
 }
