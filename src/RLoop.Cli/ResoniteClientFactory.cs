@@ -21,13 +21,18 @@ public static class ResoniteClientFactory
     /// <paramref name="linkUri"/> when the link URL was already resolved by the caller so it is not
     /// resolved twice; the parameter is ignored on the workbench backend.
     /// </summary>
-    public static async Task<IResoniteClient> ConnectAsync(ParsedArguments args, RLoopConfig config,
-        ReflectionCacheOptions reflectionCache, CancellationToken cancellationToken, Uri? linkUri = null)
+    public static Task<IResoniteClient> ConnectAsync(ParsedArguments args, RLoopConfig config,
+        ReflectionCacheOptions reflectionCache, CancellationToken cancellationToken, Uri? linkUri = null) =>
+        ConnectAsync(args, config, reflectionCache, cancellationToken, linkUri, null, null);
+
+    internal static async Task<IResoniteClient> ConnectAsync(ParsedArguments args, RLoopConfig config,
+        ReflectionCacheOptions reflectionCache, CancellationToken cancellationToken, Uri? linkUri,
+        Func<IResoniteClient>? workbenchClientFactory, Func<IResoniteClient>? linkClientFactory)
     {
         var timeout = TimeSpan.FromSeconds(config.TimeoutSeconds);
         if (string.Equals(config.Backend, "workbench", StringComparison.Ordinal))
         {
-            var workbench = new WorkbenchResoniteClient();
+            var workbench = workbenchClientFactory?.Invoke() ?? new WorkbenchResoniteClient();
             try
             {
                 await workbench.ConnectAsync(new Uri($"{WorkbenchResoniteClient.UriScheme}:///{config.WorkbenchPipe}"), timeout, cancellationToken);
@@ -40,7 +45,7 @@ public static class ResoniteClientFactory
             }
         }
         var uri = linkUri ?? await ResolveConnectionUrlAsync(args, config, cancellationToken);
-        var link = new ResoniteLinkClientAdapter(timeout, reflectionCache);
+        var link = linkClientFactory?.Invoke() ?? new ResoniteLinkClientAdapter(timeout, reflectionCache);
         try
         {
             await link.ConnectAsync(uri, timeout, cancellationToken);
