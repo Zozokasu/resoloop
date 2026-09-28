@@ -1,0 +1,15 @@
+{
+  "schemaVersion": "1",
+  "ownership": { "key": "root" },
+  "slot": { "name": "Root", "key": "root" },
+  "components": [],
+  "children": [
+    { "slot": { "name": "Sidebar", "key": "sidebar" } },
+    {
+      "slot": { "name": "Header", "key": "header" },
+      "components": [{ "type": "FrooxEngine.TextRenderer", "key": "hdr-text" }]
+    },
+    { "slot": { "name": "Body", "key": "body" } },
+    { "slot": { "name": "Footer", "key": "footer" } }
+  ]
+}

@@ -1,0 +1,28 @@
+{
+  "schemaVersion": "1",
+  "ownership": { "key": "root" },
+  "slot": { "name": "Root", "key": "root" },
+  "components": [],
+  "children": [
+    {
+      "slot": { "name": "Row alpha", "key": "row-0", "position": [0, 0, 0] },
+      "components": [
+        {
+          "type": "FrooxEngine.Tag",
+          "key": "row-0-tag",
+          "fields": { "Value": "alpha" }
+        }
+      ]
+    },
+    {
+      "slot": { "name": "Row beta", "key": "row-1", "position": [0, 1, 0] },
+      "components": [
+        {
+          "type": "FrooxEngine.Tag",
+          "key": "row-1-tag",
+          "fields": { "Value": "beta" }
+        }
+      ]
+    }
+  ]
+}

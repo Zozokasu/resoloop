@@ -1,0 +1,5 @@
+node_modules/
+dist/
+*.tsbuildinfo
+.resoloop-jsx-*/
+**/.resoloop-jsx-*/

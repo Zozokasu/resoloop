@@ -1,0 +1,26 @@
+{
+  "schemaVersion": "1",
+  "ownership": { "key": "root" },
+  "slot": { "name": "Root", "key": "root" },
+  "components": [
+    {
+      "type": "FrooxEngine.BoxCollider",
+      "key": "collider",
+      "fields": { "Size": [1, 1, 1] }
+    }
+  ],
+  "children": [
+    {
+      "slot": { "name": "ChildA", "key": "child-a" },
+      "children": [
+        {
+          "slot": { "name": "Grand", "key": "grand", "position": [1, 2, 3] },
+          "components": [{ "type": "FrooxEngine.Grabbable", "key": "grab" }]
+        }
+      ]
+    },
+    {
+      "slot": { "name": "ChildB", "key": "child-b", "scale": [2, 2, 2] }
+    }
+  ]
+}

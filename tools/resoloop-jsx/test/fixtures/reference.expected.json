@@ -1,0 +1,36 @@
+{
+  "schemaVersion": "1",
+  "ownership": { "key": "root" },
+  "slot": { "name": "Root", "key": "root" },
+  "components": [],
+  "children": [
+    {
+      "slot": { "name": "Target", "key": "target" }
+    },
+    {
+      "slot": { "name": "Holder", "key": "holder" },
+      "components": [
+        {
+          "type": "FrooxEngine.ValueCopy<float>",
+          "key": "driver",
+          "fields": {
+            "Source": "$slot-member:target.Rotation",
+            "Target": "$member:spinner._speed"
+          }
+        },
+        {
+          "type": "FrooxEngine.Spinner",
+          "key": "spinner"
+        },
+        {
+          "type": "FrooxEngine.Grabbable",
+          "key": "grab",
+          "fields": {
+            "TipReference": "$slot:target",
+            "Other": "$component:driver"
+          }
+        }
+      ]
+    }
+  ]
+}
