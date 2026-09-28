@@ -46,14 +46,30 @@ export default (
 );
 ```
 
-Every `<Slot>` and `<Component>` requires an explicit stable `key` prop.
-`--draft` relaxes this: a deterministic key of the form
-`<parentKey>/<slug(name-or-type)>#<sameKindSiblingIndex>` is generated and one
-warning per generated key is printed to stderr.
+Every `<Slot>` and `<Component>` carries an explicit stable `key` prop. With
+the normal entry point (`import { Slot, Component } from "resoloop-jsx"`)
+`key` is required by the TypeScript types — omitting it fails type-checking
+(exit code 2) before the entry is evaluated.
 
 `ref.slot(key)` / `ref.component(key)` / `ref.member(key, member)` /
 `ref.slotMember(key, member)` produce the `$slot:` / `$component:` /
 `$member:` / `$slot-member:` selector strings.
+
+## Entry points: normal vs draft
+
+- `import { Slot, Component } from "resoloop-jsx"` — `key` is required in the
+  prop types; omitting it fails TypeScript diagnostics (exit code 2).
+- `import { Slot, Component } from "resoloop-jsx/draft"` — the same runtime
+  functions, but `key` is optional in the types. Intended for prototyping a
+  tree. Without `--draft` a build still fails at evaluation with
+  `EXPLICIT_KEY_REQUIRED` (exit code 1); with `--draft`, a deterministic key
+  of the form `<parentKey>/<slug(name-or-type)>#<sameKindSiblingIndex>` is
+  generated per missing key and one warning each is printed to stderr
+  (exit code 0).
+
+Everything other than `Slot`/`Component` prop typing (`ref`, `Fragment`,
+`BuildError`, `evaluate`, and all shared types) is identical from either
+entry point.
 
 ## Exit codes
 

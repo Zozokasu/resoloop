@@ -50,7 +50,7 @@ const SUCCESS_FIXTURES: { file: string; draft?: boolean }[] = [
   { file: "conditional.tsx" },
   { file: "key-stability-base.tsx" },
   { file: "key-stability-inserted.tsx" },
-  { file: "missing-key.tsx", draft: true },
+  { file: "missing-key-draft.tsx", draft: true },
 ];
 
 async function main(): Promise<number> {

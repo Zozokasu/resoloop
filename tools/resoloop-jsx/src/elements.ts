@@ -23,12 +23,13 @@ export type ManagedField = "position" | "rotation" | "scale";
 export type RelocationTransform = "local" | "world";
 
 /** Props of <Slot>. Scalar fields mirror C# ApplySlotSpec; `key` is the
- *  ResoLoop stable key (ApplySlotSpec.Key), required unless --draft. */
+ *  ResoLoop stable key (ApplySlotSpec.Key) and is required at the type level.
+ *  Use the "resoloop-jsx/draft" entry point to omit it while prototyping. */
 export interface SlotProps {
   /** ApplySlotSpec.Name (required) */
   name: string;
-  /** ApplySlotSpec.Key — required unless building with --draft */
-  key?: string;
+  /** ApplySlotSpec.Key (required) */
+  key: string;
   /** ApplySlotSpec.Parent — only meaningful on the root <Slot> */
   parent?: string;
   /** ApplySlotSpec.Position — exactly 3 numbers */
@@ -52,13 +53,14 @@ export interface SlotProps {
   children?: JsxChild;
 }
 
-/** Props of <Component>. Mirrors C# ApplyComponentSpec; `key` is required
- *  unless building with --draft. <Component> never takes children. */
+/** Props of <Component>. Mirrors C# ApplyComponentSpec; `key` is required at
+ *  the type level (use "resoloop-jsx/draft" to omit it). <Component> never
+ *  takes children. */
 export interface ComponentProps {
   /** ApplyComponentSpec.Type — fully-qualified Resonite Component type name */
   type: string;
-  /** ApplyComponentSpec.Key — required unless building with --draft */
-  key?: string;
+  /** ApplyComponentSpec.Key (required) */
+  key: string;
   /** ApplyComponentSpec.Fields */
   fields?: Record<string, JsonValue>;
   /** ApplyComponentSpec.MigrateFrom */

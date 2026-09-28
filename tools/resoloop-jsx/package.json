@@ -15,6 +15,10 @@
     "./jsx-runtime": {
       "types": "./dist/src/jsx-runtime.d.ts",
       "default": "./dist/src/jsx-runtime.js"
+    },
+    "./draft": {
+      "types": "./dist/src/draft.d.ts",
+      "default": "./dist/src/draft.js"
     }
   },
   "engines": {

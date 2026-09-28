@@ -63,18 +63,27 @@ describe("fixtures compile and evaluate", () => {
 });
 
 describe("failure fixtures", () => {
-  test("missing-key.tsx without --draft exits 1 with EXPLICIT_KEY_REQUIRED", async () => {
-    const result = await buildFile(fixture("missing-key.tsx"));
+  test("missing-key-draft.tsx without --draft exits 1 with EXPLICIT_KEY_REQUIRED", async () => {
+    const result = await buildFile(fixture("missing-key-draft.tsx"));
     equal(result.exitCode, 1);
     ok(result.errors.some((m) => m.includes("EXPLICIT_KEY_REQUIRED")));
   });
 
-  test("missing-key.tsx with --draft exits 0 and warns about generated keys", async () => {
-    const result = await buildFile(fixture("missing-key.tsx"), { draft: true });
+  test("missing-key-draft.tsx with --draft exits 0 and warns about generated keys", async () => {
+    const result = await buildFile(fixture("missing-key-draft.tsx"), { draft: true });
     equal(result.exitCode, 0);
     ok(result.warnings.length > 0);
     match(result.warnings.join("\n"), /generated key "root\/nokey#0" for slot "NoKey" \(--draft\)/);
-    deepEqual(result.document, expectedJson("missing-key.draft.expected.json"));
+    deepEqual(result.document, expectedJson("missing-key-draft.expected.json"));
+  });
+
+  test("missing-key-normal-entry.tsx exits 2 with TypeScript diagnostics", async () => {
+    const result = await buildFile(fixture("missing-key-normal-entry.tsx"));
+    equal(result.exitCode, 2);
+    ok(result.errors.length > 0);
+    const text = result.errors.join("\n");
+    match(text, /error TS\d+/);
+    match(text, /'key'/);
   });
 
   test("duplicate-sibling-name.tsx exits 1 with DUPLICATE_SIBLING_NAME", async () => {
