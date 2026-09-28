@@ -48,10 +48,10 @@ public sealed class WorkbenchCliTests
     {
         // wb status ignores --backend: with no pipe server it must fail WORKBENCH_UNAVAILABLE
         // either way. A link attempt would instead report RESONITE_LINK_URL_MISSING.
-        var (exit, stderr) = await RunAsync("wb", "status", "--backend", backend,
+        var (exit, report) = await RunAsync("wb", "status", "--backend", backend,
             "--workbench-pipe", MissingPipe, "--timeout", "1", "--json");
         Assert.Equal(ExitCodes.ConnectionFailed, exit);
-        Assert.Contains("WORKBENCH_UNAVAILABLE", stderr);
+        Assert.Contains("WORKBENCH_UNAVAILABLE", report);
     }
 
     [Theory]
@@ -60,26 +60,24 @@ public sealed class WorkbenchCliTests
     [InlineData("wb", "status", "extra")]
     public async Task WbRejectsUnknownSubcommands(params string[] args)
     {
-        var (exit, stderr) = await RunAsync(args);
+        var (exit, report) = await RunAsync(args);
         Assert.Equal(ExitCodes.InvalidArguments, exit);
-        Assert.Contains("UNKNOWN_COMMAND", stderr);
+        Assert.Contains("UNKNOWN_COMMAND", report);
     }
 
-    private static async Task<(int Exit, string StdErr)> RunAsync(params string[] args)
+    // --report records each outcome to a per-invocation file, so assertions stay deterministic
+    // while parallel test classes share the process-wide Console streams.
+    private static async Task<(int Exit, string Report)> RunAsync(params string[] args)
     {
-        var stderr = new StringWriter();
-        var originalError = Console.Error;
-        var originalOut = Console.Out;
+        var reportPath = Path.Combine(Path.GetTempPath(), "resoloop-test-" + Guid.NewGuid().ToString("N") + ".ndjson");
         try
         {
-            Console.SetError(stderr);
-            Console.SetOut(new StringWriter());
-            return (await Program.Main(args), stderr.ToString());
+            var exit = await Program.Main([.. args, "--report", reportPath]);
+            return (exit, File.ReadAllText(reportPath));
         }
         finally
         {
-            Console.SetError(originalError);
-            Console.SetOut(originalOut);
+            if (File.Exists(reportPath)) File.Delete(reportPath);
         }
     }
 }

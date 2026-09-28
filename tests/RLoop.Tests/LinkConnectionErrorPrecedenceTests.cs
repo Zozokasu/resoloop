@@ -59,19 +59,13 @@ public sealed class LinkConnectionErrorPrecedenceTests
     private static async Task<(int Exit, string Report)> RunAsync(params string[] args)
     {
         var reportPath = Path.Combine(Path.GetTempPath(), "resoloop-test-" + Guid.NewGuid().ToString("N") + ".ndjson");
-        var originalError = Console.Error;
-        var originalOut = Console.Out;
         try
         {
-            Console.SetError(new StringWriter());
-            Console.SetOut(new StringWriter());
             var exit = await Program.Main([.. args, "--report", reportPath]);
             return (exit, File.ReadAllText(reportPath));
         }
         finally
         {
-            Console.SetError(originalError);
-            Console.SetOut(originalOut);
             if (File.Exists(reportPath)) File.Delete(reportPath);
         }
     }

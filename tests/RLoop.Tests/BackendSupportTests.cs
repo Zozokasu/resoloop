@@ -125,9 +125,9 @@ public sealed class BackendSupportTests : IDisposable
         // No URL is configured: without the gate these commands would fail with
         // RESONITE_LINK_URL_MISSING or attempt a real connection. Exit code 7 and
         // BACKEND_UNSUPPORTED prove the gate fired before URL resolution.
-        var (exit, stderr) = await RunAsync(command, "--backend", "workbench", "--json");
+        var (exit, report) = await RunAsync(command, "--backend", "workbench", "--json");
         Assert.Equal(ExitCodes.OperationFailed, exit);
-        Assert.Contains("BACKEND_UNSUPPORTED", stderr);
+        Assert.Contains("BACKEND_UNSUPPORTED", report);
     }
 
     [Fact]
@@ -137,21 +137,19 @@ public sealed class BackendSupportTests : IDisposable
         Assert.Equal(ExitCodes.Success, exit);
     }
 
-    private static async Task<(int Exit, string StdErr)> RunAsync(params string[] args)
+    // --report records each outcome to a per-invocation file, so assertions stay deterministic
+    // while parallel test classes share the process-wide Console streams.
+    private static async Task<(int Exit, string Report)> RunAsync(params string[] args)
     {
-        var stderr = new StringWriter();
-        var originalError = Console.Error;
-        var originalOut = Console.Out;
+        var reportPath = Path.Combine(Path.GetTempPath(), "resoloop-test-" + Guid.NewGuid().ToString("N") + ".ndjson");
         try
         {
-            Console.SetError(stderr);
-            Console.SetOut(new StringWriter());
-            return (await Program.Main(args), stderr.ToString());
+            var exit = await Program.Main([.. args, "--report", reportPath]);
+            return (exit, File.ReadAllText(reportPath));
         }
         finally
         {
-            Console.SetError(originalError);
-            Console.SetOut(originalOut);
+            if (File.Exists(reportPath)) File.Delete(reportPath);
         }
     }
 }
