@@ -107,8 +107,18 @@ public sealed class WorkbenchResoniteClient : IResoniteClient
             }
         }
 
+        if (response.Meta.Stale == true)
+        {
+            throw Unavailable("The Workbench session.status response is stale; the connection changed during the read.");
+        }
+
         if (string.Equals(state, "Disconnected", StringComparison.Ordinal))
         {
+            if (hasConnection)
+            {
+                throw Unavailable(
+                    "The Workbench session.status response reports Disconnected but includes a connection payload.");
+            }
             throw new RLoopException("WORKBENCH_NOT_CONNECTED",
                 "Workbench is not connected to a Resonite session.",
                 ExitCodes.ConnectionFailed,
@@ -126,11 +136,6 @@ public sealed class WorkbenchResoniteClient : IResoniteClient
         {
             throw Unavailable(
                 "The Workbench session.status response reports Connected but has no connection.connectionId.");
-        }
-
-        if (response.Meta.Stale == true)
-        {
-            throw Unavailable("The Workbench session.status response is stale; the connection changed during the read.");
         }
 
         if (!string.Equals(response.Meta.ConnectionId, connectionId, StringComparison.Ordinal))

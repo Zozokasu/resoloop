@@ -13,5 +13,6 @@
   <ItemGroup>
     <ProjectReference Include="../../src/RLoop.Workbench/RLoop.Workbench.csproj" />
     <ProjectReference Include="../../src/RLoop.Core/RLoop.Core.csproj" />
+    <ProjectReference Include="../../src/RLoop.Cli/RLoop.Cli.csproj" />
   </ItemGroup>
 </Project>
