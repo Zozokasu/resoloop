@@ -45,7 +45,7 @@ public static class BackendSupport
             ["apply"] = PlannedW4,
             ["test"] = PlannedW4,
             ["flux"] = PlannedW4,
-            ["doctor"] = Unsupported,
+            ["doctor"] = PlannedW2,
             ["scene"] = LinkOnly,
             ["blender"] = LinkOnly,
             ["logs"] = LinkOnly,
