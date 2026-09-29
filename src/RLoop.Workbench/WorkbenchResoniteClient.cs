@@ -6,10 +6,11 @@ namespace RLoop.Workbench;
 
 /// <summary>
 /// An <see cref="IResoniteClient"/> over the Workbench named-pipe RPC transport. The endpoint is
-/// expressed with the internal convention <c>pipe:///&lt;pipeName&gt;</c>. W1 supports only
-/// <c>session.status</c>; every other member reports BACKEND_UNSUPPORTED.
+/// expressed with the internal convention <c>pipe:///&lt;pipeName&gt;</c>. Reads run on
+/// <c>world.observe</c>, <c>member.read</c> and <c>reflection.*</c> (see the .Read partial);
+/// world writes still report BACKEND_UNSUPPORTED.
 /// </summary>
-public sealed class WorkbenchResoniteClient : IResoniteClient
+public sealed partial class WorkbenchResoniteClient : IResoniteClient
 {
     /// <summary>The URI scheme identifying a Workbench pipe endpoint: pipe:///&lt;pipeName&gt;.</summary>
     public const string UriScheme = "pipe";
@@ -33,7 +34,9 @@ public sealed class WorkbenchResoniteClient : IResoniteClient
                 $"Workbench connections use '{UriScheme}:///<pipeName>' URIs, not '{uri.Scheme}'.", nameof(uri));
 
         string pipeName = uri.AbsolutePath.TrimStart('/');
-        var hello = new RpcHello("ResoLoop", ClientVersion, [1], [RpcCapabilities.SessionRead]);
+        var hello = new RpcHello("ResoLoop", ClientVersion, [1],
+            [RpcCapabilities.SessionRead, RpcCapabilities.WorldRead,
+             RpcCapabilities.MemberRead, RpcCapabilities.ReflectionRead]);
 
         WorkbenchRpcClient client;
         try
@@ -42,7 +45,7 @@ public sealed class WorkbenchResoniteClient : IResoniteClient
         }
         catch (TimeoutException ex)
         {
-            throw Unavailable($"No Workbench answered on pipe '{pipeName}' within {timeout.TotalSeconds:0.#} seconds.", ex);
+            throw WorkbenchErrors.Unavailable($"No Workbench answered on pipe '{pipeName}' within {timeout.TotalSeconds:0.#} seconds.", ex);
         }
         catch (RpcHandshakeException ex) when (ex.Rejection?.Code == RpcErrorCodes.IncompatibleProtocol)
         {
@@ -54,11 +57,13 @@ public sealed class WorkbenchResoniteClient : IResoniteClient
         }
         catch (Exception ex) when (ex is RpcHandshakeException or IOException)
         {
-            throw Unavailable($"Could not complete the Workbench handshake on pipe '{pipeName}': {ex.Message}", ex);
+            throw WorkbenchErrors.Unavailable($"Could not complete the Workbench handshake on pipe '{pipeName}': {ex.Message}", ex);
         }
 
         _client = client;
         _pipeName = pipeName;
+        _componentTypes.Clear();
+        _memberNames.Clear();
         RpcWelcome welcome = client.Welcome;
         Handshake = new WorkbenchHandshakeInfo(
             welcome.ServerVersion,
@@ -86,7 +91,7 @@ public sealed class WorkbenchResoniteClient : IResoniteClient
         }
         catch (Exception ex) when (ex is IOException or RpcCallException)
         {
-            throw Unavailable($"The Workbench session.status call failed: {ex.Message}", ex);
+            throw WorkbenchErrors.Unavailable($"The Workbench session.status call failed: {ex.Message}", ex);
         }
 
         Meta = new WorkbenchConnectionMeta(
@@ -109,14 +114,14 @@ public sealed class WorkbenchResoniteClient : IResoniteClient
 
         if (response.Meta.Stale == true)
         {
-            throw Unavailable("The Workbench session.status response is stale; the connection changed during the read.");
+            throw WorkbenchErrors.Unavailable("The Workbench session.status response is stale; the connection changed during the read.");
         }
 
         if (string.Equals(state, "Disconnected", StringComparison.Ordinal))
         {
             if (hasConnection)
             {
-                throw Unavailable(
+                throw WorkbenchErrors.Unavailable(
                     "The Workbench session.status response reports Disconnected but includes a connection payload.");
             }
             throw new RLoopException("WORKBENCH_NOT_CONNECTED",
@@ -127,20 +132,20 @@ public sealed class WorkbenchResoniteClient : IResoniteClient
 
         if (!string.Equals(state, "Connected", StringComparison.Ordinal))
         {
-            throw Unavailable(
+            throw WorkbenchErrors.Unavailable(
                 $"The Workbench session.status response is not a definite state (state: {state ?? "<missing>"}).");
         }
 
         string? connectionId = hasConnection ? ReadString(connection, "connectionId") : null;
         if (string.IsNullOrEmpty(connectionId))
         {
-            throw Unavailable(
+            throw WorkbenchErrors.Unavailable(
                 "The Workbench session.status response reports Connected but has no connection.connectionId.");
         }
 
         if (!string.Equals(response.Meta.ConnectionId, connectionId, StringComparison.Ordinal))
         {
-            throw Unavailable("The Workbench session.status response meta does not match the reported connection.");
+            throw WorkbenchErrors.Unavailable("The Workbench session.status response meta does not match the reported connection.");
         }
 
         string? resoniteVersion = null;
@@ -155,12 +160,6 @@ public sealed class WorkbenchResoniteClient : IResoniteClient
 
         return new SessionInfo($"{UriScheme}:///{_pipeName}", true, resoniteVersion, resoniteLinkVersion, uniqueSessionId);
     }
-
-    public Task<SlotInfo> GetSlotAsync(string id, int depth, bool includeComponentData, CancellationToken cancellationToken = default) =>
-        Task.FromException<SlotInfo>(Unsupported(nameof(GetSlotAsync)));
-
-    public Task<ComponentInfo> GetComponentAsync(string id, CancellationToken cancellationToken = default) =>
-        Task.FromException<ComponentInfo>(Unsupported(nameof(GetComponentAsync)));
 
     public Task<string> CreateSlotAsync(SlotCreateRequest request, CancellationToken cancellationToken = default) =>
         Task.FromException<string>(Unsupported(nameof(CreateSlotAsync)));
@@ -186,16 +185,6 @@ public sealed class WorkbenchResoniteClient : IResoniteClient
     public Task RemoveComponentAsync(string componentId, CancellationToken cancellationToken = default) =>
         Task.FromException(Unsupported(nameof(RemoveComponentAsync)));
 
-    public Task<IReadOnlyList<string>> SearchComponentTypesAsync(string query, int limit,
-        CancellationToken cancellationToken = default) =>
-        Task.FromException<IReadOnlyList<string>>(Unsupported(nameof(SearchComponentTypesAsync)));
-
-    public Task<ComponentTypeInfo> DescribeComponentTypeAsync(string type, CancellationToken cancellationToken = default) =>
-        Task.FromException<ComponentTypeInfo>(Unsupported(nameof(DescribeComponentTypeAsync)));
-
-    public Task<Core.TypeInfo> DescribeTypeAsync(string type, CancellationToken cancellationToken = default) =>
-        Task.FromException<Core.TypeInfo>(Unsupported(nameof(DescribeTypeAsync)));
-
     public Task<SyncMethodCallResult> CallComponentMethodAsync(string componentId, string method,
         IReadOnlyDictionary<string, JsonElement>? arguments = null, CancellationToken cancellationToken = default) =>
         Task.FromException<SyncMethodCallResult>(Unsupported(nameof(CallComponentMethodAsync)));
@@ -212,11 +201,8 @@ public sealed class WorkbenchResoniteClient : IResoniteClient
             await client.DisposeAsync().ConfigureAwait(false);
     }
 
-    private static RLoopException Unavailable(string message, Exception? innerException = null) =>
-        new("WORKBENCH_UNAVAILABLE", message, ExitCodes.ConnectionFailed, innerException: innerException);
-
     private static RLoopException Unsupported(string method) =>
-        new("BACKEND_UNSUPPORTED", $"{method} is not yet supported on the workbench backend.", ExitCodes.OperationFailed);
+        WorkbenchErrors.Unsupported($"{method} is not yet supported on the workbench backend.");
 
     private static string? ReadString(JsonElement element, string property) =>
         element.TryGetProperty(property, out JsonElement value) && value.ValueKind == JsonValueKind.String
