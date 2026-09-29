@@ -32,6 +32,12 @@ public sealed record ReflectionTypeParams(string TypeName);
 
 public sealed record ReflectionMemberParams(string ComponentType, string MemberName);
 
+/// <param name="Query">A case-insensitive substring matched against the session's component type names.</param>
+/// <param name="Limit">Most type names returned; 1 to 500, defaults to 50.</param>
+public sealed record ReflectionSearchParams(string Query, int? Limit = null);
+
+public sealed record ReflectionEnumParams(string TypeName);
+
 /// <param name="ExcludeUserRoots">Skips user subtrees; a skipped subtree may hold the writer.</param>
 public sealed record WritersFindParams(
     string TargetId,

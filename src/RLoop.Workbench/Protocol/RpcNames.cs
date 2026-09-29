@@ -73,6 +73,8 @@ public static class RpcMethods
     public const string ReflectionComponent = "reflection.component";
     public const string ReflectionType = "reflection.type";
     public const string ReflectionMember = "reflection.member";
+    public const string ReflectionSearch = "reflection.search";
+    public const string ReflectionEnum = "reflection.enum";
     public const string WritersFind = "writers.find";
     public const string ResearchType = "research.type";
     public const string ResearchMethod = "research.method";
