@@ -129,6 +129,17 @@ public sealed partial class WorkbenchResoniteClient
     }
 
     /// <summary>
+    /// The Workbench exposes no value-conversion preflight, so validate --strict and
+    /// type check --manifest must fail explicitly instead of silently skipping checks
+    /// the direct backend would run.
+    /// </summary>
+    public Task ValidateComponentMemberAsync(string componentType, string member, string rawValue,
+        CancellationToken cancellationToken = default) =>
+        Task.FromException(WorkbenchErrors.Unsupported(
+            "Value conversion preflight is not available on the workbench backend; " +
+            $"'{componentType}.{member}' cannot be validated against '{rawValue}'."));
+
+    /// <summary>
     /// Every read call goes through here: unconnected → InvalidOperationException like
     /// GetSessionInfoAsync, NOT_CONNECTED → WORKBENCH_NOT_CONNECTED with the same message,
     /// transport/other RPC failures → WORKBENCH_UNAVAILABLE with the server code in the message,

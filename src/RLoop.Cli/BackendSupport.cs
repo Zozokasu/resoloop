@@ -6,16 +6,18 @@ namespace RLoop.Cli;
 /// Per-command support level on the workbench backend, for top-level commands that
 /// can reach a Resonite-side connection. <see cref="RequireSupported"/> rejects a
 /// listed command before any connection attempt when <c>--backend workbench</c>
-/// is in effect.
-/// Levels are forward-looking notes for follow-up milestones: "planned-w2" for
-/// read/inspection commands, "planned-w4" for writing commands, "link-only" for
-/// commands with no workbench support decided yet, "unsupported" for commands
-/// never planned. Commands that never open a connection (help, version, init,
-/// skills, discover, schema, manifest, uix recipe) are deliberately absent:
-/// the backend choice does not apply to them.
+/// is in effect and its level is not <see cref="Supported"/>.
+/// Levels: "supported" commands answer through the workbench read path;
+/// "planned-w2" read/inspection commands are deferred because they would silently
+/// fall back on values the workbench cannot observe; "planned-w4" writing commands
+/// wait for the write-path gate; "link-only" commands have no workbench support
+/// decided yet; "unsupported" commands are never planned. Commands that never open
+/// a connection (help, version, init, skills, discover, schema, manifest,
+/// uix recipe) are deliberately absent: the backend choice does not apply to them.
 /// </summary>
 public static class BackendSupport
 {
+    public const string Supported = "supported";
     public const string LinkOnly = "link-only";
     public const string PlannedW2 = "planned-w2";
     public const string PlannedW4 = "planned-w4";
@@ -24,26 +26,26 @@ public static class BackendSupport
     public static readonly IReadOnlyDictionary<string, string> WorkbenchSupport =
         new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
-            ["status"] = PlannedW2,
-            ["ping"] = PlannedW2,
-            ["hierarchy"] = PlannedW2,
-            ["find"] = PlannedW2,
-            ["observe"] = PlannedW2,
-            ["inspect"] = PlannedW2,
-            ["type"] = PlannedW2,
-            ["validate"] = PlannedW2,
-            ["diff"] = PlannedW2,
-            ["plan"] = PlannedW2,
+            ["status"] = Supported,
+            ["ping"] = Supported,
+            ["hierarchy"] = Supported,
+            ["find"] = Supported,
+            ["observe"] = Supported,
+            ["inspect"] = Supported,
+            ["type"] = Supported,
+            ["validate"] = Supported,
             ["uix"] = PlannedW2,
             ["item"] = PlannedW2,
             ["tool"] = PlannedW2,
-            ["doctor"] = PlannedW2,
             ["capture"] = PlannedW2,
+            ["diff"] = PlannedW4,
+            ["plan"] = PlannedW4,
             ["slot"] = PlannedW4,
             ["component"] = PlannedW4,
             ["apply"] = PlannedW4,
             ["test"] = PlannedW4,
             ["flux"] = PlannedW4,
+            ["doctor"] = Unsupported,
             ["scene"] = LinkOnly,
             ["blender"] = LinkOnly,
             ["logs"] = LinkOnly,
@@ -57,10 +59,33 @@ public static class BackendSupport
     public static void RequireSupported(string commandName, string? backend)
     {
         if (!string.Equals(backend, "workbench", StringComparison.OrdinalIgnoreCase)) return;
-        if (WorkbenchSupport.ContainsKey(commandName))
+        if (WorkbenchSupport.TryGetValue(commandName, out string? level) && level != Supported)
             throw new RLoopException("BACKEND_UNSUPPORTED",
                 $"'{commandName}' is not supported on the workbench backend yet.",
                 ExitCodes.OperationFailed,
+                new Dictionary<string, object?>
+                {
+                    ["level"] = level,
+                    ["reason"] = DeferralReason(commandName, level),
+                },
                 suggestions: ["Use --backend link, or wait for a future ResoLoop release."]);
     }
+
+    /// <summary>Why a listed command stays refused on the workbench backend; reported as error context.</summary>
+    private static string DeferralReason(string commandName, string level) =>
+        commandName.ToLowerInvariant() switch
+        {
+            "doctor" => "doctor diagnoses the ResoniteLink URL resolution path, which the workbench backend never uses; 'wb status' reports the Workbench transport instead.",
+            "uix" => "uix audit treats a missing member value as valid evidence, so workbench reads could silently report wrong results.",
+            "item" => "item audit requires a fixed depth-64 subtree read and slot-level Members the workbench backend cannot observe.",
+            "tool" => "tool audit silently falls back to identity transforms when position/rotation/scale are missing, so workbench reads could report wrong geometry.",
+            "capture" => "live capture creates Components and Slots; the workbench backend is read-only.",
+            "diff" or "plan" => "diff/plan share the write path's world read; the workbench write-path gate must land first.",
+            _ => level switch
+            {
+                PlannedW4 => "writing commands are planned for a later milestone on the workbench backend.",
+                LinkOnly => "this command only applies to the ResoniteLink backend.",
+                _ => "no workbench support is planned for this command.",
+            },
+        };
 }
