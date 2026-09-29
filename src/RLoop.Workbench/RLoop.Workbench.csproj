@@ -5,4 +5,7 @@
   <ItemGroup>
     <ProjectReference Include="../RLoop.Core/RLoop.Core.csproj" />
   </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="RLoop.Workbench.Tests" />
+  </ItemGroup>
 </Project>
