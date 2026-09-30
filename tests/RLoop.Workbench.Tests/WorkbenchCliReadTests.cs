@@ -748,14 +748,23 @@ public sealed class WorkbenchCliReadTests : IDisposable
     {
         string pipeName = Wb.NewPipeName();
         var log = new ConcurrentQueue<RpcRequest>();
-        await using var server = Serve(pipeName, log);
+        // A stored Component ID is only reused after its owner Slot lists it, so the Root Slot must list the Dial.
+        await using var server = Serve(pipeName, log, request => request.Method == RpcMethods.WorldObserve
+            ? Wb.Response(request.Id, ObserveResult(Snapshot(Param(request, "scopeRootId"), new JsonObject
+                {
+                    [Param(request, "scopeRootId")] = SlotRecord(Param(request, "scopeRootId"), "Root", null, true, 0,
+                        components: ComponentRefs(("comp-9", Dial))),
+                })).ToJsonString(), connectionId: ConnectionId)
+            : Respond(request));
         string statePath = WriteState();
 
         var (exit, report) = await RunCliAsync(WbArgs(pipeName, "observe", "$member:dial.Ratio", "--state", statePath));
 
         Assert.Equal(ExitCodes.Success, exit);
+        // session, Slot ownership check, owner Slot Component list, then the matched Component is read.
         Assert.Equal(
-            new[] { RpcMethods.SessionStatus, RpcMethods.MemberRead, RpcMethods.ReflectionComponent, RpcMethods.MemberRead },
+            new[] { RpcMethods.SessionStatus, RpcMethods.WorldObserve, RpcMethods.WorldObserve,
+                RpcMethods.ReflectionComponent, RpcMethods.MemberRead, RpcMethods.MemberRead },
             log.Select(r => r.Method).ToArray());
 
         JsonElement data = report.GetProperty("data");

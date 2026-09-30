@@ -17,7 +17,7 @@ public sealed partial class WorldService
             throw new RLoopException("OBSERVE_SELECTOR_INVALID", "observe accepts only $member:key.Name selectors; use inspect for Slot structure.", ExitCodes.InvalidArguments);
         _ = RequireStateFile(stateFile, selectors[0]);
         var session = await client.GetSessionInfoAsync(cancellationToken);
-        var cache = new Dictionary<string, ComponentInfo>(StringComparer.Ordinal);
+        var cache = new ResolutionCache();
         var values = new Dictionary<string, ObservedMember>(StringComparer.Ordinal);
         foreach (var group in parsed.GroupBy(item => item.Syntax.Key, StringComparer.Ordinal))
         {

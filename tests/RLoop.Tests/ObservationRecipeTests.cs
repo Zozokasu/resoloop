@@ -20,7 +20,9 @@ public sealed partial class ApplyWorkflowTests
         var result = await service.ObserveAsync(["$member:source.Target", "$member:target.Enabled", "$member:target.Enabled", "$member:target.enabled"], state);
         Assert.Equal(3, result.Count);
         Assert.Equal(2, result.Components);
-        Assert.Equal(3, client.SnapshotMetrics().Requests); // session + two components
+        // session + owner Slot check (Slot, parent one level deep) + owner Slot Component list + two components.
+        // A stored Component ID is no longer trusted before its owner Slot has been verified in the live world.
+        Assert.Equal(6, client.SnapshotMetrics().Requests);
         Assert.Equal(0, client.Writes);
         Assert.True(result.Values["$member:target.Enabled"].Member.Value!.GetValue<bool>());
         Assert.Equal(result.Values["$member:target.Enabled"].ComponentId, result.Values["$member:source.Target"].Member.TargetId);
