@@ -1,8 +1,8 @@
 # Workbench読み取り対応表（W2-B）
 
 更新: 2026-09-30
-対象: ResoLoop W2-B の実装（このブランチ、コード確定 commit `2979890`（W2-B R1 修正後。この文書の更新 commit を除く））、resonite-workbench `7d40c92`。fieldの `MemberValue.Type` 充填とComponent型定義 `Unknown` 時の `WORKBENCH_UNAVAILABLE` はW2-B R2の規定挙動として記載（2026-09-30のlive比較が根拠、実装は別ブランチで進行中）。
-表記: 無印はResoLoop（このworktreeのルート）からの相対パス。`WB:`はresonite-workbench側の参照（このworktreeには同梱されていない）。行番号は1-based。
+対象: ResoLoop W2-B の実装（このブランチ、コード確定 commit `<R3-COMMIT>`（`agent/wb-w2b-r2` の R3 修正後。commit ID は統合時に管理者が追記する。この文書の更新 commit を除く））、resonite-workbench `7d40c92`。W2-B R2（B1: 「不明」応答は接続変化ではない、B2: fieldの `MemberValue.Type` 充填）は実装済み（ブランチ `agent/wb-w2b-r2`、2026-09-30のlive比較が根拠）。W2-B R3（この文書の更新と同時）で次を規定挙動とした: `type describe`（`reflection.component`/`reflection.type`）の「不明」は `WORKBENCH_UNAVAILABLE`、「不明」の判定は `value` 存在＋nullに限定（欠落は不正な応答）、切断を挟む接続切り替わりでも型・member定義cacheを消去、fieldの `MemberValue.Type` は非ジェネリックな通常型のみ充填。`SLOT_NOT_FOUND`/`COMPONENT_NOT_FOUND` の「Unknown」扱いは不変。
+表記: 無印はResoLoop（このworktreeのルート）からの相対パス。`WB:`はresonite-workbench側の参照（このworktreeには同梱されていない）。行番号は1-based。R3修正と同時にコードが動くため、`WorkbenchResoniteClient.Read.cs`/`WorkbenchReflectionMapper.cs` の行番号は概数（ずれたら関数名で参照）。
 根拠を確認できなかった項目には「未確認」と書く。
 
 W2-A版（`agent/wb-w2a-mapping` 作成時、resonite-workbench `d549280` 前提）から変わった点:
@@ -35,7 +35,7 @@ W2-A版（`agent/wb-w2a-mapping` 作成時、resonite-workbench `d549280` 前提
 | `IsPersistent` | 完全（R1。未報告はnull） | `OptionalNullableBool`（`:147`） |
 | `Tag` | 完全（未報告はnull） | `OptionalNullableString`（`:146`） |
 | `IsReferenceOnly` | 完全（R1） | `SlotRecord.IsReferenceOnly`（`:148`）。要求depthより下の子・`excluded` の子は `IsReferenceOnly: true` のstub（id・name・parentIdのみ、`:191-200`）。stub名は unexpanded/excludedエントリまたはdepth外のフルrecordから取る（`StubName`、`:217-231`）。**W2-B R1 で確定**: 要求depth内で読み取りに失敗した子（unexpandedの`ReadFailed`）はstub化せず `WORKBENCH_UNAVAILABLE` で失敗する（1.5節・4節） |
-| `Components`（`ComponentSummary[]`） | 一部 | `SlotRecord.Components` は `Id`+`ComponentType` のみ（`:163-173`）。member値は `includeComponentData` のとき `FillComponentMembersAsync`（`WorkbenchResoniteClient.Read.cs:249-281`）が `reflection.component`＋`member.read` で埋める（往復回数は3節）。stubには付かない |
+| `Components`（`ComponentSummary[]`） | 一部 | `SlotRecord.Components` は `Id`+`ComponentType` のみ（`:163-173`）。member値は `includeComponentData` のとき `FillComponentMembersAsync`（`WorkbenchResoniteClient.Read.cs:267-299`）が `reflection.component`＋`member.read` で埋める（往復回数は3節）。stubには付かない |
 | `Children` | 完全（上限内） | `childIds` を再走査（`:175-201`）。要求depthより深い子はstub化 |
 | `Path` | 完全（ResoLoop側で計算） | `WorldService.AddPaths`（`src/RLoop.Core/WorldService.cs:1877`）。RPCに依存しない |
 | `Members`（slotレベル。`inspect --members` のslot部分。Parent・Position等のSlot自身のsync member） | **不可** | `Members: null` で固定（`:210`）。直結は `Link.Slot` のフィールドを `MemberValue` へ包む（`ResoniteLinkClientAdapter.cs:650-655`）。`OrderOffset` 相当のフィールドはWorkbench側に無い。必要なときは直結経路を使う |
@@ -44,30 +44,30 @@ W2-A版（`agent/wb-w2a-mapping` 作成時、resonite-workbench `d549280` 前提
 
 | フィールド | 得られるか | 取り方 / 根拠 |
 | --- | --- | --- |
-| `Id` / `Type` | 完全 | 観測済みなら `_componentTypes` cache、未観測なら `member.read` の型probe（`__resoloop_type_probe__`）で `componentType` を得る（`WorkbenchResoniteClient.Read.cs:287-305`）。どちらでも得られなければ `COMPONENT_NOT_FOUND` |
-| `Members` | 取れるがN+1 | (a) `reflection.component(componentType)` で宣言member名一覧とfieldの `valueType`（`MemberNamesAsync`、型ごとにcache、`:308-317`）。(b) 各member名に `member.read`（`ReadComponentMembersAsync`、`:323-345`）。1つでも読めないmemberがあれば `WORKBENCH_UNAVAILABLE`（`:337-342`）。部分mapは返さない。(a) が `Unknown` を返すとき（WorkbenchがComponent型定義を読めない）も同じく `WORKBENCH_UNAVAILABLE` で、messageに型名とWorkbenchのunknownReasonを含む。`Unknown` 応答のmetadataにはconnectionIdが無いため、接続切り替わり判定（4節）の対象にはならない |
+| `Id` / `Type` | 完全 | 観測済みなら `_componentTypes` cache、未観測なら `member.read` の型probe（`__resoloop_type_probe__`）で `componentType` を得る（`RequireComponentTypeAsync`、`WorkbenchResoniteClient.Read.cs:305-323`）。どちらでも得られなければ `COMPONENT_NOT_FOUND` |
+| `Members` | 取れるがN+1 | (a) `reflection.component(componentType)` で宣言member名一覧とfieldの `valueType`（`MemberDefinitionsAsync`、型ごとにcacheされる `DeclaredMembers` を返す、`:326-349`）。(b) 各member名に `member.read`（`ReadComponentMembersAsync`、`:364-387`）。1つでも読めないmemberがあれば `WORKBENCH_UNAVAILABLE`（`:379-383`）。部分mapは返さない。(a) が `Unknown` を返すとき（WorkbenchがComponent型定義を読めない）も同じく `WORKBENCH_UNAVAILABLE` で、messageに型名とWorkbenchのunknownReasonを含む。`Unknown` 応答のmetadataにはconnectionIdが無いため、接続切り替わり判定（4節）の対象にはならない |
 | `MemberValue` 本体 | 一部 | `WorkbenchMemberMapper.MapMember`（`src/RLoop.Workbench/WorkbenchMemberMapper.cs:17-61`）。kind対応: `field`→`"field"`、`reference`→`"reference"`、`list`→`"list"`+`Elements`再帰、`syncObject`→`"syncObject"`+`Members`再帰。`opaque`はwireTypeが `"empty"`→`"empty"`、`"playback"`→`"SyncPlayback"`+`[FrooxEngine]FrooxEngine.SyncPlayback`、その他（array/dictionary等）→`"opaque"`+wireType（`:47-58`）。直結が返す `"dictionary"` の `Members` や `SyncPlayback` の `Value` 相当は得られない |
 | `MemberValue.Value` | 一部 | `ObservedField.valueJson`（wireのJSON文字列）を `JsonNode.Parse` して入れる（`:74-92`）。直結の `BoxedValue` serialize（`ResoniteLinkClientAdapter.cs:670-671`）と整形まで一致するかは**未確認**（live項目） |
-| `MemberValue.Type` | 一部 | 通常のfieldは `reflection.component` のmember定義 `valueType` からassembly接頭辞を除いて入れる（`[mscorlib]System.Single`→`System.Single`、直結のCLR完全名と同じ表記）。enum fieldは従来どおり `enumType`（直結もenum fieldは `EnumType`、`:666-669`）。nullのままなのはgeneric/nullable値型、定義に一致しないmember、sync object内のnested memberとlist要素、field以外のmember（referenceは `targetType`、opaqueは変更なし） |
+| `MemberValue.Type` | 一部 | 通常のfieldは `reflection.component` のmember定義 `valueType` からassembly接頭辞を除いて入れる（`[mscorlib]System.Single`→`System.Single`、直結のCLR完全名と同じ表記）。enum fieldは従来どおり `enumType`（直結もenum fieldは `EnumType`、`:666-669`）。nullのままなのはgeneric/nullable値型（valueTypeが `isGenericParameter: true` の `T` 等もジェネリック扱い、W2-B R3）、定義に一致しないmember、sync object内のnested memberとlist要素、field以外のmember（referenceは `targetType`、opaqueは変更なし） |
 | `MemberValue.Id` | 一部（未確認） | `OptionalString "id"`（`:20`）。全member種で必ず報告されるかは未確認（live項目） |
 
 ### 1.3 `TypeInfo`（`src/RLoop.Core/Models.cs:171-187`）← `reflection.type`（enumなら＋`reflection.enum`）
 
-変換は `WorkbenchReflectionMapper.MapType`（`src/RLoop.Workbench/WorkbenchReflectionMapper.cs:65-131`）。
+変換は `WorkbenchReflectionMapper.MapType`（`src/RLoop.Workbench/WorkbenchReflectionMapper.cs:115-181`）。`reflection.type` の「不明」応答は `type describe` で `WORKBENCH_UNAVAILABLE`（4節、W2-B R3）。
 
 | フィールド | 得られるか | 取り方 / 根拠 |
 | --- | --- | --- |
-| `FullTypeName` / `AssemblyName` / `Namespace` / `Name` / `BaseType` / `IsAbstract` / `IsInterface` / `IsGeneric` / `IsEnum` / `IsComponent` / `IsSyncObject` | 完全 | `reflection.type` の `TypeDefinitionInfo`（`:70-80`）。`Name` 未報告時は `[Assembly]Namespace.Type` から導出（`ShortName`、`:125,:259-280`）。`BaseType`/`Interfaces` は `Render`（`:234-256`）で直結の `ModelMapper.Render` と同じ規則で文字列化 |
-| `IsWorldElement` | 導出（R5保留） | Workbenchは報告しない。`isComponent‖isSyncObject`→true、`isEnum‖isValueType`→false と決められる型だけ答える。それ以外（普通のclassなど）は `BACKEND_UNSUPPORTED`（`:85-91`） |
-| `GenericParameters` | 一部（R5保留） | open generic（`genericArguments` が全て `isGenericParameter`）ならパラメータ名を返せる（`:93-103`）。閉じたgenericは `BACKEND_UNSUPPORTED`（`:104-109`） |
-| `Interfaces` | 完全 | `TypeDefinitionInfo.Interfaces` を `Render`（`:76-79`） |
-| `EnumValues` / `IsFlags` | 完全（R3） | `reflection.type` が `isEnum` を報告したときだけ `reflection.enum` を呼ぶ（`WorkbenchResoniteClient.Read.cs:122-128`）。`status:"Found"` 以外は `WORKBENCH_UNAVAILABLE`（`:156-177`） |
+| `FullTypeName` / `AssemblyName` / `Namespace` / `Name` / `BaseType` / `IsAbstract` / `IsInterface` / `IsGeneric` / `IsEnum` / `IsComponent` / `IsSyncObject` | 完全 | `reflection.type` の `TypeDefinitionInfo`（`:120-133`）。`Name` 未報告時は `[Assembly]Namespace.Type` から導出（`ShortName`、`:175,:309-330`）。`BaseType`/`Interfaces` は `Render`（`:284-306`）で直結の `ModelMapper.Render` と同じ規則で文字列化 |
+| `IsWorldElement` | 導出（R5保留） | Workbenchは報告しない。`isComponent‖isSyncObject`→true、`isEnum‖isValueType`→false と決められる型だけ答える。それ以外（普通のclassなど）は `BACKEND_UNSUPPORTED`（`:137-141`） |
+| `GenericParameters` | 一部（R5保留） | open generic（`genericArguments` が全て `isGenericParameter`）ならパラメータ名を返せる（`:143-153`）。閉じたgenericは `BACKEND_UNSUPPORTED`（`:154-159`） |
+| `Interfaces` | 完全 | `TypeDefinitionInfo.Interfaces` を `Render`（`:126-129`） |
+| `EnumValues` / `IsFlags` | 完全（R3） | `reflection.type` が `isEnum` を報告したときだけ `reflection.enum` を呼ぶ（`WorkbenchResoniteClient.Read.cs:122-128`）。`status:"Found"` 以外は `WORKBENCH_UNAVAILABLE`（`WorkbenchReflectionMapper.cs` `EnumDefinition`、`:216-222`） |
 
 ### 1.4 型検索（`SearchComponentTypesAsync`）
 
-**対応済み（R2）**。`reflection.search` で `[Assembly]Namespace.Name` 形の名前をサーバー上限500件取得し（`WorkbenchResoniteClient.Read.cs:58-66,:23`）、直結と同じ `SearchScore`（exact < `.Name` 末尾 < 最終segment prefix < substring）でre-rankする（`:70-74,:398-405`）。`truncated:true` のときもranked subsetを返す（signatureが報告できない、`:67-69`）。
+**対応済み（R2）**。`reflection.search` で `[Assembly]Namespace.Name` 形の名前をサーバー上限500件取得し（`WorkbenchResoniteClient.Read.cs:58-74,:23`）、直結と同じ `SearchScore`（exact < `.Name` 末尾 < 最終segment prefix < substring）でre-rankする（`:70-73,:452-459`）。`truncated:true` のときもranked subsetを返す（signatureが報告できない、`:67-69`）。
 
-短い型名の一意解決（`DescribeComponentTypeAsync`・`DescribeTypeAsync` の短い名前入力）は `ResolveComponentTypeAsync`（`:355-394`）: `reflection.search` の結果のうち、assemblyを除いた名前が入力に一致または `.{type}` で終わる候補が**ちょうど1件かつ非truncated**のときだけ受理する。0件・複数・truncatedは `COMPONENT_TYPE_NOT_FOUND`（直結はsessionのComponent型一覧を持つので、全件確定できる点が違う）。
+短い型名の一意解決（`DescribeComponentTypeAsync`・`DescribeTypeAsync` の短い名前入力）は `ResolveComponentTypeAsync`（`:409-448`）: `reflection.search` の結果のうち、assemblyを除いた名前が入力に一致または `.{type}` で終わる候補が**ちょうど1件かつ非truncated**のときだけ受理する。0件・複数・truncatedは `COMPONENT_TYPE_NOT_FOUND`/`TYPE_NOT_FOUND`（検索結果という積極的な証拠があるため。直結はsessionのComponent型一覧を持つので、全件確定できる点が違う）。解決後の完全名でも `reflection.component`/`reflection.type` が「不明」を返したときは `WORKBENCH_UNAVAILABLE`（4節、W2-B R3）。
 
 ### 1.5 観測の上限と既定値
 
@@ -131,10 +131,10 @@ W2-A版（`agent/wb-w2a-mapping` 作成時、resonite-workbench `d549280` 前提
 
 - **Coreのモデル（`SlotInfo`/`ComponentInfo`/`TypeInfo`等）と `IResoniteClient` のsignatureは変更しない**。変更禁止領域（`src/RLoop.Core/**`、`src/RLoop.ResoniteLink/**`、`src/RLoop.Workbench/Protocol/**`）には触れていない。`RLoop.Workbench` は `RLoop.Core` だけを参照する。
 - **得られない値はnull**。0・空・既定値で埋めない。対象: 未報告のtransform・`isActive`/`isPersistent`/`tag`、slotレベル `members`、member定義から `type` を決められないfield（generic/nullable値型・定義不一致・nested/list要素）とfield以外のmemberの `type`、opaque memberの `Value`/`Members`/`Elements`。`MemberValue.Id` も報告が無ければnull。
-- **決められない非nullable値は推測せず拒否**。`IsWorldElement`/`GenericParameters` が決められない型は `BACKEND_UNSUPPORTED`（`WorkbenchReflectionMapper.cs:85-109`）。
+- **決められない非nullable値は推測せず拒否**。`IsWorldElement`/`GenericParameters` が決められない型は `BACKEND_UNSUPPORTED`（`WorkbenchReflectionMapper.cs:137-159`）。
 - **上限は切り詰めずに拒否**。depth 0〜32・8,192 Slotを超える要求と `SlotLimit` truncationは `WORKBENCH_OBSERVE_LIMIT_EXCEEDED`（終了コード7）。**W2-B R1 で確定**: `DepthLimit`・`excluded`・要求depthより下の未展開は引き続きstub化、要求depth内の `ReadFailed` は `WORKBENCH_UNAVAILABLE`。
-- **「Unknown」は不在の証明ではない**。`world.observe` の `completeness:"Unknown"` は `SLOT_NOT_FOUND` で返すが、messageに「Unknownは不在の証明ではない」と含める（`WorkbenchSlotMapper.cs:60-68`）。`COMPONENT_NOT_FOUND`/`COMPONENT_TYPE_NOT_FOUND`/`TYPE_NOT_FOUND` も同じ方針。`reflection.component` が `Unknown` の型でも `type describe` は `COMPONENT_TYPE_NOT_FOUND` を返す（member読み取り経路では `WORKBENCH_UNAVAILABLE`、1.2節）。
-- **stale・接続切り替わり・応答の形の不正・member読み取り失敗・Component型定義の読み取り失敗（`reflection.component` の `Unknown`）は `WORKBENCH_UNAVAILABLE`**。全読み取りRPCは `CallReadAsync`（`WorkbenchResoniteClient.Read.cs:149-189`）を通り、`stale` を拒否し、1つの論理読み取り内のconnectionId一致は `ReadOperation` が検査する（`:417-437`）。応答のconnectionIdが直前の記録と変わったときは `_componentTypes`/`_memberNames` の両cacheを `InvalidateCachesIfConnectionChanged`（`:196-204`）で消す。`GetSessionInfoAsync`（session.status）の応答でも同じ条件で消す（`WorkbenchResoniteClient.cs:97-100`、W2-B R1で追加。`ConnectAsync` の無条件クリアは元から）。
+- **「Unknown」は不在の証明ではない**。Workbenchのwireには「型が存在しない」を明示する形が無い（ReflectionResult は `value` と `unknownReason` だけ）ため、「不明」は不在の証明にならない。「不明」とみなすのは `value` プロパティが存在して null のときだけで、`value` 自体が欠落した応答は不正な応答（`WORKBENCH_UNAVAILABLE`）として扱う（W2-B R3）。`world.observe` の `completeness:"Unknown"` は `SLOT_NOT_FOUND` で返すが、messageに「Unknownは不在の証明ではない」と含める（`WorkbenchSlotMapper.cs:60-68`）。`COMPONENT_NOT_FOUND` も同じ方針。`type describe`（`DescribeComponentTypeAsync`/`DescribeTypeAsync`）では `reflection.component`/`reflection.type` の「不明」は `WORKBENCH_UNAVAILABLE` で失敗し、messageに型名とWorkbenchのunknownReasonを含む（完全名・短い名前を `reflection.search` で解決した完全名のどちらでも同じ。完全名の打ち間違えも同じ応答になるため、その場合は `type search` で正しい名前を確認する）。`COMPONENT_TYPE_NOT_FOUND`/`TYPE_NOT_FOUND` が返るのは、短い名前が `reflection.search` で一意に解決できなかった（該当なし・曖昧・500件の窓で切り詰め）ときだけ（1.4節）。
+- **stale・接続切り替わり・応答の形の不正・member読み取り失敗・型定義の読み取り失敗（`reflection.component` / `reflection.type` の `Unknown`）は `WORKBENCH_UNAVAILABLE`**。全読み取りRPCは `CallReadAsync`（`WorkbenchResoniteClient.Read.cs:149-198`）を通り、`stale` を拒否し、1つの論理読み取り内のconnectionId一致は `ReadOperation` が検査する（`:465-485`）。応答のconnectionIdが直前の記録と変わったときは `_componentTypes`/`_memberNames` の両cacheを `InvalidateCachesIfConnectionChanged`（`:205-213`）で消す。切断（connectionId が null）を挟んで別の接続へ移った場合も同様に消す（最後に確認した非nullの接続IDと比較、W2-B R3）。`GetSessionInfoAsync`（session.status）の応答でも同じ条件で消す（`WorkbenchResoniteClient.cs:97-100`、W2-B R1で追加。`ConnectAsync` の無条件クリアは元から）。
 - **コマンド対応の正本は `BackendSupport.WorkbenchSupport`**。2節の表と同じ区分で `supported`/`planned-w2`/`planned-w4`/`link-only` を宣言し、CLIゲート（`RequireSupported`）が `supported` 以外を拒否する。
 
 ---

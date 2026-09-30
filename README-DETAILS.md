@@ -136,10 +136,10 @@ Workbenchが報告しなかった値は0や単位値で埋めず、null（JSON�
 - 要求した深さより下の子（`--depth 0` ではルート以外すべて）と、除外された子は、`isReferenceOnly: true` のスタブ（id・name・parentIdのみ）として返ります。要求した深さより下でWorkbenchが読めなかった子も、子のないスタブとして扱われ、失敗しません。
 - 接続中ユーザーのSlot（`User ...` という名前で、Workbenchは除外理由を `UserRoot` と報告）は `world.observe` で常に除外され、要求した深さの範囲内でも `isReferenceOnly: true` のスタブとしてだけ返ります。直結経路では展開されます（live測定: `hierarchy --depth 2` で直結269 Slot、Workbenchは183 Slot展開）が、Workbench経路で含める選択肢はありません。
 - 要求した深さの範囲内で、Workbenchが読み取れなかった子Slot（`unexpanded` の reason が `ReadFailed`）があると、hierarchy / find / observe / inspect などSlotを観測するコマンドは、不完全な結果を返さず `WORKBENCH_UNAVAILABLE`（終了コード4、接続失敗と同じ）で失敗します。原因は接続断ではなく一部Slotの読み取り失敗です。コマンドを再試行するか `--backend link` を使ってください。
-- WorkbenchがComponent型の定義を読めないことがあります（`reflection.component` が `Unknown` を返す。測定例: `[FrooxEngine]FrooxEngine.GradientStripTexture`、unknownReasonは "ResoniteLink failed to read the definition of component type ...: Object reference not set to an instance of an object."）。member値は型定義のmember名一覧を起点に読むため、このようなComponentに当たると、member値を読むコマンド（`inspect --members`、`hierarchy --include-components` などすべて）は部分的な結果を返さず全体が `WORKBENCH_UNAVAILABLE`（終了コード4）で失敗します。messageにはComponent型名とWorkbenchのunknownReasonが入ります。接続の問題ではなく再試行しても改善しないため、そのsubtreeには `--backend link` を使うか、対象Componentを含むSlotでは `--members` / `--include-components` を避けてください。同じ型への `type describe` は引き続き `COMPONENT_TYPE_NOT_FOUND` を返します（WorkbenchのUnknownは不在の証明ではありません）。`Unknown` 応答のmetadataにはconnection idが無いため、「読み取り中の接続切り替わり」ではなく型定義の読み取り失敗として報告されます。
+- WorkbenchがComponent型の定義を読めないことがあります（`reflection.component` が `Unknown` を返す。測定例: `[FrooxEngine]FrooxEngine.GradientStripTexture`、unknownReasonは "ResoniteLink failed to read the definition of component type ...: Object reference not set to an instance of an object."）。member値は型定義のmember名一覧を起点に読むため、このようなComponentに当たると、member値を読むコマンド（`inspect --members`、`hierarchy --include-components` などすべて）は部分的な結果を返さず全体が `WORKBENCH_UNAVAILABLE`（終了コード4）で失敗します。messageにはComponent型名とWorkbenchのunknownReasonが入ります。接続の問題ではなく再試行しても改善しないため、そのsubtreeには `--backend link` を使うか、対象Componentを含むSlotでは `--members` / `--include-components` を避けてください。同じ型への `type describe` も `WORKBENCH_UNAVAILABLE`（終了コード4）で失敗し、messageに型名とunknownReasonが入ります（Workbenchのwireには「型が存在しない」を明示する形がなく、Unknownは不在の証明ではありません）。完全名の打ち間違え（存在しない型）も同じ応答になるため `WORKBENCH_UNAVAILABLE` になり得ます。その場合は `type search` で正しい名前を確認してください。`Unknown` 応答のmetadataにはconnection idが無いため、「読み取り中の接続切り替わり」ではなく型定義の読み取り失敗として報告されます。
 - Componentのmember値: `value` はwireのJSONです。通常のfieldの `type` はComponent型のmember定義（`reflection.component` のvalueType）から埋め、assembly接頭辞を除くため `[mscorlib]System.Single`→`System.Single` のように直結経路のCLR完全名と同じ表記です。enumのfieldはenum型名のままです。`type` がnull（省略）のままなのは、generic・nullable値型、定義と一致しないmember、sync object内のnested memberとlist要素、field以外のmemberです（referenceは `targetType`、opaqueは変更なし）。配列・辞書のmemberは `kind: "opaque"`（値なし）、playbackも値なしです。
 - `type describe` の非Component型: `isWorldElement` と `genericParameters` はWorkbenchが報告しません（R5、保留中）。`isComponent`/`isSyncObject` はtrue、`isEnum`または値型はfalseと決められる型だけが答えられ、それ以外（普通のclass、閉じたgenericなど）は `BACKEND_UNSUPPORTED` です。open genericのパラメータ名は取れます。
-- `type search` が返す型名は `[Assembly]Namespace.Name` の形です。`Slider` などの短い名前は、`reflection.search`（500件の窓）で一意に解決できるときだけ受け付けます。曖昧または切り詰められたときは `COMPONENT_TYPE_NOT_FOUND` です。
+- `type search` が返す型名は `[Assembly]Namespace.Name` の形です。`Slider` などの短い名前は、`reflection.search`（500件の窓）で一意に解決できるときだけ受け付けます。該当なし・曖昧・または切り詰められたときは `COMPONENT_TYPE_NOT_FOUND` / `TYPE_NOT_FOUND` です。解決後の完全名でも完全名の直接入力でも、`reflection.component` / `reflection.type` が「不明」（`value` がnullの応答）を返した場合は `WORKBENCH_UNAVAILABLE` です。
 
 ### 往復回数
 
@@ -151,12 +151,12 @@ Workbenchが報告しなかった値は0や単位値で埋めず、null（JSON�
 
 Workbench関連のエラーコード:
 
-- `WORKBENCH_UNAVAILABLE`: pipeへ接続できない、またはhandshakeを完了できない（Workbench未起動など）。読み取り中の接続切り替わり、`stale` 応答、memberの読み取り失敗、Component型定義の読み取り失敗（`reflection.component` の `Unknown`。messageに型名とunknownReasonを含む）、要求した深さの範囲内のSlot読み取り失敗（`ReadFailed`）、不正な応答形式も同じコードです
+- `WORKBENCH_UNAVAILABLE`: pipeへ接続できない、またはhandshakeを完了できない（Workbench未起動など）。読み取り中の接続切り替わり、`stale` 応答、memberの読み取り失敗、型定義の読み取り失敗（`reflection.component` / `reflection.type` の `Unknown`。`type describe` の「不明」応答も同じで、messageに型名とunknownReasonを含む）、要求した深さの範囲内のSlot読み取り失敗（`ReadFailed`）、不正な応答形式も同じコードです
 - `WORKBENCH_PROTOCOL_INCOMPATIBLE`: Workbenchがprotocol versionを拒否。ResoLoopまたはWorkbench Appの更新が必要
 - `WORKBENCH_NOT_CONNECTED`: Workbenchは応答したがResonite sessionへ未接続。`wb status` では `connected: false` として正常出力されます
 - `WORKBENCH_OBSERVE_LIMIT_EXCEEDED`: 観測上限（深さ32・8,192 Slot）を超えた。`--under` で絞るか `--backend link` を使用
 - `BACKEND_UNSUPPORTED`: `--backend workbench` で未対応の接続コマンドを実行した
-- `SLOT_NOT_FOUND` / `COMPONENT_NOT_FOUND` / `COMPONENT_TYPE_NOT_FOUND` / `TYPE_NOT_FOUND`: Workbenchの「Unknown」（不在の証明ではない）のときにも同じコードで返ります
+- `SLOT_NOT_FOUND` / `COMPONENT_NOT_FOUND`: Workbenchの「Unknown」（不在の証明ではない）のときにも同じコードで返ります。`COMPONENT_TYPE_NOT_FOUND` / `TYPE_NOT_FOUND` は「Unknown」のときには返らず（その場合は `WORKBENCH_UNAVAILABLE`）、短い型名が `reflection.search` で一意に解決できなかったとき（該当なし・曖昧・500件の窓で切り詰め）だけ返ります
 
 ## Quick start
 
