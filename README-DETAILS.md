@@ -133,7 +133,8 @@ planned-w2の延期理由: `doctor` はlink URLの探索に依存します。`to
 Workbenchが報告しなかった値は0や単位値で埋めず、null（JSON出力ではキーが省略される）で返します。
 
 - Slotの `position`/`rotation`/`scale`/`isActive`/`isPersistent`/`tag` は未報告のときnullです。slotレベルの `members`（`inspect --members` のslot部分）は得られません。
-- Workbenchが読めなかったSlot、または要求した深さ・件数で切られた子は、`isReferenceOnly: true` のスタブ（id・name・parentIdのみ）として返ります。`--depth 0` ではルートだけが完全で、子はすべてスタブです。
+- 要求した深さより下の子（`--depth 0` ではルート以外すべて）と、除外された子は、`isReferenceOnly: true` のスタブ（id・name・parentIdのみ）として返ります。要求した深さより下でWorkbenchが読めなかった子も、子のないスタブとして扱われ、失敗しません。
+- 要求した深さの範囲内で、Workbenchが読み取れなかった子Slot（`unexpanded` の reason が `ReadFailed`）があると、hierarchy / find / observe / inspect などSlotを観測するコマンドは、不完全な結果を返さず `WORKBENCH_UNAVAILABLE`（終了コード4、接続失敗と同じ）で失敗します。原因は接続断ではなく一部Slotの読み取り失敗です。コマンドを再試行するか `--backend link` を使ってください。
 - Componentのmember値: 非enumのfieldの `type` はnullです（直結はCLR型名）。`value` はwireのJSONです。enumは `type` がenum型名になります。配列・辞書のmemberは `kind: "opaque"`（値なし）、playbackも値なしです。
 - `type describe` の非Component型: `isWorldElement` と `genericParameters` はWorkbenchが報告しません（R5、保留中）。`isComponent`/`isSyncObject` はtrue、`isEnum`または値型はfalseと決められる型だけが答えられ、それ以外（普通のclass、閉じたgenericなど）は `BACKEND_UNSUPPORTED` です。open genericのパラメータ名は取れます。
 - `type search` が返す型名は `[Assembly]Namespace.Name` の形です。`Slider` などの短い名前は、`reflection.search`（500件の窓）で一意に解決できるときだけ受け付けます。曖昧または切り詰められたときは `COMPONENT_TYPE_NOT_FOUND` です。
@@ -148,7 +149,7 @@ Workbenchが報告しなかった値は0や単位値で埋めず、null（JSON�
 
 Workbench関連のエラーコード:
 
-- `WORKBENCH_UNAVAILABLE`: pipeへ接続できない、またはhandshakeを完了できない（Workbench未起動など）。読み取り中の接続切り替わり、`stale` 応答、memberの読み取り失敗、不正な応答形式も同じコードです
+- `WORKBENCH_UNAVAILABLE`: pipeへ接続できない、またはhandshakeを完了できない（Workbench未起動など）。読み取り中の接続切り替わり、`stale` 応答、memberの読み取り失敗、要求した深さの範囲内のSlot読み取り失敗（`ReadFailed`）、不正な応答形式も同じコードです
 - `WORKBENCH_PROTOCOL_INCOMPATIBLE`: Workbenchがprotocol versionを拒否。ResoLoopまたはWorkbench Appの更新が必要
 - `WORKBENCH_NOT_CONNECTED`: Workbenchは応答したがResonite sessionへ未接続。`wb status` では `connected: false` として正常出力されます
 - `WORKBENCH_OBSERVE_LIMIT_EXCEEDED`: 観測上限（深さ32・8,192 Slot）を超えた。`--under` で絞るか `--backend link` を使用
