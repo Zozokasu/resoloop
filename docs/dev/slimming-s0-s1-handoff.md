@@ -8,7 +8,7 @@
 
 - main: S1-C1（`9d575a8`）とS1-C2（`cb7ef3e`）を2026-10-01にmergeした（未push。origin/main `7d73071`より先行）。
   - 単独のbuild/test: S1-C1 `9fccb27`はbuild 0/0、RLoop.Tests 452。S1-C2 `12dee5f`はbuild 0/0、RLoop.Tests 449。
-  - 2本を合わせた状態のbuild/testは、この文書のcommit時点で実行中または未実行。結果は`.ccg/tasks/resoloop-slimming/assignments.md`のS1-MERGE行を見る。
+  - 2本を合わせたmain `cb7ef3e`で確かめた（2026-10-01、Codex担当）。build 0/0、RLoop.Tests 468/468、Workbench.Tests 188/188、IntegrationTests 19（実機では未実行）。468は452 + 449 − 433（共通の基線）と一致する。
 - worktree: slot1〜3はdetached HEADで空いている。
 - `feature/hierarchy-observation`（`a4a3f55`）はS1-Aでmainへ統合済み。ユーザーのブランチなので削除していない。
 
@@ -57,7 +57,7 @@
 
 ## 3. 次のセッションでやること（順番どおり）
 
-1. **合わせた状態のbuild/testを確かめる**: S1-MERGE行に結果がなければ、main HEADで`dotnet build ResoLoop.slnx`と`dotnet test ResoLoop.slnx --no-build`を実行する。RLoop.Testsの期待値は、452と449から共通の基線439を引いて合算した約462件。失敗があれば、S1-C1とS1-C2の相互作用を調べる。
+1. （完了）合わせた状態のbuild/testは§1に記録した。Codex担当に依頼するときの注意: sandbox（workspace-write）の中はネットワークが遮断されている。先にsandboxの外で`dotnet restore ResoLoop.slnx`を実行し、担当には`dotnet build ResoLoop.slnx --no-restore`を指示する。
 2. **文書の同期（S1-C1Fが残したもの）**:
    - `README-DETAILS.md`の349行付近: 「component index」で再解決するという記述を消す。
    - `skills/codex/resonite-debug/SKILL.md`の24行付近: `STABLE_COMPONENT_AMBIGUOUS`の説明から「index」を消す。
