@@ -117,6 +117,7 @@ resoloop wb status --json
 | planned-w2 | doctor, uix, item, tool, capture |
 | planned-w4 | diff, plan, slot, component, apply, test, flux |
 | link-only | scene, blender, logs |
+| unsupported | hierarchy profile, hierarchy query, snapshot create（`snapshot diff` は接続不要のため対象外） |
 
 supported以外の表内コマンドを `--backend workbench` で実行すると `BACKEND_UNSUPPORTED` になります。`validate`（非strict）は接続を要しません。`validate --strict` と `type check --manifest` はmember値の変換検証をWorkbench経路では実行できないため、`BACKEND_UNSUPPORTED` で明示的に失敗します。表にないコマンド（help, init, schema, manifest, uix recipe, skills, discover など）は接続を開かないためbackendの影響を受けません。`wb` は表に含めず、常にWorkbenchへ接続します。
 

@@ -116,7 +116,8 @@ public static class Program
                 ["backend"] = parsed.Option("backend"), ["workbench-pipe"] = parsed.Option("workbench-pipe")
             };
             var resolution = ConfigResolver.Resolve(Environment.CurrentDirectory, cliConfig);
-            BackendSupport.RequireSupported(parsed.Positionals[0], resolution.Config.Backend);
+            BackendSupport.RequireSupported(parsed.Positionals[0], resolution.Config.Backend,
+                parsed.Positionals.Count > 1 ? parsed.Positionals[1] : null);
             commandCancellation = CancellationTokenSource.CreateLinkedTokenSource(userCancellation.Token);
             commandCancellation.CancelAfter(TimeSpan.FromSeconds(resolution.Config.CommandTimeoutSeconds));
             var commandToken = commandCancellation.Token;

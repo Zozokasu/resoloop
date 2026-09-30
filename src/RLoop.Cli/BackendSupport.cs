@@ -29,6 +29,11 @@ public static class BackendSupport
             ["status"] = Supported,
             ["ping"] = Supported,
             ["hierarchy"] = Supported,
+            // Local observation over the direct-link client; the frozen workbench backend gets no implementation.
+            // "snapshot diff" reads only stored files and never connects, so it is deliberately unlisted.
+            ["hierarchy profile"] = Unsupported,
+            ["hierarchy query"] = Unsupported,
+            ["snapshot create"] = Unsupported,
             ["find"] = Supported,
             ["observe"] = Supported,
             ["inspect"] = Supported,
@@ -56,9 +61,12 @@ public static class BackendSupport
     /// <paramref name="commandName"/> is a connecting command not supported there
     /// yet. Unlisted commands never connect, so the backend is irrelevant to them.
     /// </summary>
-    public static void RequireSupported(string commandName, string? backend)
+    public static void RequireSupported(string commandName, string? backend, string? subcommand = null)
     {
         if (!string.Equals(backend, "workbench", StringComparison.OrdinalIgnoreCase)) return;
+        var key = subcommand is null ? commandName : $"{commandName} {subcommand}";
+        if (subcommand is not null && !WorkbenchSupport.ContainsKey(key)) key = commandName;
+        commandName = key;
         if (WorkbenchSupport.TryGetValue(commandName, out string? level) && level != Supported)
             throw new RLoopException("BACKEND_UNSUPPORTED",
                 $"'{commandName}' is not supported on the workbench backend yet.",
