@@ -607,7 +607,7 @@ public sealed partial class ApplyWorkflowTests : IDisposable
     }
 
     [Fact]
-    public async Task ReferenceTopologyResolvesSameTypeComponentAfterInsertionAndSessionChange()
+    public async Task ReferenceTopologyResolvesSameTypeComponentAfterInsertionButApplyStopsOnUnprovableLookAlike()
     {
         var path = Path.Combine(_root, "reference-topology.json");
         File.WriteAllText(path, """
@@ -636,11 +636,13 @@ public sealed partial class ApplyWorkflowTests : IDisposable
         client.ResetWriteCounts();
 
         var resolved = await service.ResolveStableReferenceAsync(state, "$component:source-b", client.SessionId);
-        var reapplied = await service.ApplyAsync(document, new ApplyOptions(state));
+        var error = await Assert.ThrowsAsync<RLoopException>(() => service.ApplyAsync(document, new ApplyOptions(state)));
 
+        // The managed reference topology still singles out source-b. source-a is indistinguishable from the inserted
+        // look-alike (same type, members and target) and the recorded set is no longer complete, so apply stops
+        // instead of letting a stored ID or the old index pick one.
         Assert.Equal(sourceB.Id, resolved.Id);
-        Assert.Equal(0, reapplied.ComponentsAdded);
-        Assert.Equal(2, reapplied.ComponentsUnchanged);
+        Assert.Equal("STABLE_COMPONENT_AMBIGUOUS", error.Code);
         Assert.Equal(0, client.Writes);
     }
 

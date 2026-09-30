@@ -28,7 +28,10 @@ public sealed partial class ApplyWorkflowTests
 
         var error = await Assert.ThrowsAsync<RLoopException>(() => service.ResolveStableReferenceAsync(state, "$slot:root", "session-1"));
 
-        Assert.Equal("SLOT_PATH_NOT_FOUND", error.Code);
+        // The stored ID is alive but belongs to another object and the recorded path is absent: stop, do not guess.
+        Assert.Equal("APPLY_STORED_ID_UNVERIFIED", error.Code);
+        Assert.Equal("S1", error.Context["storedId"]);
+        Assert.Equal("Decoy", error.Context["observedName"]);
         Assert.Equal(0, newWorld.Writes);
         Assert.Equal("Decoy", Assert.Single(newWorld.Root.Children).Name);
     }
@@ -41,12 +44,17 @@ public sealed partial class ApplyWorkflowTests
         await newWorld.CreateSlotAsync(new SlotCreateRequest("Root", "Decoy"));
         newWorld.ResetWriteCounts();
 
-        var result = await new WorldService(newWorld).ApplyAsync(document, new ApplyOptions(state));
+        var error = await Assert.ThrowsAsync<RLoopException>(() => new WorldService(newWorld).ApplyAsync(document, new ApplyOptions(state)));
 
-        Assert.True(result.Created);
-        Assert.Equal(["Decoy", "Managed"], newWorld.Root.Children.Select(child => child.Name).ToArray());
-        Assert.Empty(newWorld.Root.Children[0].Components);
-        Assert.Equal("S2", result.SlotId);
+        // The object holding the stored ID is neither adopted nor renamed, and no duplicate is created.
+        Assert.Equal("APPLY_STORED_ID_UNVERIFIED", error.Code);
+        Assert.Equal("root", error.Context["key"]);
+        Assert.Equal("S1", error.Context["storedId"]);
+        Assert.Equal("Decoy", error.Context["observedName"]);
+        Assert.Equal(0, newWorld.Writes);
+        var decoy = Assert.Single(newWorld.Root.Children);
+        Assert.Equal("Decoy", decoy.Name);
+        Assert.Empty(decoy.Components);
     }
 
     [Fact]
