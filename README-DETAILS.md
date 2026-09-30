@@ -109,7 +109,7 @@ resoloop wb status --json
 
 `session.connected` が `false` の場合、Workbench自体は応答していますがResonite sessionへ未接続です。
 
-`--backend workbench` 時のコマンド対応（正本は `src/RLoop.Cli/BackendSupport.cs` の `WorkbenchSupport`、将来のmilestoneで順次対応予定）:
+`--backend workbench` 時のコマンド対応（正本は `src/RLoop.Cli/BackendSupport.cs` の `WorkbenchSupport`）。Workbench backendは凍結中で、未対応コマンドを追加する予定はありません。通常は直結（`--backend link`、既定）を使ってください。将来のリリースで除去予定です:
 
 | 対応 | コマンド |
 |---|---|

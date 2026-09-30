@@ -2,7 +2,7 @@
 
 ## Agent workflow
 
-For `/ccg:go` work, read [the agent workflow](docs/dev/agent-workflow.md). It is the tracked source for roles, Devin SWE-2 instructions, worktree ownership, and verification tiers. `CLAUDE.md` is the Claude entry point and may be absent in a worktree.
+For `/ccg:go` work, read [the agent workflow](docs/dev/agent-workflow.md). It is the tracked source for roles, optional Devin delegation, worktree ownership, and verification tiers. `CLAUDE.md` is the Claude entry point and may be absent in a worktree.
 
 Preserve existing user changes and untracked files. Do not edit `.ccg/` managed files or `plan/` unless the user specifically asks; `feedback/` holds proposals and never replaces the plan. Do not commit, push, or release without a request.
 
