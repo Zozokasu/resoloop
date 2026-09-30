@@ -416,6 +416,15 @@ resoloop logs --tail 200 --json
 
 - CONNECTION_FAILED: ResoniteLinkがworldで有効か、画面上のportとURLが同じか確認
 - COMPONENT_TYPE_NOT_FOUND: type searchの完全な結果を使う
+- COMPONENT_DEFINITION_UNREADABLE（終了コード7）: 型は型一覧に存在するが、ResoniteLinkがそのComponent型のmember定義を読めない（例: `GradientStripTexture`）。「不在」ではなく「不明」です。`type describe COMPONENT`（`--member` なし）は型情報（TypeInfo）に `membersAvailable: false`、`membersUnavailableCode`、`membersUnavailableReason` を加えて成功し、Componentのmemberを必要とする操作（`component add`/`set`、`apply`、`type describe --member`）はこのコードで拒否されます。`type query`/`type check` は拒否せず、当該型を `status: "unknown"`（`differences` に `TYPE_DEFINITION_UNAVAILABLE`）として報告します。実Componentのmember値は `inspect --members` で読めることがあります
+- TYPE_SEARCH_INCOMPLETE（終了コード7）: 型一覧が空または不完全で、型が存在するか判定できない（「不明」）。`COMPONENT_TYPE_NOT_FOUND` にはなりません。world読み込み完了後に再試行してください。`type describe` は型情報を返し `membersAvailable: false` を付けます
+- TYPE_SEARCH_INCOMPLETE の補足: 型一覧が空のとき ResoLoop はカテゴリ木を走査して型一覧を作ります。カテゴリ数が5000超、深さが32超、子カテゴリ名が空または `/` `\` を含む、応答に `ComponentTypes`/`SubCategories` が無い、途中の要求が失敗した（SDKが例外を投げた場合を含む。取消、REQUEST_TIMEOUT、接続断はこのコードに包まずそのまま伝播）、のいずれでも部分結果は返さず、このコードで失敗します。空または不完全な一覧は再利用しません。`type search` の一致なしは、一覧が完全なときだけ空の結果です
+- COMPONENT_TYPE_AMBIGUOUS（終了コード2）: 短い型名が型一覧の複数の型に一致した。「不在」ではありません。`context.candidates` の候補から完全名 `[Assembly]Namespace.Type` を選んで再実行してください（従来は `COMPONENT_TYPE_NOT_FOUND` として報告されていました）
+- TYPE_DEFINITION_UNREADABLE（終了コード7）: 型は型一覧に存在するが、ResoniteLinkがその型の定義（TypeDefinition）を読めない。`TYPE_NOT_FOUND` にはなりません。`type describe` は `TYPE_NOT_FOUND` ではなくこのコードで失敗します
+- CONNECTION_GENERATION_CHANGED / ALREADY_CONNECTED: 接続レベルの失敗です。`type query` / `type check` は型単位の `unknown` にせず、コマンド全体を中断します。古い接続の応答は世代確認とキャッシュ更新を同じロックで行うため、新しい接続のメモリ・diskキャッシュには書かれません
+- ALREADY_CONNECTED（終了コード7）: 接続済みのクライアントへ再接続しようとした。1つのクライアントは1つの接続だけを担当します（通常のCLIコマンドでは発生しません）
+- CONNECTION_GENERATION_CHANGED（終了コード7）: 型情報の読取り中に接続が入れ替わったため、その応答を破棄しました（キャッシュへ書きません）。現在の接続で再試行してください。`session` の出力には接続ごとの `connectionGeneration` が付くことがあります（保存はしません）
+- `type query` / `type check`: 型が読めない場合は全体を止めず、その型を `types[].status: "unknown"`（`differences` に `TYPE_DEFINITION_UNAVAILABLE`）として報告し、他の型は通常どおり返します。型一覧が完全なのに存在しない型だけが `status: "notFound"`（`COMPONENT_TYPE_NOT_FOUND`）です。`verified` は `status: "verified"` のときだけtrueです。member値型（enumなど）の定義だけが読めない場合は、Componentの解決結果は保持したまま、その型を `status: "unknown"`、該当memberを `differences` の `ENUM_VALUE_TYPE_UNAVAILABLE` として報告し、そのmemberのenum期待値は比較しません（`notFound` にはなりません）。接続断・timeout・接続世代の変更はコマンド全体を失敗させます
 - open generic: `resoloop type specialize '[FrooxEngine]FrooxEngine.DynamicValueVariable<>' string` でclosed genericを生成する
 - COMPONENT_MEMBER_NOT_FOUND: type describeでflattened memberを確認
 - VALUE_CONVERSION_FAILED: vector/quaternion/colorはJSON array/objectを優先し、エラーのtarget typeと受理例を確認

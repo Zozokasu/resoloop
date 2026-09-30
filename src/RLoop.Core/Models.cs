@@ -76,7 +76,8 @@ public sealed record SessionInfo(
     bool Connected,
     string? ResoniteVersion,
     string? ResoniteLinkVersion,
-    string? UniqueSessionId);
+    string? UniqueSessionId,
+    string? ConnectionGeneration = null);
 
 public sealed record ComponentSummary(
     string Id,

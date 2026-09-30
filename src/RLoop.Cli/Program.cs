@@ -906,6 +906,31 @@ public static class Program
         }
     }
 
+    /// <summary>
+    /// type describe without --member. A component is described with its members. A type that is positively absent from the
+    /// component list is described as a plain type (shape unchanged). A component whose member definition is unknown
+    /// (unreadable definition, or an empty/incomplete type list) gets the plain type information plus an explicit
+    /// membersAvailable=false with the reason, never a NotFound.
+    /// </summary>
+    internal static async Task<object> DescribeTypeOrComponentAsync(IResoniteClient client, string query, CancellationToken ct)
+    {
+        try { return await client.DescribeComponentTypeAsync(query, ct); }
+        catch (RLoopException ex) when (ex.Code == "COMPONENT_TYPE_NOT_FOUND")
+        {
+            return await client.DescribeTypeAsync(query, ct);
+        }
+        catch (RLoopException ex) when (ex.Code is "COMPONENT_DEFINITION_UNREADABLE" or "TYPE_SEARCH_INCOMPLETE")
+        {
+            var info = System.Text.Json.JsonSerializer.SerializeToNode(await client.DescribeTypeAsync(query, ct),
+                new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web)
+                { DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull })!.AsObject();
+            info["membersAvailable"] = false;
+            info["membersUnavailableCode"] = ex.Code;
+            info["membersUnavailableReason"] = ex.Message;
+            return info;
+        }
+    }
+
     private static async Task RunType(ParsedArguments args, OutputWriter output, IResoniteClient client, CancellationToken ct)
     {
         var sub = args.Positional(1, "type subcommand").ToLowerInvariant();
@@ -953,8 +978,7 @@ public static class Program
                         valueType = reflectedType, definition = await client.DescribeTypeAsync(reflectedType, ct) });
                     break;
                 }
-                try { output.Success(await client.DescribeComponentTypeAsync(query, ct)); }
-                catch (RLoopException ex) when (ex.Code == "COMPONENT_TYPE_NOT_FOUND") { output.Success(await client.DescribeTypeAsync(query, ct)); }
+                output.Success(await DescribeTypeOrComponentAsync(client, query, ct));
                 break;
             }
             case "specialize":
