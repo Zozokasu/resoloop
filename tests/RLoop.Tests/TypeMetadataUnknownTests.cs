@@ -222,6 +222,8 @@ public sealed class TypeMetadataUnknownTests
         public Exception? DisposeFault;
 
         public bool IsConnected => true;
+        public Task Connect(Uri uri, CancellationToken cancellationToken) => Task.CompletedTask;
+        public Task<LinkSessionData> GetSessionData() => Task.FromResult(new LinkSessionData(true, null, "test", "test", "fake-session"));
 
         public Task<LinkTypeList> GetAllComponentTypes() => Task.FromResult(new LinkTypeList(true, null, AllTypes, []));
         public Task<LinkTypeList> GetComponentTypes(string category) => Task.FromResult(new LinkTypeList(true, null, [], []));

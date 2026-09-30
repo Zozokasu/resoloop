@@ -9,6 +9,8 @@ namespace RLoop.ResoniteLink;
 internal interface IMetadataLink : IDisposable
 {
     bool IsConnected { get; }
+    Task Connect(Uri uri, CancellationToken cancellationToken);
+    Task<LinkSessionData> GetSessionData();
     Task<LinkTypeList> GetAllComponentTypes();
     Task<LinkTypeList> GetComponentTypes(string category);
     Task<LinkComponentDefinition> GetComponentDefinition(string type);
@@ -16,6 +18,7 @@ internal interface IMetadataLink : IDisposable
     Task<LinkEnumDefinition> GetEnumDefinition(string type);
 }
 
+internal sealed record LinkSessionData(bool Success, string? ErrorInfo, string? ResoniteVersion, string? ResoniteLinkVersion, string? UniqueSessionId);
 internal sealed record LinkTypeList(bool Success, string? ErrorInfo, IReadOnlyList<string>? ComponentTypes, IReadOnlyList<string>? SubCategories);
 internal sealed record LinkComponentDefinition(bool Success, string? ErrorInfo, Link.ComponentDefinition Definition);
 internal sealed record LinkTypeDefinition(bool Success, string? ErrorInfo, Link.TypeDefinition Definition);
@@ -24,6 +27,14 @@ internal sealed record LinkEnumDefinition(bool Success, string? ErrorInfo, IRead
 internal sealed class SdkMetadataLink(Link.LinkInterface link) : IMetadataLink
 {
     public bool IsConnected => link.IsConnected;
+
+    public Task Connect(Uri uri, CancellationToken cancellationToken) => link.Connect(uri, cancellationToken);
+
+    public async Task<LinkSessionData> GetSessionData()
+    {
+        var r = await link.GetSessionData().ConfigureAwait(false);
+        return new(r.Success, r.ErrorInfo, r.ResoniteVersion, r.ResoniteLinkVersion, r.UniqueSessionId);
+    }
 
     public async Task<LinkTypeList> GetAllComponentTypes()
     {

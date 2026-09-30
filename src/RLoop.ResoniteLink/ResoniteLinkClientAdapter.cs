@@ -17,6 +17,7 @@ public sealed class ResoniteLinkClientAdapter : IResoniteClient, IResoniteClient
     private readonly Dictionary<string, MutableMetric> _metrics = new(StringComparer.Ordinal);
     private IReadOnlyList<string>? _allComponentTypes;
     private int _cacheHits;
+    private string? _generation;
     private Uri? _uri;
     private ReflectionCacheOptions _cacheOptions;
     private ReflectionMetadataCache? _diskCache;
@@ -40,6 +41,12 @@ public sealed class ResoniteLinkClientAdapter : IResoniteClient, IResoniteClient
 
     public async Task ConnectAsync(Uri uri, TimeSpan timeout, CancellationToken cancellationToken = default)
     {
+        // One adapter serves one connection. Re-connecting a live adapter would let in-flight metadata
+        // reads of the old connection write into the new connection's caches.
+        if (_meta.IsConnected)
+            throw new RLoopException("ALREADY_CONNECTED", "The ResoniteLink client is already connected; dispose it and create a new client to connect elsewhere.",
+                ExitCodes.OperationFailed, new Dictionary<string, object?> { ["url"] = _uri?.ToString() });
+        Volatile.Write(ref _generation, null);
         ClearReflectionMemory();
         _diskCache = null;
         _cacheSession = null;
@@ -48,8 +55,9 @@ public sealed class ResoniteLinkClientAdapter : IResoniteClient, IResoniteClient
         timeoutCts.CancelAfter(timeout);
         try
         {
-            await _link.Connect(uri, timeoutCts.Token).ConfigureAwait(false);
+            await _meta.Connect(uri, timeoutCts.Token).ConfigureAwait(false);
             _uri = uri;
+            Volatile.Write(ref _generation, Guid.NewGuid().ToString("N"));
         }
         catch (OperationCanceledException ex) when (!cancellationToken.IsCancellationRequested)
         {
@@ -68,9 +76,11 @@ public sealed class ResoniteLinkClientAdapter : IResoniteClient, IResoniteClient
     public async Task<SessionInfo> GetSessionInfoAsync(CancellationToken cancellationToken = default)
     {
         EnsureConnected();
-        var response = await Wait(_link.GetSessionData(), "session.get", cancellationToken);
-        EnsureSuccess(response, "SESSION_INFO_FAILED");
-        return _cacheSession = new SessionInfo(_uri!.ToString(), true, response.ResoniteVersion, response.ResoniteLinkVersion, response.UniqueSessionId);
+        var generation = CaptureGeneration();
+        var response = await Wait(_meta.GetSessionData(), "session.get", cancellationToken);
+        EnsureSuccess(response.Success, response.ErrorInfo, "SESSION_INFO_FAILED");
+        EnsureGeneration(generation);
+        return _cacheSession = new SessionInfo(_uri!.ToString(), true, response.ResoniteVersion, response.ResoniteLinkVersion, response.UniqueSessionId, generation.Length == 0 ? null : generation);
     }
 
     public async Task<SlotInfo> GetSlotAsync(string id, int depth, bool includeComponentData, CancellationToken cancellationToken = default)
@@ -191,6 +201,8 @@ public sealed class ResoniteLinkClientAdapter : IResoniteClient, IResoniteClient
     {
         EnsureConnected();
         var types = await GetAllComponentTypeNames(cancellationToken);
+        // An empty list cannot prove "no match"; only a non-empty complete list can.
+        if (types.Count == 0) throw TypeListUnknown($"searching for '{query}'", query);
         return types
             .Where(x => x.Contains(query, StringComparison.OrdinalIgnoreCase))
             .OrderBy(x => SearchScore(x, query)).ThenBy(x => x, StringComparer.OrdinalIgnoreCase)
@@ -230,6 +242,7 @@ public sealed class ResoniteLinkClientAdapter : IResoniteClient, IResoniteClient
     {
         EnsureConnected();
         cancellationToken.ThrowIfCancellationRequested();
+        var generation = CaptureGeneration();
         refresh |= _forceLiveMetadata;
         if (_typeDefinitions.TryGetValue(type, out var cached) && (!refresh || _typeEvidence[type].Live))
         {
@@ -237,6 +250,7 @@ public sealed class ResoniteLinkClientAdapter : IResoniteClient, IResoniteClient
             return cached;
         }
         var disk = await GetReflectionCacheAsync(cancellationToken);
+        EnsureGeneration(generation);
         if (refresh) disk.Invalidate("type", type);
         var stored = refresh ? null : disk.Read<TypeInfo>("type", type, t => !string.IsNullOrEmpty(t.FullTypeName) &&
             (!t.IsEnum || t.EnumValues is not null && t.IsFlags is not null));
@@ -270,6 +284,7 @@ public sealed class ResoniteLinkClientAdapter : IResoniteClient, IResoniteClient
             enumValues = enumResponse.Values;
             isFlags = enumResponse.IsFlags;
         }
+        EnsureGeneration(generation);
         var mapped = ModelMapper.MapType(response.Definition, enumValues, isFlags);
         var observedAt = DateTimeOffset.UtcNow;
         RememberType(type, mapped, observedAt, true);
@@ -349,11 +364,7 @@ public sealed class ResoniteLinkClientAdapter : IResoniteClient, IResoniteClient
     {
         var types = await GetAllComponentTypeNames(cancellationToken);
         // An empty list cannot prove absence: report unknown, never NotFound.
-        if (types.Count == 0)
-            throw new RLoopException("TYPE_SEARCH_INCOMPLETE",
-                $"The component type list returned by ResoniteLink was empty, so whether '{query}' exists is unknown.",
-                ExitCodes.OperationFailed, new Dictionary<string, object?> { ["query"] = query },
-                ["Retry after the world finishes loading, or read the component with inspect --members."]);
+        if (types.Count == 0) throw TypeListUnknown("resolving the type", query);
         var exact = types.FirstOrDefault(x => x.Equals(query, StringComparison.Ordinal) || StripAssembly(x).Equals(query, StringComparison.Ordinal));
         if (exact is not null) return exact;
         var matches = types.Where(x => StripAssembly(x).EndsWith('.' + query, StringComparison.Ordinal) ||
@@ -364,8 +375,14 @@ public sealed class ResoniteLinkClientAdapter : IResoniteClient, IResoniteClient
             ExitCodes.NotFound, new Dictionary<string, object?> { ["query"] = query }, matches.Take(10).ToArray());
     }
 
+    // Category walk bounds. Values follow the resonite-workbench regression suite (commit 7d40c92,
+    // ResoniteLinkSessionLink MaxCategories = 5000, depth 32); they guard a runaway or cyclic tree.
+    internal const int MaxTypeCategories = 5000;
+    internal const int MaxTypeCategoryDepth = 32;
+
     private async Task<IReadOnlyList<string>> GetAllComponentTypeNames(CancellationToken cancellationToken)
     {
+        var generation = CaptureGeneration();
         if (_allComponentTypes is not null)
         {
             Interlocked.Increment(ref _cacheHits);
@@ -373,38 +390,73 @@ public sealed class ResoniteLinkClientAdapter : IResoniteClient, IResoniteClient
         }
         var response = await Wait(_meta.GetAllComponentTypes(), "component-types.get-all", cancellationToken);
         EnsureSuccess(response.Success, response.ErrorInfo, "TYPE_SEARCH_FAILED");
-        if (response.ComponentTypes is { Count: > 0 }) return _allComponentTypes = response.ComponentTypes;
+        EnsureGeneration(generation);
+        if (response.ComponentTypes is { Count: > 0 })
+        {
+            _allComponentTypes = response.ComponentTypes;
+            return _allComponentTypes;
+        }
 
         var results = new HashSet<string>(StringComparer.Ordinal);
         var visited = new HashSet<string>(StringComparer.Ordinal);
-        await CollectCategory(string.Empty, results, visited, cancellationToken);
+        await CollectCategory(string.Empty, 0, results, visited, cancellationToken);
+        EnsureGeneration(generation);
         var collected = results.ToArray();
         // Do not remember an empty list: it is "unknown", and a later call may see the loaded world.
         if (collected.Length == 0) return collected;
         return _allComponentTypes = collected;
     }
 
-    private async Task CollectCategory(string category, HashSet<string> results, HashSet<string> visited,
+    /// <summary>Any failure here leaves the list incomplete (unknown); the caller never receives partial results.</summary>
+    private async Task CollectCategory(string category, int depth, HashSet<string> results, HashSet<string> visited,
         CancellationToken cancellationToken)
     {
-        if (!visited.Add(category)) return;
+        if (visited.Contains(category)) return;
+        if (depth > MaxTypeCategoryDepth)
+            throw CategoryWalkIncomplete(category, $"the category tree is deeper than {MaxTypeCategoryDepth} levels");
+        if (visited.Count >= MaxTypeCategories)
+            throw CategoryWalkIncomplete(category, $"the category tree has more than {MaxTypeCategories} categories");
+        visited.Add(category);
         var response = await Wait(_meta.GetComponentTypes(category), "component-types.get-category", cancellationToken);
-        EnsureSuccess(response.Success, response.ErrorInfo, "TYPE_SEARCH_FAILED", new Dictionary<string, object?> { ["category"] = category });
-        foreach (var type in response.ComponentTypes ?? []) results.Add(type);
-        foreach (var child in response.SubCategories ?? [])
+        if (!response.Success)
+            throw CategoryWalkIncomplete(category, string.IsNullOrWhiteSpace(response.ErrorInfo) ? "ResoniteLink reported a failure" : response.ErrorInfo);
+        if (response.ComponentTypes is null) throw CategoryWalkIncomplete(category, "the response has no ComponentTypes");
+        if (response.SubCategories is null) throw CategoryWalkIncomplete(category, "the response has no SubCategories");
+        foreach (var type in response.ComponentTypes) results.Add(type);
+        foreach (var child in response.SubCategories)
         {
-            var childPath = child.Contains('/') || string.IsNullOrEmpty(category) ? child : category + "/" + child;
-            await CollectCategory(childPath, results, visited, cancellationToken);
+            // A child name is one segment. Empty or separator-carrying names would request a path that does not exist.
+            if (string.IsNullOrWhiteSpace(child) || child.Contains('/') || child.Contains('\\'))
+                throw CategoryWalkIncomplete(category, $"the sub-category name '{child}' is empty or contains a path separator");
+            var childPath = string.IsNullOrEmpty(category) ? child : category + "/" + child;
+            await CollectCategory(childPath, depth + 1, results, visited, cancellationToken);
         }
     }
 
-    private async Task<IReadOnlyList<string>> Suggestions(string query, CancellationToken cancellationToken) =>
-        await SearchComponentTypesAsync(query.Split('.').Last(), 10, cancellationToken);
+    private static RLoopException CategoryWalkIncomplete(string category, string reason) =>
+        new("TYPE_SEARCH_INCOMPLETE",
+            $"The component type list could not be collected completely (category '{category}': {reason}), so type existence is unknown.",
+            ExitCodes.OperationFailed, new Dictionary<string, object?> { ["category"] = category, ["reason"] = reason },
+            ["Retry after the world finishes loading, or read the component with inspect --members."]);
+
+    private static RLoopException TypeListUnknown(string what, string query) =>
+        new("TYPE_SEARCH_INCOMPLETE",
+            $"The component type list returned by ResoniteLink was empty while {what}, so whether '{query}' exists is unknown.",
+            ExitCodes.OperationFailed, new Dictionary<string, object?> { ["query"] = query },
+            ["Retry after the world finishes loading, or read the component with inspect --members."]);
+
+    private async Task<IReadOnlyList<string>> Suggestions(string query, CancellationToken cancellationToken)
+    {
+        // Suggestions only decorate an error; an unknown list must not replace that error.
+        try { return await SearchComponentTypesAsync(query.Split('.').Last(), 10, cancellationToken); }
+        catch (RLoopException ex) when (ex.Code == "TYPE_SEARCH_INCOMPLETE") { return []; }
+    }
 
     private async Task<Link.ComponentDefinition> GetComponentDefinitionCachedAsync(string type,
         CancellationToken cancellationToken, bool refresh = false)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        var generation = CaptureGeneration();
         refresh |= _forceLiveMetadata;
         if (_componentDefinitions.TryGetValue(type, out var cached) && (!refresh || _componentEvidence[type].Live))
         {
@@ -412,6 +464,7 @@ public sealed class ResoniteLinkClientAdapter : IResoniteClient, IResoniteClient
             return cached;
         }
         var disk = await GetReflectionCacheAsync(cancellationToken);
+        EnsureGeneration(generation);
         if (refresh) disk.Invalidate("component-sdk", type);
         var stored = refresh ? null : disk.Read<Link.ComponentDefinition>("component-sdk", type, ValidComponentDefinition);
         if (stored is not null)
@@ -422,7 +475,9 @@ public sealed class ResoniteLinkClientAdapter : IResoniteClient, IResoniteClient
         var first = await TryGetComponentDefinitionAsync(type, cancellationToken);
         if (first.Response is not { Success: true })
         {
+            EnsureGeneration(generation);
             var resolved = await ResolveComponentTypeAsync(type, cancellationToken);
+            EnsureGeneration(generation);
             if (_componentDefinitions.TryGetValue(resolved, out cached) && (!refresh || _componentEvidence[resolved].Live))
             {
                 _componentDefinitions[type] = cached;
@@ -431,6 +486,7 @@ public sealed class ResoniteLinkClientAdapter : IResoniteClient, IResoniteClient
                 return cached;
             }
             first = await TryGetComponentDefinitionAsync(resolved, cancellationToken);
+            EnsureGeneration(generation);
             if (first.Response is not { Success: true })
             {
                 // The type is in the type list, so this is "definition unreadable", never "not found".
@@ -447,6 +503,7 @@ public sealed class ResoniteLinkClientAdapter : IResoniteClient, IResoniteClient
                     first.Error);
             }
         }
+        EnsureGeneration(generation);
         var response = first.Response;
         var definition = response.Definition;
         var observedAt = DateTimeOffset.UtcNow;
@@ -477,9 +534,11 @@ public sealed class ResoniteLinkClientAdapter : IResoniteClient, IResoniteClient
     private async Task<ReflectionMetadataCache> GetReflectionCacheAsync(CancellationToken ct)
     {
         if (_diskCache is not null) return _diskCache;
+        var generation = CaptureGeneration();
         var session = _cacheSession ?? (_cacheOptions.Mode == "off"
             ? new SessionInfo(_uri?.ToString() ?? string.Empty, true, null, null, null)
             : await GetSessionInfoAsync(ct));
+        EnsureGeneration(generation);
         return _diskCache = new ReflectionMetadataCache(session, _cacheOptions);
     }
 
@@ -637,6 +696,18 @@ public sealed class ResoniteLinkClientAdapter : IResoniteClient, IResoniteClient
     {
         public int Requests { get; set; }
         public double ElapsedMs { get; set; }
+    }
+
+    // Liveness is EnsureConnected's job; a never-connected adapter (offline seam tests) has the empty generation.
+    private string CaptureGeneration() => Volatile.Read(ref _generation) ?? string.Empty;
+
+    /// <summary>Fails when the connection changed while a metadata read was in flight, so a stale answer is never cached.</summary>
+    private void EnsureGeneration(string captured)
+    {
+        if (!string.Equals(CaptureGeneration(), captured, StringComparison.Ordinal))
+            throw new RLoopException("CONNECTION_GENERATION_CHANGED",
+                "The ResoniteLink connection changed while a metadata request was in flight; the answer was discarded and not cached.",
+                ExitCodes.OperationFailed, suggestions: ["Retry the command on the current connection."]);
     }
 
     private void EnsureConnected()
