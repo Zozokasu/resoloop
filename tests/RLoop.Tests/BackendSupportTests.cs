@@ -129,6 +129,34 @@ public sealed class BackendSupportTests : IDisposable
     public void SupportedCommandsPassOnWorkbench(string command) =>
         BackendSupport.RequireSupported(command, "workbench");
 
+    [Theory]
+    [InlineData("hierarchy", "profile")]
+    [InlineData("hierarchy", "query")]
+    [InlineData("snapshot", "create")]
+    public void ObservationSubcommandsAreUnsupportedOnWorkbench(string command, string subcommand)
+    {
+        Assert.Equal(BackendSupport.Unsupported, BackendSupport.WorkbenchSupport[$"{command} {subcommand}"]);
+        var ex = Assert.Throws<RLoopException>(() => BackendSupport.RequireSupported(command, "workbench", subcommand));
+        Assert.Equal("BACKEND_UNSUPPORTED", ex.Code);
+        Assert.Equal(ExitCodes.OperationFailed, ex.ExitCode);
+        Assert.Equal(BackendSupport.Unsupported, ex.Context["level"]);
+        Assert.Contains($"{command} {subcommand}", ex.Message);
+        Assert.False(string.IsNullOrWhiteSpace((string?)ex.Context["reason"]));
+        // The same subcommand is fine on the link backend and when no backend is chosen.
+        BackendSupport.RequireSupported(command, "link", subcommand);
+        BackendSupport.RequireSupported(command, null, subcommand);
+    }
+
+    [Fact]
+    public void PlainHierarchyStaysSupportedAndSnapshotDiffStaysUnregisteredBecauseItNeverConnects()
+    {
+        BackendSupport.RequireSupported("hierarchy", "workbench");
+        BackendSupport.RequireSupported("hierarchy", "workbench", "Root");
+        Assert.DoesNotContain("snapshot diff", BackendSupport.WorkbenchSupport.Keys);
+        Assert.DoesNotContain("snapshot", BackendSupport.WorkbenchSupport.Keys);
+        BackendSupport.RequireSupported("snapshot", "workbench", "diff");
+    }
+
     [Fact]
     public void LinkBackendAndUnlistedCommandsPassThrough()
     {
