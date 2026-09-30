@@ -16,6 +16,7 @@ public sealed class WorkbenchReadTests
     private const string Dial = "[FrooxEngine]FrooxEngine.Dial";
     private const string Slider = "[FrooxEngine]FrooxEngine.Slider";
     private const string GradientStrip = "[FrooxEngine]FrooxEngine.GradientStripTexture";
+    private const string Alignment = "[FrooxEngine]FrooxEngine.Alignment";
 
     private static string Param(RpcRequest request, string property) =>
         request.Params!.Value.GetProperty(property).GetString()!;
@@ -750,18 +751,20 @@ public sealed class WorkbenchReadTests
     }
 
     [Fact]
-    public async Task DescribeComponentTypeAsync_UnknownResultNullMeta_StillThrowsComponentTypeNotFound()
+    public async Task DescribeComponentTypeAsync_UnknownResultNullMeta_ThrowsUnavailableKeepsIdentity()
     {
-        // type describe keeps mapping an unknown reflection.component to COMPONENT_TYPE_NOT_FOUND,
-        // even when the answer carries no connection identity.
+        // An "unknown" reflection.component answer is not "no such type": the follow-up
+        // reflection.type is also "unknown", so the Workbench could not read the definition
+        // and the failure is WORKBENCH_UNAVAILABLE. Both answers carry no connection identity
+        // and must not erase the handshake's ids.
         string pipeName = Wb.NewPipeName();
         using var guard = new CancellationTokenSource(Wb.GuardTimeout);
         JsonObject unknown = ReflectionResult(null, UnknownDefinitionReason(GradientStrip));
         await using var server = FakeWorkbenchServer.Start(pipeName, (s, ct) =>
             Wb.ServeAsync(s, request => request.Method switch
             {
-                RpcMethods.ReflectionComponent => Wb.Response(request.Id, unknown.ToJsonString(),
-                    connectionId: null, sessionId: null),
+                RpcMethods.ReflectionComponent or RpcMethods.ReflectionType =>
+                    Wb.Response(request.Id, unknown.ToJsonString(), connectionId: null, sessionId: null),
                 _ => Unexpected(request),
             }, ct));
         await using var client = new WorkbenchResoniteClient();
@@ -770,8 +773,171 @@ public sealed class WorkbenchReadTests
         var ex = await Assert.ThrowsAsync<RLoopException>(
             () => client.DescribeComponentTypeAsync(GradientStrip, guard.Token));
 
+        Assert.Equal("WORKBENCH_UNAVAILABLE", ex.Code);
+        Assert.Equal(ExitCodes.ConnectionFailed, ex.ExitCode);
+        Assert.Contains(GradientStrip, ex.Message);
+        Assert.Contains("Object reference not set to an instance of an object.", ex.Message);
+        Assert.Equal("conn-1", client.Meta.ConnectionId);
+        Assert.Equal("sess-1", client.Meta.SessionId);
+    }
+
+    [Fact]
+    public async Task DescribeComponentTypeAsync_UnknownButKnownNonComponent_ThrowsNotFound()
+    {
+        // reflection.component cannot describe a non-component type; the follow-up
+        // reflection.type proves the type exists and is not a component, which is positive
+        // evidence for COMPONENT_TYPE_NOT_FOUND (the CLI's `type describe` falls back to
+        // DescribeTypeAsync on it).
+        string pipeName = Wb.NewPipeName();
+        using var guard = new CancellationTokenSource(Wb.GuardTimeout);
+        var log = new ConcurrentQueue<RpcRequest>();
+        JsonObject componentUnknown = ReflectionResult(null, "The type is not a component.");
+        JsonObject typeResult = ReflectionResult(TypeDefinition(Alignment, "Alignment",
+            isValueType: true, isEnum: true, baseType: TypeRef("[mscorlib]System.Enum")));
+        await using var server = FakeWorkbenchServer.Start(pipeName, (s, ct) =>
+            Wb.ServeAsync(s, request => request.Method switch
+            {
+                RpcMethods.ReflectionComponent => Wb.Response(request.Id, componentUnknown.ToJsonString()),
+                RpcMethods.ReflectionType => Wb.Response(request.Id, typeResult.ToJsonString()),
+                _ => Unexpected(request),
+            }, ct, log));
+        await using var client = new WorkbenchResoniteClient();
+        await client.ConnectAsync(Wb.PipeUri(pipeName), Wb.ConnectTimeout, guard.Token);
+
+        var ex = await Assert.ThrowsAsync<RLoopException>(
+            () => client.DescribeComponentTypeAsync(Alignment, guard.Token));
+
         Assert.Equal("COMPONENT_TYPE_NOT_FOUND", ex.Code);
         Assert.Equal(ExitCodes.NotFound, ex.ExitCode);
+        Assert.Equal(Alignment, ex.Context["type"]);
+        Assert.Contains("not a component", ex.Message);
+        Assert.Equal(
+            new[] { RpcMethods.ReflectionComponent, RpcMethods.ReflectionType },
+            log.Select(r => r.Method).ToArray());
+    }
+
+    [Fact]
+    public async Task DescribeComponentTypeAsync_UnknownButKnownComponent_ThrowsUnavailable()
+    {
+        // reflection.type confirms the type exists AND is a component, yet reflection.component
+        // could not read its definition: WORKBENCH_UNAVAILABLE, not NOT_FOUND.
+        string pipeName = Wb.NewPipeName();
+        using var guard = new CancellationTokenSource(Wb.GuardTimeout);
+        var log = new ConcurrentQueue<RpcRequest>();
+        JsonObject componentUnknown = ReflectionResult(null, UnknownDefinitionReason(GradientStrip));
+        JsonObject typeResult = ReflectionResult(TypeDefinition(GradientStrip, "GradientStripTexture",
+            isComponent: true, baseType: TypeRef("[FrooxEngine]FrooxEngine.Component")));
+        await using var server = FakeWorkbenchServer.Start(pipeName, (s, ct) =>
+            Wb.ServeAsync(s, request => request.Method switch
+            {
+                RpcMethods.ReflectionComponent => Wb.Response(request.Id, componentUnknown.ToJsonString()),
+                RpcMethods.ReflectionType => Wb.Response(request.Id, typeResult.ToJsonString()),
+                _ => Unexpected(request),
+            }, ct, log));
+        await using var client = new WorkbenchResoniteClient();
+        await client.ConnectAsync(Wb.PipeUri(pipeName), Wb.ConnectTimeout, guard.Token);
+
+        var ex = await Assert.ThrowsAsync<RLoopException>(
+            () => client.DescribeComponentTypeAsync(GradientStrip, guard.Token));
+
+        Assert.Equal("WORKBENCH_UNAVAILABLE", ex.Code);
+        Assert.Equal(ExitCodes.ConnectionFailed, ex.ExitCode);
+        Assert.Contains("Object reference not set to an instance of an object.", ex.Message);
+        Assert.Equal(
+            new[] { RpcMethods.ReflectionComponent, RpcMethods.ReflectionType },
+            log.Select(r => r.Method).ToArray());
+    }
+
+    [Fact]
+    public async Task DescribeComponentTypeAsync_TypeAnswerMissingIsComponent_ThrowsMalformed()
+    {
+        // The isComponent probe answers "known" but without the isComponent flag the mapper
+        // requires: a malformed response, not "unknown" and not "not a component".
+        string pipeName = Wb.NewPipeName();
+        using var guard = new CancellationTokenSource(Wb.GuardTimeout);
+        JsonObject componentUnknown = ReflectionResult(null, "no definition");
+        JsonObject typeResult = ReflectionResult(new JsonObject { ["fullTypeName"] = GradientStrip });
+        await using var server = FakeWorkbenchServer.Start(pipeName, (s, ct) =>
+            Wb.ServeAsync(s, request => request.Method switch
+            {
+                RpcMethods.ReflectionComponent => Wb.Response(request.Id, componentUnknown.ToJsonString()),
+                RpcMethods.ReflectionType => Wb.Response(request.Id, typeResult.ToJsonString()),
+                _ => Unexpected(request),
+            }, ct));
+        await using var client = new WorkbenchResoniteClient();
+        await client.ConnectAsync(Wb.PipeUri(pipeName), Wb.ConnectTimeout, guard.Token);
+
+        var ex = await Assert.ThrowsAsync<RLoopException>(
+            () => client.DescribeComponentTypeAsync(GradientStrip, guard.Token));
+
+        Assert.Equal("WORKBENCH_UNAVAILABLE", ex.Code);
+        Assert.Contains("malformed", ex.Message);
+    }
+
+    [Fact]
+    public async Task DescribeComponentTypeAsync_ShortNameResolvedThenUnknown_ThrowsUnavailable()
+    {
+        // The search uniquely resolves the short name, yet reflection.component still answers
+        // "unknown" and the isComponent probe cannot describe the type either: the resolved
+        // type exists, so the failure is WORKBENCH_UNAVAILABLE carrying the component reason.
+        string pipeName = Wb.NewPipeName();
+        using var guard = new CancellationTokenSource(Wb.GuardTimeout);
+        var log = new ConcurrentQueue<RpcRequest>();
+        JsonObject search = SearchResult([Slider]);
+        JsonObject componentUnknown = ReflectionResult(null, "component definition blew up");
+        JsonObject typeUnknown = ReflectionResult(null, "type definition blew up");
+        await using var server = FakeWorkbenchServer.Start(pipeName, (s, ct) =>
+            Wb.ServeAsync(s, request => request.Method switch
+            {
+                RpcMethods.ReflectionSearch => Wb.Response(request.Id, search.ToJsonString()),
+                RpcMethods.ReflectionComponent => Wb.Response(request.Id, componentUnknown.ToJsonString()),
+                RpcMethods.ReflectionType => Wb.Response(request.Id, typeUnknown.ToJsonString()),
+                _ => Unexpected(request),
+            }, ct, log));
+        await using var client = new WorkbenchResoniteClient();
+        await client.ConnectAsync(Wb.PipeUri(pipeName), Wb.ConnectTimeout, guard.Token);
+
+        var ex = await Assert.ThrowsAsync<RLoopException>(
+            () => client.DescribeComponentTypeAsync("Slider", guard.Token));
+
+        Assert.Equal("WORKBENCH_UNAVAILABLE", ex.Code);
+        Assert.Equal(ExitCodes.ConnectionFailed, ex.ExitCode);
+        Assert.Contains("component definition blew up", ex.Message);
+        Assert.DoesNotContain("type definition blew up", ex.Message);
+        Assert.Equal(
+            new[] { RpcMethods.ReflectionSearch, RpcMethods.ReflectionComponent, RpcMethods.ReflectionType },
+            log.Select(r => r.Method).ToArray());
+        Assert.Equal(Slider, Param(log.Skip(1).First(), "componentType"));
+        Assert.Equal(Slider, Param(log.Last(), "typeName"));
+    }
+
+    [Fact]
+    public async Task DescribeComponentTypeAsync_MissingValue_ThrowsMalformedNotUnknown()
+    {
+        // A reflection.component result with no "value" property is malformed, not "unknown":
+        // it fails like any other wire-contract violation, and its null meta ids are not
+        // preserved the way a real "unknown" answer preserves them.
+        string pipeName = Wb.NewPipeName();
+        using var guard = new CancellationTokenSource(Wb.GuardTimeout);
+        await using var server = FakeWorkbenchServer.Start(pipeName, (s, ct) =>
+            Wb.ServeAsync(s, request => request.Method switch
+            {
+                RpcMethods.ReflectionComponent => Wb.Response(request.Id,
+                    """{"provenance":null}""", connectionId: null, sessionId: null),
+                _ => Unexpected(request),
+            }, ct));
+        await using var client = new WorkbenchResoniteClient();
+        await client.ConnectAsync(Wb.PipeUri(pipeName), Wb.ConnectTimeout, guard.Token);
+
+        var ex = await Assert.ThrowsAsync<RLoopException>(
+            () => client.DescribeComponentTypeAsync(GradientStrip, guard.Token));
+
+        Assert.Equal("WORKBENCH_UNAVAILABLE", ex.Code);
+        Assert.Contains("malformed", ex.Message);
+        // The response was not an "unknown" answer, so its null ids are applied normally:
+        // the connection identity the handshake reported is not kept.
+        Assert.Null(client.Meta.ConnectionId);
+        Assert.Null(client.Meta.SessionId);
     }
 
     [Fact]
@@ -1305,8 +1471,10 @@ public sealed class WorkbenchReadTests
     }
 
     [Fact]
-    public async Task DescribeTypeAsync_UnknownFullName_ThrowsTypeNotFound()
+    public async Task DescribeTypeAsync_UnknownFullName_ThrowsUnavailable()
     {
+        // An "unknown" reflection.type answer is not proof the type is missing; an
+        // [Assembly]-qualified name is never resolved through search, so it fails right away.
         string pipeName = Wb.NewPipeName();
         using var guard = new CancellationTokenSource(Wb.GuardTimeout);
         var log = new ConcurrentQueue<RpcRequest>();
@@ -1319,11 +1487,100 @@ public sealed class WorkbenchReadTests
         var ex = await Assert.ThrowsAsync<RLoopException>(
             () => client.DescribeTypeAsync("[FrooxEngine]FrooxEngine.Missing", guard.Token));
 
-        Assert.Equal("TYPE_NOT_FOUND", ex.Code);
-        Assert.Equal(ExitCodes.NotFound, ex.ExitCode);
-        // A [Assembly]-qualified name is never resolved through search.
+        Assert.Equal("WORKBENCH_UNAVAILABLE", ex.Code);
+        Assert.Equal(ExitCodes.ConnectionFailed, ex.ExitCode);
+        Assert.Contains("[FrooxEngine]FrooxEngine.Missing", ex.Message);
+        Assert.Contains("The type is not known to this session.", ex.Message);
         Assert.Single(log);
         Assert.Equal(RpcMethods.ReflectionType, log.First().Method);
+    }
+
+    [Fact]
+    public async Task DescribeTypeAsync_UnknownResultNullMeta_ThrowsUnavailableKeepsIdentity()
+    {
+        // Same "unknown" contract on reflection.type: WORKBENCH_UNAVAILABLE, and the
+        // identity-less answer does not count as a connection change.
+        string pipeName = Wb.NewPipeName();
+        using var guard = new CancellationTokenSource(Wb.GuardTimeout);
+        JsonObject unknown = ReflectionResult(null, "boom");
+        await using var server = FakeWorkbenchServer.Start(pipeName, (s, ct) =>
+            Wb.ServeAsync(s, request => request.Method switch
+            {
+                RpcMethods.ReflectionType => Wb.Response(request.Id, unknown.ToJsonString(),
+                    connectionId: null, sessionId: null),
+                _ => Unexpected(request),
+            }, ct));
+        await using var client = new WorkbenchResoniteClient();
+        await client.ConnectAsync(Wb.PipeUri(pipeName), Wb.ConnectTimeout, guard.Token);
+
+        var ex = await Assert.ThrowsAsync<RLoopException>(
+            () => client.DescribeTypeAsync("[FrooxEngine]FrooxEngine.X", guard.Token));
+
+        Assert.Equal("WORKBENCH_UNAVAILABLE", ex.Code);
+        Assert.Equal(ExitCodes.ConnectionFailed, ex.ExitCode);
+        Assert.Contains("boom", ex.Message);
+        Assert.Equal("conn-1", client.Meta.ConnectionId);
+        Assert.Equal("sess-1", client.Meta.SessionId);
+    }
+
+    [Fact]
+    public async Task DescribeTypeAsync_ShortNameResolvedThenUnknown_ThrowsUnavailable()
+    {
+        // reflection.type is "unknown" for the short name; the search resolves it uniquely,
+        // but the retried answer is still "unknown" -> WORKBENCH_UNAVAILABLE.
+        string pipeName = Wb.NewPipeName();
+        using var guard = new CancellationTokenSource(Wb.GuardTimeout);
+        var log = new ConcurrentQueue<RpcRequest>();
+        JsonObject unknown = ReflectionResult(null, "boom");
+        JsonObject search = SearchResult([Slider]);
+        await using var server = FakeWorkbenchServer.Start(pipeName, (s, ct) =>
+            Wb.ServeAsync(s, request => request.Method switch
+            {
+                RpcMethods.ReflectionType => Wb.Response(request.Id, unknown.ToJsonString()),
+                RpcMethods.ReflectionSearch => Wb.Response(request.Id, search.ToJsonString()),
+                _ => Unexpected(request),
+            }, ct, log));
+        await using var client = new WorkbenchResoniteClient();
+        await client.ConnectAsync(Wb.PipeUri(pipeName), Wb.ConnectTimeout, guard.Token);
+
+        var ex = await Assert.ThrowsAsync<RLoopException>(
+            () => client.DescribeTypeAsync("Slider", guard.Token));
+
+        Assert.Equal("WORKBENCH_UNAVAILABLE", ex.Code);
+        Assert.Contains("boom", ex.Message);
+        Assert.Equal(
+            new[] { RpcMethods.ReflectionType, RpcMethods.ReflectionSearch, RpcMethods.ReflectionType },
+            log.Select(r => r.Method).ToArray());
+    }
+
+    [Fact]
+    public async Task DescribeTypeAsync_ShortNameNotFound_ThrowsTypeNotFound()
+    {
+        // A short name the search cannot resolve keeps the NotFound contract: the empty search
+        // result is positive evidence, unlike an "unknown" reflection.type answer.
+        string pipeName = Wb.NewPipeName();
+        using var guard = new CancellationTokenSource(Wb.GuardTimeout);
+        var log = new ConcurrentQueue<RpcRequest>();
+        JsonObject unknown = ReflectionResult(null, "boom");
+        JsonObject search = SearchResult(["[FrooxEngine]FrooxEngine.SliderThing"]);
+        await using var server = FakeWorkbenchServer.Start(pipeName, (s, ct) =>
+            Wb.ServeAsync(s, request => request.Method switch
+            {
+                RpcMethods.ReflectionType => Wb.Response(request.Id, unknown.ToJsonString()),
+                RpcMethods.ReflectionSearch => Wb.Response(request.Id, search.ToJsonString()),
+                _ => Unexpected(request),
+            }, ct, log));
+        await using var client = new WorkbenchResoniteClient();
+        await client.ConnectAsync(Wb.PipeUri(pipeName), Wb.ConnectTimeout, guard.Token);
+
+        var ex = await Assert.ThrowsAsync<RLoopException>(
+            () => client.DescribeTypeAsync("Missing", guard.Token));
+
+        Assert.Equal("TYPE_NOT_FOUND", ex.Code);
+        Assert.Equal(ExitCodes.NotFound, ex.ExitCode);
+        Assert.Equal(
+            new[] { RpcMethods.ReflectionType, RpcMethods.ReflectionSearch },
+            log.Select(r => r.Method).ToArray());
     }
 
     [Fact]

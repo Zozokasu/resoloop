@@ -159,16 +159,29 @@ public sealed class WorkbenchReflectionMapperTests
     }
 
     [Fact]
-    public void MapComponentType_Unknown_ThrowsComponentTypeNotFound()
+    public void MapComponentType_Unknown_ThrowsUnavailable()
     {
+        // "Unknown" is not "no such type": the Workbench could not read the definition.
         const string json = """{ "value": null, "provenance": null, "unknownReason": "No session is connected." }""";
 
         var ex = Throws(() => WorkbenchReflectionMapper.MapComponentType(Json(json), "Nope"));
 
-        Assert.Equal("COMPONENT_TYPE_NOT_FOUND", ex.Code);
-        Assert.Equal(ExitCodes.NotFound, ex.ExitCode);
-        Assert.Equal("Nope", ex.Context["type"]);
+        Assert.Equal("WORKBENCH_UNAVAILABLE", ex.Code);
+        Assert.Equal(ExitCodes.ConnectionFailed, ex.ExitCode);
+        Assert.Contains("Nope", ex.Message);
         Assert.Contains("No session is connected.", ex.Message);
+    }
+
+    [Theory]
+    [InlineData("""{}""")]
+    [InlineData("""{ "provenance": null }""")]
+    public void MapComponentType_MissingValue_ThrowsMalformed(string json)
+    {
+        // A result with no "value" property is malformed, not "unknown".
+        var ex = Throws(() => WorkbenchReflectionMapper.MapComponentType(Json(json), "Nope"));
+
+        Assert.Equal("WORKBENCH_UNAVAILABLE", ex.Code);
+        Assert.Contains("malformed", ex.Message);
     }
 
     [Fact]
@@ -181,13 +194,13 @@ public sealed class WorkbenchReflectionMapperTests
     }
 
     [Fact]
-    public void MemberNames_Unknown_ThrowsComponentTypeNotFound()
+    public void MemberNames_Unknown_ThrowsUnavailable()
     {
         const string json = """{ "value": null, "unknownReason": "gone" }""";
 
         var ex = Throws(() => WorkbenchReflectionMapper.MemberNames(Json(json), "Nope"));
 
-        Assert.Equal("COMPONENT_TYPE_NOT_FOUND", ex.Code);
+        Assert.Equal("WORKBENCH_UNAVAILABLE", ex.Code);
     }
 
     [Fact]
@@ -205,19 +218,63 @@ public sealed class WorkbenchReflectionMapperTests
     }
 
     [Fact]
-    public void MemberDefinitions_Unknown_ThrowsComponentTypeNotFound()
+    public void MemberDefinitions_Unknown_ThrowsUnavailable()
     {
         const string json = """{ "value": null, "unknownReason": "gone" }""";
 
         var ex = Throws(() => WorkbenchReflectionMapper.MemberDefinitions(Json(json), "Nope"));
 
-        Assert.Equal("COMPONENT_TYPE_NOT_FOUND", ex.Code);
+        Assert.Equal("WORKBENCH_UNAVAILABLE", ex.Code);
+    }
+
+    [Fact]
+    public void MemberDefinitions_GenericParameterValueType_NotInFieldValueTypes()
+    {
+        // A field whose valueType is a generic parameter reference ("T") is not a CLR type
+        // name: it stays out of FieldValueTypes like a generic valueType does.
+        const string json = """
+            {
+              "value": {
+                "members": {
+                  "Value": { "name": "Value", "kind": "Field", "wrapperType": null,
+                    "valueType": { "type": "T", "isGenericParameter": true, "genericArguments": [] },
+                    "targetType": null, "element": null },
+                  "Count": { "name": "Count", "kind": "Field", "wrapperType": null,
+                    "valueType": { "type": "[mscorlib]System.Int32", "isGenericParameter": false, "genericArguments": [] },
+                    "targetType": null, "element": null }
+                }
+              },
+              "provenance": null, "unknownReason": null
+            }
+            """;
+
+        WorkbenchReflectionMapper.DeclaredMembers declared =
+            WorkbenchReflectionMapper.MemberDefinitions(Json(json), "[FrooxEngine]FrooxEngine.FieldDrive<>");
+
+        Assert.Equal(new[] { "Value", "Count" }, declared.Names);
+        Assert.Equal(new Dictionary<string, string> { ["Count"] = "System.Int32" },
+            declared.FieldValueTypes);
+    }
+
+    [Fact]
+    public void MemberDefinitions_MissingValue_ThrowsMalformed()
+    {
+        var ex = Throws(() => WorkbenchReflectionMapper.MemberDefinitions(
+            Json("""{ "unknownReason": "gone" }"""), "Nope"));
+
+        Assert.Equal("WORKBENCH_UNAVAILABLE", ex.Code);
+        Assert.Contains("malformed", ex.Message);
     }
 
     [Theory]
     [InlineData("""{"kind":"Field","valueType":{"type":"[Elements.Core]Elements.Core.float3","isGenericParameter":false,"genericArguments":[]}}""", "Elements.Core.float3")]
     [InlineData("""{"kind":"Field","valueType":{"type":"`1","isGenericParameter":false,"genericArguments":[]}}""", null)]
     [InlineData("""{"kind":"Field","valueType":{"type":"[mscorlib]System.Nullable<>","isGenericParameter":false,"genericArguments":[{"type":"[mscorlib]System.Single","isGenericParameter":false,"genericArguments":[]}]}}""", null)]
+    [InlineData("""{"kind":"Field","valueType":{"type":"T","isGenericParameter":true,"genericArguments":[]}}""", null)]
+    [InlineData("""{"kind":"Field","valueType":{"type":"T","isGenericParameter":true}}""", null)]
+    [InlineData("""{"kind":"Field","valueType":{"type":"T","isGenericParameter":false,"genericArguments":[]}}""", "T")]
+    [InlineData("""{"kind":"Field","valueType":{"type":"T","isGenericParameter":null}}""", "T")]
+    [InlineData("""{"kind":"Field","valueType":{"type":"T"}}""", "T")]
     [InlineData("""{"kind":"Reference","valueType":{"type":"[mscorlib]System.Single","isGenericParameter":false,"genericArguments":[]}}""", null)]
     [InlineData("""{"kind":"Field","valueType":null}""", null)]
     public void PlainFieldValueType_OnlyPlainFieldTypesConvert(string definition, string? expected) =>
@@ -418,15 +475,37 @@ public sealed class WorkbenchReflectionMapperTests
     }
 
     [Fact]
-    public void MapType_Unknown_ThrowsTypeNotFound()
+    public void MapType_Unknown_ThrowsUnavailable()
     {
+        // "Unknown" is not "no such type": the Workbench could not read the definition.
         const string json = """{ "value": null, "provenance": null, "unknownReason": "session closed" }""";
 
         var ex = Throws(() => WorkbenchReflectionMapper.MapType(Json(json), null, "FrooxEngine.Missing"));
 
-        Assert.Equal("TYPE_NOT_FOUND", ex.Code);
-        Assert.Equal(ExitCodes.NotFound, ex.ExitCode);
-        Assert.Equal("FrooxEngine.Missing", ex.Context["type"]);
+        Assert.Equal("WORKBENCH_UNAVAILABLE", ex.Code);
+        Assert.Equal(ExitCodes.ConnectionFailed, ex.ExitCode);
+        Assert.Contains("FrooxEngine.Missing", ex.Message);
+        Assert.Contains("session closed", ex.Message);
+    }
+
+    [Fact]
+    public void MapType_MissingValue_ThrowsMalformed()
+    {
+        var ex = Throws(() => WorkbenchReflectionMapper.MapType(
+            Json("""{ "provenance": null }"""), null, "FrooxEngine.Missing"));
+
+        Assert.Equal("WORKBENCH_UNAVAILABLE", ex.Code);
+        Assert.Contains("malformed", ex.Message);
+    }
+
+    [Fact]
+    public void MapSearch_MissingValue_ThrowsMalformed()
+    {
+        var ex = Throws(() => WorkbenchReflectionMapper.MapSearch(
+            Json("""{ "unknownReason": "No session is connected." }"""), out _));
+
+        Assert.Equal("WORKBENCH_UNAVAILABLE", ex.Code);
+        Assert.Contains("malformed", ex.Message);
     }
 
     [Fact]

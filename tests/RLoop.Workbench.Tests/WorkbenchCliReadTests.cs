@@ -695,6 +695,9 @@ public sealed class WorkbenchCliReadTests : IDisposable
     [Fact]
     public async Task TypeDescribe_NonComponent_ReportsTypeAndEnum()
     {
+        // reflection.component answers "unknown" for a non-component type; the client then
+        // probes reflection.type, which proves the type exists and is not a component ->
+        // COMPONENT_TYPE_NOT_FOUND, so `type describe` falls back to DescribeTypeAsync.
         string pipeName = Wb.NewPipeName();
         var log = new ConcurrentQueue<RpcRequest>();
         await using var server = Serve(pipeName, log);
@@ -703,7 +706,7 @@ public sealed class WorkbenchCliReadTests : IDisposable
 
         Assert.Equal(ExitCodes.Success, exit);
         Assert.Equal(
-            new[] { RpcMethods.ReflectionComponent, RpcMethods.ReflectionType, RpcMethods.ReflectionEnum },
+            new[] { RpcMethods.ReflectionComponent, RpcMethods.ReflectionType, RpcMethods.ReflectionType, RpcMethods.ReflectionEnum },
             log.Select(r => r.Method).ToArray());
         JsonElement data = report.GetProperty("data");
         Assert.Equal(Alignment, data.GetProperty("fullTypeName").GetString());
@@ -712,6 +715,32 @@ public sealed class WorkbenchCliReadTests : IDisposable
         JsonElement values = data.GetProperty("enumValues");
         Assert.Equal(2, values.GetProperty("Near").GetInt64());
         Assert.Equal(8, values.GetProperty("Far").GetInt64());
+    }
+
+    [Fact]
+    public async Task TypeDescribe_BothReflectionsUnknown_FailsUnavailableWithoutFallback()
+    {
+        // Both reflection.component and reflection.type answer "unknown": the type cannot be
+        // proven absent, so `type describe` fails with WORKBENCH_UNAVAILABLE and never
+        // reaches the DescribeTypeAsync fallback a second time.
+        string pipeName = Wb.NewPipeName();
+        var log = new ConcurrentQueue<RpcRequest>();
+        await using var server = Serve(pipeName, log, request => request.Method switch
+        {
+            RpcMethods.ReflectionComponent or RpcMethods.ReflectionType => Wb.Response(request.Id,
+                ReflectionResult(null, "cannot read any definition").ToJsonString(),
+                connectionId: null, sessionId: null),
+            _ => Respond(request),
+        });
+
+        var (exit, report) = await RunCliAsync(WbArgs(pipeName, "type", "describe", GradientStrip));
+
+        Assert.Equal(ExitCodes.ConnectionFailed, exit);
+        JsonElement error = report.GetProperty("error");
+        Assert.Equal("WORKBENCH_UNAVAILABLE", error.GetProperty("code").GetString());
+        Assert.Contains("cannot read any definition", error.GetProperty("message").GetString()!);
+        Assert.Equal(new[] { RpcMethods.ReflectionComponent, RpcMethods.ReflectionType },
+            log.Select(r => r.Method).ToArray());
     }
 
     [Fact]

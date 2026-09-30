@@ -30,7 +30,7 @@ internal static class WorkbenchReflectionMapper
         return names;
     }
 
-    /// <summary>reflection.component result -> ComponentTypeInfo. Unknown -> COMPONENT_TYPE_NOT_FOUND (NotFound).</summary>
+    /// <summary>reflection.component result -> ComponentTypeInfo. Unknown -> WORKBENCH_UNAVAILABLE.</summary>
     public static ComponentTypeInfo MapComponentType(JsonElement reflectionResult, string requestedType)
     {
         JsonElement value = WireJson.Object(ComponentValue(reflectionResult, requestedType), "component type definition");
@@ -70,7 +70,7 @@ internal static class WorkbenchReflectionMapper
         IReadOnlyList<string> Names,
         IReadOnlyDictionary<string, string> FieldValueTypes);
 
-    /// <summary>reflection.component result -> declared member names + field value types. Unknown -> COMPONENT_TYPE_NOT_FOUND.</summary>
+    /// <summary>reflection.component result -> declared member names + field value types. Unknown -> WORKBENCH_UNAVAILABLE.</summary>
     public static DeclaredMembers MemberDefinitions(JsonElement reflectionResult, string requestedType)
     {
         var names = new List<string>();
@@ -92,13 +92,17 @@ internal static class WorkbenchReflectionMapper
     /// from the member definition's valueType TypeReference by dropping the "[Assembly]"
     /// prefix. Only field definitions with a plain, non-generic valueType convert: a rendered
     /// name containing '&lt;' or '`' (generics, nullable-style arity names) returns null
-    /// instead of guessing, and so do non-field members and missing valueTypes.
+    /// instead of guessing, and so do non-field members, missing valueTypes, and generic
+    /// parameter references ("T" is a parameter name, not a CLR type name).
     /// </summary>
     public static string? PlainFieldValueType(JsonElement memberDefinition)
     {
         if (memberDefinition.ValueKind != JsonValueKind.Object
             || !"field".Equals(WireJson.OptionalString(memberDefinition, "kind"), StringComparison.OrdinalIgnoreCase)
             || WireJson.OptionalObject(memberDefinition, "valueType", "member definition") is not { } valueType)
+            return null;
+        if (valueType.TryGetProperty("isGenericParameter", out JsonElement genericParameter)
+            && genericParameter.ValueKind == JsonValueKind.True)
             return null;
         string rendered = Render(valueType);
         return rendered.IndexOf('<') < 0 && rendered.IndexOf('`') < 0 ? StripAssembly(rendered) : null;
@@ -180,22 +184,36 @@ internal static class WorkbenchReflectionMapper
             genericParameters, interfaces, enumValues, isFlags);
     }
 
+    // The wire has no "the type does not exist" shape: an "unknown" answer only means the
+    // Workbench could not read the definition, so it is WORKBENCH_UNAVAILABLE, not NotFound.
     private static JsonElement ComponentValue(JsonElement reflectionResult, string requestedType) =>
         Value(reflectionResult, "component type definition", reason =>
-            WorkbenchErrors.NotFound("COMPONENT_TYPE_NOT_FOUND",
-                $"Component type '{requestedType}' was not found{Reason(reason)}",
-                new Dictionary<string, object?> { ["type"] = requestedType }));
+            WorkbenchErrors.Unavailable(
+                $"The Workbench could not describe component type '{requestedType}' " +
+                $"(reflection.component returned no definition): {ReasonOrNone(reason)}; " +
+                "an \"unknown\" answer is not proof that the type does not exist. " +
+                "Retry, or use --backend link for this type."));
 
     private static JsonElement TypeValue(JsonElement reflectionResult, string requestedType) =>
         Value(reflectionResult, "type definition", reason =>
-            WorkbenchErrors.NotFound("TYPE_NOT_FOUND",
-                $"Runtime type '{requestedType}' was not found{Reason(reason)}",
-                new Dictionary<string, object?> { ["type"] = requestedType }));
+            WorkbenchErrors.Unavailable(
+                $"The Workbench could not describe type '{requestedType}' " +
+                $"(reflection.type returned no definition): {ReasonOrNone(reason)}; " +
+                "an \"unknown\" answer is not proof that the type does not exist. " +
+                "Retry, or use --backend link for this type."));
 
+    /// <summary>
+    /// The value of a ReflectionResult&lt;T&gt;: the required "value" property when it is not
+    /// JSON null. A result with no "value" at all is malformed (same failure as a missing
+    /// required property); only a present-and-null value is "unknown".
+    /// </summary>
     private static JsonElement Value(JsonElement reflectionResult, string what, Func<string?, RLoopException> unknown)
     {
         JsonElement result = WireJson.Object(reflectionResult, what);
-        if (result.TryGetProperty("value", out JsonElement value) && value.ValueKind != JsonValueKind.Null)
+        if (!result.TryGetProperty("value", out JsonElement value))
+            throw WorkbenchErrors.Unavailable(
+                $"The Workbench returned a malformed {what} ('value' is missing).");
+        if (value.ValueKind != JsonValueKind.Null)
             return value;
         throw unknown(WireJson.OptionalString(result, "unknownReason"));
     }
@@ -203,12 +221,18 @@ internal static class WorkbenchReflectionMapper
     private static string Reason(string? unknownReason) =>
         string.IsNullOrEmpty(unknownReason) ? "." : $": {unknownReason}";
 
+    private static string ReasonOrNone(string? unknownReason) =>
+        string.IsNullOrEmpty(unknownReason) ? "the Workbench reported no reason" : unknownReason;
+
     private static (IReadOnlyDictionary<string, long> Values, bool IsFlags) EnumDefinition(
         JsonElement enumResult, string fullTypeName)
     {
         const string what = "enum definition";
         JsonElement result = WireJson.Object(enumResult, what);
-        if (!result.TryGetProperty("value", out JsonElement value) || value.ValueKind == JsonValueKind.Null)
+        if (!result.TryGetProperty("value", out JsonElement value))
+            throw WorkbenchErrors.Unavailable(
+                $"The Workbench returned a malformed {what} ('value' is missing).");
+        if (value.ValueKind == JsonValueKind.Null)
             throw WorkbenchErrors.Unavailable(
                 $"The Workbench could not report the enum values of '{fullTypeName}'" +
                 $"{Reason(WireJson.OptionalString(result, "unknownReason"))}");

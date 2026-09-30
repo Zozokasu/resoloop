@@ -28,6 +28,18 @@ public sealed partial class WorkbenchResoniteClient
     /// <summary>componentType → declared member names and field value types; only successful reflection.component answers are stored.</summary>
     private readonly ConcurrentDictionary<string, WorkbenchReflectionMapper.DeclaredMembers> _memberNames = new(StringComparer.Ordinal);
 
+    /// <summary>
+    /// The last non-null connectionId any response reported. The caches above describe that
+    /// connection's session, so a different non-null id drops them; a null id (a disconnect,
+    /// an "unknown" reflection answer) carries no identity and leaves the field untouched.
+    /// </summary>
+    private string? _lastKnownConnectionId;
+
+    // Caches may only be consulted while the latest response carried a connection identity:
+    // after a disconnect report they may describe the previous connection, and a read issued
+    // before the reconnect's first response would otherwise resolve ids against stale entries.
+    private bool ConnectionConfirmed => Meta.ConnectionId is not null;
+
     public async Task<SlotInfo> GetSlotAsync(string id, int depth, bool includeComponentData,
         CancellationToken cancellationToken = default)
     {
@@ -85,7 +97,24 @@ public sealed partial class WorkbenchResoniteClient
             : await ResolveComponentTypeAsync(type, operation, cancellationToken).ConfigureAwait(false);
         RpcResponse response = await CallReadAsync(RpcMethods.ReflectionComponent,
             new ReflectionComponentParams(resolved), operation, cancellationToken).ConfigureAwait(false);
-        return WorkbenchReflectionMapper.MapComponentType(ResultOf(response), type);
+        JsonElement result = ResultOf(response);
+        if (IsUnknown(result))
+        {
+            // The wire has no "not a component" shape, so reflection.type decides: a known
+            // non-component is positive evidence for COMPONENT_TYPE_NOT_FOUND (the CLI's
+            // `type describe` falls back to DescribeTypeAsync on it), while a component or
+            // another "unknown" answer means the Workbench cannot read a definition that
+            // exists - WORKBENCH_UNAVAILABLE via the mapper.
+            JsonElement typeResult = ResultOf(await CallReadAsync(RpcMethods.ReflectionType,
+                new ReflectionTypeParams(resolved), operation, cancellationToken).ConfigureAwait(false));
+            if (IsKnownNonComponent(typeResult))
+            {
+                throw WorkbenchErrors.NotFound("COMPONENT_TYPE_NOT_FOUND",
+                    $"Component type '{type}' was not found: '{resolved}' exists but is not a component.",
+                    new Dictionary<string, object?> { ["type"] = type });
+            }
+        }
+        return WorkbenchReflectionMapper.MapComponentType(result, type);
     }
 
     public async Task<Core.TypeInfo> DescribeTypeAsync(string type, CancellationToken cancellationToken = default)
@@ -174,7 +203,7 @@ public sealed partial class WorkbenchResoniteClient
         }
 
         // A reconnect invalidates everything learned from earlier responses.
-        InvalidateCachesIfConnectionChanged(Meta.ConnectionId, response.Meta.ConnectionId);
+        ObserveConnectionId(response.Meta.ConnectionId);
 
         // An "unknown" reflection.* answer reports no connection identity (meta.connectionId
         // and meta.sessionId are null): it means the Workbench could not describe the type,
@@ -198,18 +227,23 @@ public sealed partial class WorkbenchResoniteClient
     }
 
     /// <summary>
-    /// Clears the learned component-type and member-name caches when a response comes from a
-    /// different connection than the last one recorded; entries learned from the previous
-    /// session would misidentify components on the new one.
+    /// Records the connection a response came from and clears the learned component-type and
+    /// member-name caches when a different non-null id arrives; entries learned on one
+    /// connection would misidentify components on another. Null ids carry no identity and
+    /// never touch the field - the response after a disconnect tells whether the connection
+    /// actually changed.
     /// </summary>
-    private void InvalidateCachesIfConnectionChanged(string? previous, string? current)
+    private void ObserveConnectionId(string? connectionId)
     {
-        if (previous is not null && current is not null
-            && !string.Equals(previous, current, StringComparison.Ordinal))
+        if (connectionId is null)
+            return;
+        if (_lastKnownConnectionId is not null
+            && !string.Equals(_lastKnownConnectionId, connectionId, StringComparison.Ordinal))
         {
             _componentTypes.Clear();
             _memberNames.Clear();
         }
+        _lastKnownConnectionId = connectionId;
     }
 
     private WorkbenchRpcClient RequireClient() =>
@@ -226,11 +260,25 @@ public sealed partial class WorkbenchResoniteClient
             ? scope.GetString()
             : null;
 
-    /// <summary>A ReflectionResult&lt;T&gt; whose value is absent: the Workbench could not answer.</summary>
+    /// <summary>A ReflectionResult&lt;T&gt; whose "value" is present and JSON null: the Workbench could not answer. A result with no "value" at all is malformed, not unknown.</summary>
     private static bool IsUnknown(JsonElement reflectionResult) =>
         reflectionResult.ValueKind == JsonValueKind.Object
-        && (!reflectionResult.TryGetProperty("value", out JsonElement value)
-            || value.ValueKind == JsonValueKind.Null);
+        && reflectionResult.TryGetProperty("value", out JsonElement value)
+        && value.ValueKind == JsonValueKind.Null;
+
+    /// <summary>
+    /// Positive evidence from a reflection.type answer that the type exists but is not a
+    /// component. "Unknown" answers carry no evidence; a missing "value" is malformed, and a
+    /// missing or non-boolean isComponent is malformed too - the same contract
+    /// WorkbenchReflectionMapper.MapType enforces.
+    /// </summary>
+    private static bool IsKnownNonComponent(JsonElement reflectionTypeResult)
+    {
+        if (IsUnknown(reflectionTypeResult))
+            return false;
+        JsonElement value = WireJson.ObjectProperty(reflectionTypeResult, "value", "type definition");
+        return !WireJson.Bool(value, "isComponent", "type definition");
+    }
 
     /// <summary>
     /// True for a reflection.* response carrying an "unknown" result. Scoped to reflection.*:
@@ -306,7 +354,7 @@ public sealed partial class WorkbenchResoniteClient
         ReadOperation operation, CancellationToken cancellationToken)
     {
         if (!string.IsNullOrEmpty(componentType)) return componentType;
-        if (_componentTypes.TryGetValue(componentId, out string? known) && known.Length > 0) return known;
+        if (ConnectionConfirmed && _componentTypes.TryGetValue(componentId, out string? known) && known.Length > 0) return known;
 
         RpcResponse probe = await CallReadAsync(RpcMethods.MemberRead,
             new MemberReadParams(componentId, TypeProbeMember), operation, cancellationToken).ConfigureAwait(false);
@@ -326,14 +374,14 @@ public sealed partial class WorkbenchResoniteClient
     private async Task<WorkbenchReflectionMapper.DeclaredMembers> MemberDefinitionsAsync(
         string componentType, ReadOperation operation, CancellationToken cancellationToken)
     {
-        if (_memberNames.TryGetValue(componentType, out WorkbenchReflectionMapper.DeclaredMembers? cached))
+        if (ConnectionConfirmed && _memberNames.TryGetValue(componentType, out WorkbenchReflectionMapper.DeclaredMembers? cached))
             return cached;
         RpcResponse response = await CallReadAsync(RpcMethods.ReflectionComponent,
             new ReflectionComponentParams(componentType), operation, cancellationToken).ConfigureAwait(false);
         JsonElement result = ResultOf(response);
-        // An "unknown" reflection.component answer is not "no such type": the direct backend
-        // can still read the members, so report the Workbench's own reason as Unavailable
-        // (and cache nothing) instead of the mapper's COMPONENT_TYPE_NOT_FOUND.
+        // An "unknown" reflection.component answer is not "no such type": report the
+        // Workbench's own reason as Unavailable (and cache nothing) with a member-read
+        // specific message instead of the mapper's generic describe message.
         if (IsUnknown(result))
         {
             throw WorkbenchErrors.Unavailable(
