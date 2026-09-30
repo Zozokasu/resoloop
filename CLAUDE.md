@@ -28,8 +28,12 @@ ResoLoopは、AIコーディングエージェントがResoniteLink経由でReso
 ## エージェント体制
 
 `/ccg:go`の役割、決定権、検証、Devin利用の正本は[`docs/dev/agent-workflow.md`](docs/dev/agent-workflow.md)とする。
-Opusが目標・優先順位・機能間契約・charter・受け入れを決め、Sonnet担当（`.claude/agents/feature-manager.md`）が調査・実装・関連build/test・短い報告までを一貫して行い、agent/*ブランチでcommitする。
-Devin SWE-2 Max（`--model swe-2-max`）は大量の並列実装や長時間build/testで担当が選ぶ任意手段、Codexは高影響変更のレビューに限る。
+2026-10-01のユーザー決定により、Opus直属の一担当はCodex `gpt-6.1-sol`（high reasoning effort）とする。Opusが目標・優先順位・機能間契約・charter・受け入れ・merge判断を担い、担当が調査・実装・関連build/test・agent/*ブランチでcommit・短い報告までを一貫して行う。
+担当のcharter受領・報告・ブランチとcommit・ログ置き場の正本は[`.claude/agents/feature-manager.md`](.claude/agents/feature-manager.md)。Codexへ渡すcharterにこの規則へ従うよう書く。Sonnet subagentはCodexが使えないときの予備とする。
+OpusはBashのbackground実行で`codex exec --model gpt-6.1-sol -c model_reasoning_effort=high --sandbox workspace-write -C "<worktree slot>" -o "<報告ファイル>" - < "<charter.md>" &`を起動し、報告ファイルとslotのcommitで受け入れる（codex-cli 0.159.2確認済み）。`--effort`は存在せず、Windowsでは改行入り引数が1行目しか届かないためcharterはファイルから標準入力で渡す。
+worktreeのgit管理領域は本体repoの`.git`にあり、Codex sandboxはそこへ書けない（`--add-dir`でも不可）。Codex担当は未commitで残してcommitの分け方と件名を報告し、Opusが差分確認後に`agent/*`ブランチで代わりにcommitする。
+sandbox内はネットワークが遮断される。NuGet restoreやnpm ciはOpusが外で先に行い、charterでは`dotnet build ResoLoop.slnx --no-restore`を指示する。Devin SWE-2 Max（`--model swe-2-max`）はsandbox外で使える任意手段として残すが、Codex sandbox内からは起動できない。
+実装や修正ごとのCodexレビューは行わず、担当のbuild/testとOpusの差分確認で受け入れる。フェーズがおおむね完了した時点で全差分（開始commit..現main）の重めのCodexレビューを1回行う。重点は契約違反・state/所有・削除・公開JSONとエラーコードの互換性・並行性。対象commitを明示し、レビュー後の修正ラウンドはユーザーが決める。再レビューは指摘が大きく設計が変わった場合だけとし、軽微な修正には行わない。
 
 ## 完了の報告
 
