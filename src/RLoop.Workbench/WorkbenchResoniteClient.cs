@@ -65,6 +65,7 @@ public sealed partial class WorkbenchResoniteClient : IResoniteClient
         _componentTypes.Clear();
         _memberNames.Clear();
         RpcWelcome welcome = client.Welcome;
+        _lastKnownConnectionId = welcome.ActiveConnection?.ConnectionId;
         Handshake = new WorkbenchHandshakeInfo(
             welcome.ServerVersion,
             welcome.SelectedProtocol,
@@ -95,7 +96,7 @@ public sealed partial class WorkbenchResoniteClient : IResoniteClient
         }
 
         // Same rule as CallReadAsync: a reconnect invalidates everything learned earlier.
-        InvalidateCachesIfConnectionChanged(Meta.ConnectionId, response.Meta.ConnectionId);
+        ObserveConnectionId(response.Meta.ConnectionId);
         Meta = new WorkbenchConnectionMeta(
             response.Meta.ConnectionId, response.Meta.SessionId, response.Meta.WorldRevision, null);
 

@@ -88,6 +88,10 @@ public sealed class WorkbenchConnectionChangeCacheTests
             },
         };
 
+    /// <summary>A session.status result reporting the drop: state Disconnected and no connection payload.</summary>
+    private const string SessionDisconnected =
+        """{"state":"Disconnected","connection":null,"reconnectAttempt":0,"disconnectReason":"user"}""";
+
     private static JsonObject Readback(string componentId, string? componentType, string memberName,
         JsonNode? member, string? unknownReason = null) =>
         new()
@@ -307,5 +311,141 @@ public sealed class WorkbenchConnectionChangeCacheTests
         Assert.Equal(new[] { "Value", "Target" },
             log.Where(r => r.Method == RpcMethods.MemberRead)
                 .Select(r => Param(r, "memberName")).ToArray());
+    }
+
+    /// <summary>The drop-then-switch script: conn-a answers, the first session.status reports
+    /// Disconnected with no identity, and everything afterwards is conn-b.</summary>
+    private static Func<RpcRequest, RpcMessage> DisconnectThenSwitch(
+        JsonObject observe, Func<string> connectionId, Func<int> nextSessionStatusCall)
+    {
+        return request =>
+        {
+            if (request.Method == RpcMethods.SessionStatus && nextSessionStatusCall() == 1)
+            {
+                return Wb.Response(request.Id, SessionDisconnected,
+                    connectionId: null, sessionId: null);
+            }
+            return request.Method switch
+            {
+                RpcMethods.WorldObserve => Wb.Response(request.Id, observe.ToJsonString(), connectionId()),
+                RpcMethods.SessionStatus => Wb.Response(request.Id,
+                    SessionConnected(connectionId()).ToJsonString(), connectionId()),
+                RpcMethods.ReflectionComponent => Wb.Response(request.Id, ReflectionResult(
+                    Param(request, "componentType") == Grabbable
+                        ? GrabbableDefinition() : DialDefinition()).ToJsonString(), connectionId()),
+                RpcMethods.MemberRead => Wb.Response(request.Id, ReadbackFor(request,
+                        connectionId() == "conn-a" ? Grabbable : Dial,
+                        connectionId() == "conn-a" ? GrabbableMember : DialMember)
+                    .ToJsonString(), connectionId()),
+                _ => Unexpected(request),
+            };
+        };
+    }
+
+    [Fact]
+    public async Task GetSessionInfoAsync_DisconnectThenDifferentConnection_ClearsCaches()
+    {
+        // The disconnect answer carries a null meta.connectionId, so the conn-b answer must be
+        // compared against the last non-null id (conn-a), not the null the drop left behind.
+        string pipeName = Wb.NewPipeName();
+        using var guard = new CancellationTokenSource(Wb.GuardTimeout);
+        var log = new ConcurrentQueue<RpcRequest>();
+        var connectionId = "conn-a";
+        var sessionStatusCalls = 0;
+        JsonObject observe = ObserveResult(Snapshot("root", new JsonObject
+        {
+            ["root"] = SlotRecord("root", "Root", null, true, 0,
+                components: ComponentRefs(("comp-1", Grabbable))),
+        }));
+        await using var server = FakeWorkbenchServer.Start(pipeName, (s, ct) =>
+            Wb.ServeAsync(s, DisconnectThenSwitch(observe,
+                () => connectionId,
+                () =>
+                {
+                    if (++sessionStatusCalls == 1) connectionId = "conn-b";
+                    return sessionStatusCalls;
+                }), ct, log));
+        await using var client = new WorkbenchResoniteClient();
+        await client.ConnectAsync(Wb.PipeUri(pipeName), Wb.ConnectTimeout, guard.Token);
+
+        // Learn comp-1 -> Grabbable and Grabbable's member definitions on conn-a.
+        _ = await client.GetSlotAsync("root", 1, includeComponentData: true, guard.Token);
+        Assert.Equal("conn-a", client.Meta.ConnectionId);
+        log.Clear();
+
+        // The session drops; the answer reports no connection identity.
+        var ex = await Assert.ThrowsAsync<RLoopException>(() => client.GetSessionInfoAsync(guard.Token));
+        Assert.Equal("WORKBENCH_NOT_CONNECTED", ex.Code);
+        Assert.Null(client.Meta.ConnectionId);
+
+        // The next status answer is the new connection; conn-a's caches are already unusable.
+        _ = await client.GetSessionInfoAsync(guard.Token);
+        Assert.Equal("conn-b", client.Meta.ConnectionId);
+
+        ComponentInfo component = await client.GetComponentAsync("comp-1", guard.Token);
+
+        // On conn-b comp-1 is a Dial; only a fresh probe + reflection.component can answer that.
+        Assert.Equal(Dial, component.Type);
+        Assert.Equal("field", component.Members["Ratio"].Kind);
+        Assert.Equal(
+            new[]
+            {
+                RpcMethods.SessionStatus, RpcMethods.SessionStatus, RpcMethods.MemberRead,
+                RpcMethods.ReflectionComponent, RpcMethods.MemberRead,
+            },
+            log.Select(r => r.Method).ToArray());
+        Assert.Equal("__resoloop_type_probe__", Param(log.Skip(2).First(), "memberName"));
+        Assert.Equal(Dial, Param(log.Skip(3).First(), "componentType"));
+        Assert.Equal("Ratio", Param(log.Last(), "memberName"));
+    }
+
+    [Fact]
+    public async Task ReadPath_DisconnectThenDifferentConnection_ClearsCaches()
+    {
+        // Same drop, but no second session.status: the read path itself observes conn-b first,
+        // so the stale entries must not be consulted before the first conn-b answer arrives.
+        string pipeName = Wb.NewPipeName();
+        using var guard = new CancellationTokenSource(Wb.GuardTimeout);
+        var log = new ConcurrentQueue<RpcRequest>();
+        var connectionId = "conn-a";
+        var sessionStatusCalls = 0;
+        JsonObject observe = ObserveResult(Snapshot("root", new JsonObject
+        {
+            ["root"] = SlotRecord("root", "Root", null, true, 0,
+                components: ComponentRefs(("comp-1", Grabbable))),
+        }));
+        await using var server = FakeWorkbenchServer.Start(pipeName, (s, ct) =>
+            Wb.ServeAsync(s, DisconnectThenSwitch(observe,
+                () => connectionId,
+                () =>
+                {
+                    if (++sessionStatusCalls == 1) connectionId = "conn-b";
+                    return sessionStatusCalls;
+                }), ct, log));
+        await using var client = new WorkbenchResoniteClient();
+        await client.ConnectAsync(Wb.PipeUri(pipeName), Wb.ConnectTimeout, guard.Token);
+
+        _ = await client.GetSlotAsync("root", 1, includeComponentData: true, guard.Token);
+        Assert.Equal("conn-a", client.Meta.ConnectionId);
+        log.Clear();
+
+        var ex = await Assert.ThrowsAsync<RLoopException>(() => client.GetSessionInfoAsync(guard.Token));
+        Assert.Equal("WORKBENCH_NOT_CONNECTED", ex.Code);
+        Assert.Null(client.Meta.ConnectionId);
+
+        ComponentInfo component = await client.GetComponentAsync("comp-1", guard.Token);
+
+        Assert.Equal(Dial, component.Type);
+        Assert.Equal("field", component.Members["Ratio"].Kind);
+        Assert.Equal(
+            new[]
+            {
+                RpcMethods.SessionStatus, RpcMethods.MemberRead,
+                RpcMethods.ReflectionComponent, RpcMethods.MemberRead,
+            },
+            log.Select(r => r.Method).ToArray());
+        Assert.Equal("__resoloop_type_probe__", Param(log.Skip(1).First(), "memberName"));
+        Assert.Equal(Dial, Param(log.Skip(2).First(), "componentType"));
+        Assert.Equal("Ratio", Param(log.Last(), "memberName"));
     }
 }
