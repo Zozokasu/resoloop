@@ -68,7 +68,8 @@ public static class ReflectionQuery
     private static bool IsolatesToType(Exception ex) => ex switch
     {
         OperationCanceledException => false,
-        RLoopException coded => coded.ExitCode is not (ExitCodes.ConnectionFailed or ExitCodes.Timeout),
+        RLoopException coded => coded.ExitCode is not (ExitCodes.ConnectionFailed or ExitCodes.Timeout) &&
+            coded.Code is not ("CONNECTION_GENERATION_CHANGED" or "ALREADY_CONNECTED"),
         _ => true
     };
 
@@ -132,16 +133,27 @@ public static class ReflectionQuery
                         var expected = selection.Expect?.GetValueOrDefault(name);
                         IReadOnlyDictionary<string, long>? enumValues = null;
                         bool? isFlags = null;
+                        var enumUnavailable = false;
                         if (selection.Enums?.Contains(name, StringComparer.Ordinal) == true || expected?.EnumValues is not null)
                         {
                             if (member.ValueType is not { Length: > 0 }) local.Add(new(selection.Type, name, "ENUM_VALUE_TYPE_MISSING", "enum", member.Kind));
                             else
                             {
-                                var type = await ValueType(ReflectedMemberType.UnwrapNullable(member.ValueType), attempt > 0);
-                                diskUsed |= !type.Live;
-                                if (type.ObservedAt < observedAt) observedAt = type.ObservedAt;
-                                if (!type.Value.IsEnum) local.Add(new(selection.Type, name, "ENUM_EXPECTED", "enum", type.Value.FullTypeName));
-                                enumValues = type.Value.EnumValues; isFlags = type.Value.IsFlags;
+                                try
+                                {
+                                    var type = await ValueType(ReflectedMemberType.UnwrapNullable(member.ValueType), attempt > 0);
+                                    diskUsed |= !type.Live;
+                                    if (type.ObservedAt < observedAt) observedAt = type.ObservedAt;
+                                    if (!type.Value.IsEnum) local.Add(new(selection.Type, name, "ENUM_EXPECTED", "enum", type.Value.FullTypeName));
+                                    enumValues = type.Value.EnumValues; isFlags = type.Value.IsFlags;
+                                }
+                                catch (Exception ex) when (IsolatesToType(ex))
+                                {
+                                    // The component itself was resolved; only this member's value type is unreadable (unknown, not absent).
+                                    enumUnavailable = true; verified = false; status = ReflectionStatus.Unknown;
+                                    local.Add(new(selection.Type, name, "ENUM_VALUE_TYPE_UNAVAILABLE", "readable",
+                                        ex is RLoopException coded ? coded.Code + ": " + ex.Message : ex.GetType().Name + ": " + ex.Message));
+                                }
                             }
                         }
                         members.Add(new(name, member.Kind, member.MemberType, member.ValueType, member.TargetType, enumValues, isFlags));
@@ -150,6 +162,7 @@ public static class ReflectionQuery
                         Compare("MEMBER_KIND_MISMATCH", expected?.Kind, member.Kind);
                         Compare("VALUE_TYPE_MISMATCH", expected?.ValueType, member.ValueType);
                         Compare("TARGET_TYPE_MISMATCH", expected?.TargetType, member.TargetType);
+                        if (!enumUnavailable)
                         foreach (var pair in expected?.EnumValues ?? new Dictionary<string, long>())
                             if (enumValues is null || !enumValues.TryGetValue(pair.Key, out var actual) || actual != pair.Value)
                                 local.Add(new(selection.Type, name, "ENUM_VALUE_MISMATCH", pair.Key + "=" + pair.Value,

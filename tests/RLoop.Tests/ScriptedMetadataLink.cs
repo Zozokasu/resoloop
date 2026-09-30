@@ -13,6 +13,8 @@ internal sealed class ScriptedMetadataLink : IMetadataLink
     public readonly Dictionary<string, LinkTypeList> Categories = new(StringComparer.Ordinal);
     public readonly List<string> RequestedCategories = [];
     public readonly Dictionary<string, Link.ComponentDefinition> Definitions = new();
+    public readonly Dictionary<string, Link.TypeDefinition> TypeDefinitions = new();
+    public readonly Dictionary<string, Func<Task<LinkTypeList>>> CategoryFaults = new(StringComparer.Ordinal);
     public bool Connected = true;
     public int ConnectCalls;
     public int DefinitionCalls;
@@ -41,6 +43,7 @@ internal sealed class ScriptedMetadataLink : IMetadataLink
     public Task<LinkTypeList> GetComponentTypes(string category)
     {
         RequestedCategories.Add(category);
+        if (CategoryFaults.TryGetValue(category, out var fault)) return fault();
         return Task.FromResult(Categories.TryGetValue(category, out var list) ? list : new LinkTypeList(false, "Unknown category.", null, null));
     }
 
@@ -54,7 +57,9 @@ internal sealed class ScriptedMetadataLink : IMetadataLink
             : new LinkComponentDefinition(false, "Component type not found.", default!);
     }
 
-    public Task<LinkTypeDefinition> GetTypeDefinition(string type) => Task.FromResult(new LinkTypeDefinition(false, "Type not found.", default!));
+    public Task<LinkTypeDefinition> GetTypeDefinition(string type) => Task.FromResult(TypeDefinitions.TryGetValue(type, out var definition)
+        ? new LinkTypeDefinition(true, null, definition)
+        : new LinkTypeDefinition(false, "Type not found.", default!));
     public Task<LinkEnumDefinition> GetEnumDefinition(string type) => Task.FromResult(new LinkEnumDefinition(false, "Enum not found.", default!, false));
     public void Dispose() { }
 
