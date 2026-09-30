@@ -45,14 +45,33 @@ public sealed record ReflectionRequest(IReadOnlyList<ReflectionSelection> Types)
 public sealed record ReflectionDifference(string Type, string? Member, string Code, string? Expected, string? Actual);
 public sealed record ReflectionMember(string Name, string Kind, string? MemberType, string? ValueType, string? TargetType,
     IReadOnlyDictionary<string, long>? EnumValues, bool? IsFlags);
+/// <summary>
+/// <paramref name="Status"/> is "verified", "unknown" (the definition could not be read, so nothing is claimed about the type)
+/// or "notFound" (the type list positively lacks it). <paramref name="Verified"/> stays true only for "verified".
+/// </summary>
 public sealed record ReflectionSelectionResult(string RequestedType, string? FullTypeName, bool Verified,
-    string Source, DateTimeOffset? ObservedAt, IReadOnlyList<ReflectionMember> Members);
+    string Source, DateTimeOffset? ObservedAt, IReadOnlyList<ReflectionMember> Members, string Status = ReflectionStatus.Verified);
+
+public static class ReflectionStatus
+{
+    public const string Verified = "verified";
+    public const string Unknown = "unknown";
+    public const string NotFound = "notFound";
+}
 public sealed record ReflectionQueryReport(bool Complete, bool Verified, bool? Compatible, int RequestedTypes,
     int RequestedMembers, IReadOnlyList<ReflectionSelectionResult> Types, IReadOnlyList<ReflectionDifference> Differences,
     int DiskHits, int DiskMisses, int CacheWriteFailures, double ElapsedMs, ClientMetrics? Profile);
 
 public static class ReflectionQuery
 {
+    // Connection-level failures and cancellation affect every type, so they still abort the whole query.
+    private static bool IsolatesToType(Exception ex) => ex switch
+    {
+        OperationCanceledException => false,
+        RLoopException coded => coded.ExitCode is not (ExitCodes.ConnectionFailed or ExitCodes.Timeout),
+        _ => true
+    };
+
     public static async Task<ReflectionQueryReport> RunAsync(IResoniteClient client, ReflectionRequest request,
         ReflectionCacheOptions? cacheOptions = null, bool check = false, bool profile = false, CancellationToken ct = default)
     {
@@ -97,6 +116,7 @@ public static class ReflectionQuery
                 var local = new List<ReflectionDifference>();
                 var members = new List<ReflectionMember>();
                 var verified = true;
+                var status = ReflectionStatus.Verified;
                 var diskUsed = false;
                 DateTimeOffset? observedAt = null;
                 string? fullType = null;
@@ -137,10 +157,17 @@ public static class ReflectionQuery
                     }
                 }
                 catch (RLoopException ex) when (ex.ExitCode == ExitCodes.NotFound)
-                { verified = false; local.Add(new(selection.Type, null, ex.Code, "exists", ex.Message)); }
+                { verified = false; status = ReflectionStatus.NotFound; local.Add(new(selection.Type, null, ex.Code, "exists", ex.Message)); }
+                catch (Exception ex) when (IsolatesToType(ex))
+                {
+                    // One unreadable type must not abort the other selections; "unknown" is never reported as "absent".
+                    verified = false; status = ReflectionStatus.Unknown;
+                    local.Add(new(selection.Type, null, "TYPE_DEFINITION_UNAVAILABLE", "readable",
+                        ex is RLoopException coded ? coded.Code + ": " + ex.Message : ex.GetType().Name + ": " + ex.Message));
+                }
                 if (local.Count > 0 && diskUsed && attempt == 0) continue;
                 differences.AddRange(local);
-                results.Add(new(selection.Type, fullType, verified, diskUsed ? "version-cache" : fullType is null ? "unavailable" : "live", observedAt, members));
+                results.Add(new(selection.Type, fullType, verified, diskUsed ? "version-cache" : fullType is null ? "unavailable" : "live", observedAt, members, status));
                 break;
             }
         }

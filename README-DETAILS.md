@@ -416,6 +416,9 @@ resoloop logs --tail 200 --json
 
 - CONNECTION_FAILED: ResoniteLinkがworldで有効か、画面上のportとURLが同じか確認
 - COMPONENT_TYPE_NOT_FOUND: type searchの完全な結果を使う
+- COMPONENT_DEFINITION_UNREADABLE（終了コード7）: 型は型一覧に存在するが、ResoniteLinkがそのComponent型のmember定義を読めない（例: `GradientStripTexture`）。「不在」ではなく「不明」です。`type describe COMPONENT`（`--member` なし）は型情報（TypeInfo）に `membersAvailable: false`、`membersUnavailableCode`、`membersUnavailableReason` を加えて成功し、Componentのmemberを必要とする操作（`component add`/`set`、`apply`、`type describe --member`、`type query`/`type check` の当該型）はこのコードで拒否されます。実Componentのmember値は `inspect --members` で読めることがあります
+- TYPE_SEARCH_INCOMPLETE（終了コード7）: 型一覧が空または不完全で、型が存在するか判定できない（「不明」）。`COMPONENT_TYPE_NOT_FOUND` にはなりません。world読み込み完了後に再試行してください。`type describe` は型情報を返し `membersAvailable: false` を付けます
+- `type query` / `type check`: 型が読めない場合は全体を止めず、その型を `types[].status: "unknown"`（`differences` に `TYPE_DEFINITION_UNAVAILABLE`）として報告し、他の型は通常どおり返します。型一覧が完全なのに存在しない型だけが `status: "notFound"`（`COMPONENT_TYPE_NOT_FOUND`）です。`verified` は `status: "verified"` のときだけtrueです。接続断・timeoutは従来どおりコマンド全体を失敗させます
 - open generic: `resoloop type specialize '[FrooxEngine]FrooxEngine.DynamicValueVariable<>' string` でclosed genericを生成する
 - COMPONENT_MEMBER_NOT_FOUND: type describeでflattened memberを確認
 - VALUE_CONVERSION_FAILED: vector/quaternion/colorはJSON array/objectを優先し、エラーのtarget typeと受理例を確認
