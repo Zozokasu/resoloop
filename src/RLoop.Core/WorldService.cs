@@ -187,24 +187,12 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
         if (syntax.Kind == "slot")
         {
             var stable = StableReferenceResolver.ResolveSlot(stateFile, selector);
-            string id;
-            if (stable.SessionId == currentConnectionId && !string.IsNullOrWhiteSpace(stable.Id))
-            {
-                try { id = (await client.GetSlotAsync(stable.Id, 0, false, cancellationToken)).Id; }
-                catch (RLoopException ex) when (ex.Code is "SLOT_NOT_FOUND" or "RESONITE_OPERATION_FAILED")
-                {
-                    try { id = await ResolveSlotIdAsync(SlotPaths.Selector(stable.Path, stable.PathSegments), cancellationToken); }
-                    catch (RLoopException pathError) when (stable.RuntimeRelocatable &&
-                        pathError.Code is "SLOT_NOT_FOUND" or "SLOT_PATH_NOT_FOUND")
-                    { id = (await ResolveRelocatableSlotAsync(stateFile, stable, cancellationToken)).Id; }
-                }
-            }
-            else
-            {
-                id = stable.RuntimeRelocatable
-                    ? (await ResolveRelocatableSlotAsync(stateFile, stable, cancellationToken)).Id
-                    : await ResolveSlotIdAsync(SlotPaths.Selector(stable.Path, stable.PathSegments), cancellationToken);
-            }
+            // UniqueSessionId is a per-connection counter, not a world identity: the stored ID is only a
+            // hint and is reused after a live re-read proves it still is the owned Slot.
+            var id = await TryVerifyStoredSlotAsync(stateFile, stable, cancellationToken);
+            id ??= stable.RuntimeRelocatable
+                ? (await ResolveRelocatableSlotAsync(stateFile, stable, cancellationToken)).Id
+                : await ResolveSlotIdAsync(SlotPaths.Selector(stable.Path, stable.PathSegments), cancellationToken);
             return new ResolvedWorldReference(selector, id, "slot", "[FrooxEngine]FrooxEngine.Slot", stable.Path);
         }
 
@@ -216,10 +204,17 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
         try
         {
             ComponentInfo? component = null;
-            if (stableComponent.SessionId == currentConnectionId && !string.IsNullOrWhiteSpace(stableComponent.Id))
+            if (!string.IsNullOrWhiteSpace(stableComponent.Id))
             {
-                try { component = await ReadComponent(stableComponent.Id); }
-                catch (RLoopException ex) when (ex.Code is "COMPONENT_NOT_FOUND" or "RESONITE_OPERATION_FAILED") { }
+                // Reuse the stored ID only when the live Component still has the recorded type, member names and identity values.
+                try
+                {
+                    var stored = await ReadComponent(stableComponent.Id);
+                    if (StableComponentCandidates([new ComponentSummary(stored.Id, stored.Type, stored.Members)],
+                            stableComponent.Type, null, stableComponent.MemberNames, stableComponent.IdentityValues).Length == 1)
+                        component = stored;
+                }
+                catch (Exception ex) when (ex is RLoopException { Code: "COMPONENT_NOT_FOUND" or "RESONITE_OPERATION_FAILED" } or KeyNotFoundException) { }
             }
             if (component is null)
             {
@@ -275,6 +270,32 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
         finally
         {
             if (firstVisit) resolvingComponents.Remove(stableComponent.Key);
+        }
+    }
+
+    private async Task<string?> TryVerifyStoredSlotAsync(string stateFile, StableSlotReference stable,
+        CancellationToken cancellationToken, ApplyState? loadedState = null)
+    {
+        if (string.IsNullOrWhiteSpace(stable.Id)) return null;
+        var segments = stable.PathSegments ?? SlotPaths.LegacySegments(stable.Path);
+        try
+        {
+            var slot = await client.GetSlotAsync(stable.Id, 0, stable.RuntimeRelocatable, cancellationToken);
+            if (slot.IsReferenceOnly || !slot.Name.Equals(segments.LastOrDefault(), StringComparison.Ordinal)) return null;
+            if (stable.RuntimeRelocatable)
+            {
+                var evidence = (loadedState ?? ApplyStateStore.Load(Path.GetFullPath(stateFile), stable.OwnershipKey)).Components.Values
+                    .Where(component => component.SlotKey == stable.Key).ToArray();
+                return evidence.Length > 0 && evidence.All(component => StableComponentCandidates(slot.Components,
+                        component.Type, component.ComponentIndex, component.MemberNames, component.IdentityValues).Length == 1)
+                    ? slot.Id : null;
+            }
+            var live = await ObserveAbsoluteSegmentsAsync(slot, cancellationToken);
+            return live.SequenceEqual(segments, StringComparer.Ordinal) ? slot.Id : null;
+        }
+        catch (RLoopException ex) when (ex.Code is "SLOT_NOT_FOUND" or "RESONITE_OPERATION_FAILED" or "SLOT_PATH_UNRESOLVED")
+        {
+            return null;
         }
     }
 
@@ -909,7 +930,8 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
         var statePath = ApplyStateStore.ResolvePath(document, options.StateFile);
         var state = ApplyStateStore.Load(statePath, document.Ownership!.Key);
         var session = await client.GetSessionInfoAsync(cancellationToken);
-        var sameSession = !string.IsNullOrWhiteSpace(session.UniqueSessionId) && session.UniqueSessionId == state.SessionId;
+        // SessionId is kept in state for compatibility only. UniqueSessionId is a per-connection counter,
+        // so a match never authorizes reusing a stored live ID; every reuse is proven against the live world.
         state.SessionId = session.UniqueSessionId;
         var migrations = ApplyStateMigrations(document, state);
         var parentSelector = string.IsNullOrWhiteSpace(document.Slot!.Parent) ? "Root" : document.Slot.Parent;
@@ -922,34 +944,31 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
         var rootKey = document.Slot!.Key!;
         if (state.Slots.TryGetValue(rootKey, out var rootState) && !ContainsSlot(parent, rootState.Id))
         {
-            if (rootState.RuntimeRelocatable && !sameSession)
+            if (rootState.RuntimeRelocatable)
             {
                 var stable = new StableSlotReference(rootKey, rootState.Id, rootState.Path, state.SessionId,
                     state.OwnershipKey, true, rootState.PathSegments);
-                var relocated = await ResolveRelocatableSlotAsync(statePath, stable, cancellationToken);
-                state.Slots[rootKey] = rootState = rootState with { Id = relocated.Id };
-                snapshots.Add((relocated, relocated.Path ?? rootState.Path));
-            }
-            else
-            try
-            {
-                var oldRootId = sameSession && !string.IsNullOrWhiteSpace(rootState.Id)
-                    ? rootState.Id : await ResolveSlotIdAsync(SlotPaths.Selector(rootState.Path, rootState.PathSegments), cancellationToken);
-                snapshots.Add((await client.GetSlotAsync(oldRootId, Math.Clamp(stateDepth, 0, 64), true, cancellationToken), rootState.Path));
-            }
-            catch (RLoopException ex) when (ex.Code is "SLOT_NOT_FOUND" or "SLOT_PATH_NOT_FOUND" or "RESONITE_OPERATION_FAILED")
-            {
-                if (rootState.RuntimeRelocatable)
+                var verifiedId = await TryVerifyStoredSlotAsync(statePath, stable, cancellationToken, state);
+                if (verifiedId is not null)
+                    snapshots.Add((await client.GetSlotAsync(verifiedId, Math.Clamp(stateDepth, 0, 64), true, cancellationToken), rootState.Path));
+                else
                 {
-                    var stable = new StableSlotReference(rootKey, rootState.Id, rootState.Path, state.SessionId,
-                        state.OwnershipKey, true, rootState.PathSegments);
                     var relocated = await ResolveRelocatableSlotAsync(statePath, stable, cancellationToken);
                     state.Slots[rootKey] = rootState = rootState with { Id = relocated.Id };
                     snapshots.Add((relocated, relocated.Path ?? rootState.Path));
                 }
             }
+            else
+            try
+            {
+                var oldRootId = await ResolveSlotIdAsync(SlotPaths.Selector(rootState.Path, rootState.PathSegments), cancellationToken);
+                snapshots.Add((await client.GetSlotAsync(oldRootId, Math.Clamp(stateDepth, 0, 64), true, cancellationToken), rootState.Path));
+            }
+            catch (RLoopException ex) when (ex.Code is "SLOT_NOT_FOUND" or "SLOT_PATH_NOT_FOUND" or "RESONITE_OPERATION_FAILED")
+            {
+            }
         }
-        var prepared = new PreparedApply(document, options, state, statePath, session, parentId, sameSession, snapshots,
+        var prepared = new PreparedApply(document, options, state, statePath, session, parentId, snapshots,
             migrations.Slots, migrations.Components, parentSegments);
         var rootSpec = new ApplyNodeSpec(document.Slot, document.Components, document.Children);
         BuildNode(prepared, rootSpec, null, parent, parentPath, true);
@@ -974,7 +993,7 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
         var stableKey = spec.Slot.Key ?? "$path:" + path;
         prepared.State.Slots.TryGetValue(stableKey, out var stateSlot);
         var newManagedSlot = stateSlot is null && parentRuntime is not null && prepared.State.Slots.ContainsKey(parentRuntime.StableKey);
-        var existing = newManagedSlot ? null : MatchSlot(parentSnapshot, spec.Slot.Name, stateSlot, prepared.SameSession, path);
+        var existing = newManagedSlot ? null : MatchSlot(parentSnapshot, spec.Slot.Name, stateSlot, path);
         existing ??= FindManagedSlot(prepared, stateSlot);
         if (isRoot && existing is not null && stateSlot is null && !prepared.Options.Adopt)
             throw new RLoopException("APPLY_OWNERSHIP_UNVERIFIED",
@@ -1028,7 +1047,7 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
                 // Otherwise it can alias a retained key or a stale key scheduled for pruning.
                 var newManagedComponent = stateComponent is null && prepared.State.Slots.ContainsKey(node.StableKey);
                 var existing = relocating || newManagedComponent ? null :
-                    MatchComponent(node.Existing?.Components ?? [], spec.Type, ordinal, stateComponent, prepared.SameSession,
+                    MatchComponent(node.Existing?.Components ?? [], spec.Type, ordinal, stateComponent,
                         topologyTargets);
                 var componentIndex = existing is null
                     ? (node.Existing?.Components.Count ?? 0) + prepared.Components.Count(candidate => candidate.Node == node && candidate.Existing is null)
@@ -1039,7 +1058,7 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
                 {
                     var sourceSlot = FindStateSlot(prepared, stateComponent!.SlotKey);
                     runtime.RelocationSource = sourceSlot is null ? null :
-                        MatchComponent(sourceSlot.Components, spec.Type, ordinal, stateComponent, prepared.SameSession,
+                        MatchComponent(sourceSlot.Components, spec.Type, ordinal, stateComponent,
                             topologyTargets);
                     if (runtime.RelocationSource?.Id == existing?.Id) runtime.RelocationSource = null;
                 }
@@ -1150,8 +1169,7 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
             }
             return false;
         }
-        SlotInfo? ResolveOwned(ApplyStateSlot state) => prepared.SameSession && !string.IsNullOrEmpty(state.Id)
-            ? snapshots.GetValueOrDefault(state.Id) : FindManagedSlot(prepared, state);
+        SlotInfo? ResolveOwned(ApplyStateSlot state) => FindManagedSlot(prepared, state);
 
         var staleSlots = new List<(string Key, ApplyStateSlot State, SlotInfo Slot, string Path)>();
         foreach (var stateSlot in prepared.State.Slots.Where(x => !liveSlotKeys.Contains(x.Key)).ToArray())
@@ -1173,13 +1191,9 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
             if (!prepared.State.Slots.TryGetValue(stateComponent.Value.SlotKey, out var stateSlot)) continue;
             var slot = ResolveOwned(stateSlot);
             if (slot is null || !IsWithin(slot.Id, rootId)) continue;
-            var component = prepared.SameSession ? slot.Components.FirstOrDefault(x => x.Id == stateComponent.Value.Id) : null;
-            if (!prepared.SameSession)
-            {
-                var topology = ResolveStateTopologyTargets(prepared, stateComponent.Value, new HashSet<string>(StringComparer.Ordinal));
-                component = MatchComponent(slot.Components, stateComponent.Value.Type,
-                    stateComponent.Value.TypeOrdinal, stateComponent.Value, false, topology);
-            }
+            var topology = ResolveStateTopologyTargets(prepared, stateComponent.Value, new HashSet<string>(StringComparer.Ordinal));
+            var component = MatchComponent(slot.Components, stateComponent.Value.Type,
+                stateComponent.Value.TypeOrdinal, stateComponent.Value, topology);
             if (component is null) continue;
             var deletion = new DeletionRuntime("component", stateComponent.Key, component.Id,
                 slot.Path + "/@" + stateComponent.Key, "stable key is no longer declared inside the owned boundary");
@@ -1525,12 +1539,12 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
                bare.Equals("Type", StringComparison.OrdinalIgnoreCase) || bare.Contains("Enum", StringComparison.OrdinalIgnoreCase);
     }
 
-    private static SlotInfo? MatchSlot(SlotInfo parent, string desiredName, ApplyStateSlot? state,
-        bool sameSession, string desiredPath)
+    private static SlotInfo? MatchSlot(SlotInfo parent, string desiredName, ApplyStateSlot? state, string desiredPath)
     {
         SlotInfo[] candidates = [];
-        if (state is not null && sameSession)
-            candidates = parent.Children.Where(x => x.Id == state.Id).ToArray();
+        // The stored ID only narrows same-named siblings; the recorded name is the ownership proof.
+        if (state is not null && RecordedName(state) is { Length: > 0 } recordedName)
+            candidates = parent.Children.Where(x => x.Id == state.Id && x.Name == recordedName).ToArray();
         if (candidates.Length == 0 && state is not null && !state.RuntimeRelocatable)
         {
             var oldName = (state.PathSegments ?? SlotPaths.LegacySegments(state.Path)).LastOrDefault();
@@ -1544,12 +1558,21 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
         return candidates.SingleOrDefault();
     }
 
+    private static string? RecordedName(ApplyStateSlot state) =>
+        (state.PathSegments ?? SlotPaths.LegacySegments(state.Path)).LastOrDefault();
+
     private static SlotInfo? FindManagedSlot(PreparedApply prepared, ApplyStateSlot? state)
     {
         if (state is null) return null;
-        if ((prepared.SameSession || state.RuntimeRelocatable) && !string.IsNullOrWhiteSpace(state.Id))
+        if (state.RuntimeRelocatable && !string.IsNullOrWhiteSpace(state.Id))
         {
-            var byId = prepared.SnapshotSlots.Where(slot => slot.Id == state.Id).ToArray();
+            // A relocatable Slot left its declared parent, so its path proves nothing: the stored ID is reused
+            // only when the live name and the recorded Component identity evidence both match.
+            var slotKey = prepared.State.Slots.FirstOrDefault(pair => ReferenceEquals(pair.Value, state)).Key;
+            var evidence = slotKey is null ? [] : prepared.State.Components.Values.Where(component => component.SlotKey == slotKey).ToArray();
+            var byId = prepared.SnapshotSlots.Where(slot => slot.Id == state.Id && slot.Name == RecordedName(state) &&
+                evidence.Length > 0 && evidence.All(component => StableComponentCandidates(slot.Components, component.Type,
+                    component.ComponentIndex, component.MemberNames, component.IdentityValues).Length == 1)).ToArray();
             if (byId.Length == 1) return byId[0];
         }
         var normalizedPath = NormalizePath(state.Path);
@@ -1567,12 +1590,14 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
         prepared.State.Slots.TryGetValue(slotKey, out var stateSlot) ? FindManagedSlot(prepared, stateSlot) : null;
 
     private static ComponentSummary? MatchComponent(IReadOnlyList<ComponentSummary> components, string type, int ordinal,
-        ApplyStateComponent? state, bool sameSession, IReadOnlyDictionary<string, string>? referenceTargets = null)
+        ApplyStateComponent? state, IReadOnlyDictionary<string, string>? referenceTargets = null)
     {
-        if (state is not null && sameSession)
+        if (state is not null)
         {
-            var byId = components.SingleOrDefault(x => x.Id == state.Id);
-            if (byId is not null) return byId;
+            // Stored ID within an already proven Slot: reused only while type and recorded identity still match.
+            var byId = components.FirstOrDefault(x => x.Id == state.Id);
+            if (byId is not null && StableComponentCandidates([byId], state.Type, null, state.MemberNames, state.IdentityValues).Length == 1)
+                return byId;
         }
         var matches = StableComponentCandidates(components, state?.Type ?? type, state?.ComponentIndex,
             state?.MemberNames, state?.IdentityValues, referenceTargets);
@@ -1900,7 +1925,7 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
     private static bool ContainsSlot(SlotInfo root, string id) => root.Id == id || root.Children.Any(child => ContainsSlot(child, id));
 
     private sealed class PreparedApply(ApplyDocument document, ApplyOptions options, ApplyState state,
-        string statePath, SessionInfo session, string parentId, bool sameSession, IReadOnlyList<(SlotInfo Slot, string Path)> snapshots,
+        string statePath, SessionInfo session, string parentId, IReadOnlyList<(SlotInfo Slot, string Path)> snapshots,
         IReadOnlyDictionary<string, string> slotMigrations, IReadOnlyDictionary<string, string> componentMigrations, IReadOnlyList<string> parentSegments)
     {
         public ApplyDocument Document { get; } = document;
@@ -1909,7 +1934,6 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
         public string StatePath { get; } = statePath;
         public SessionInfo Session { get; } = session;
         public string ParentId { get; } = parentId;
-        public bool SameSession { get; } = sameSession;
         public IReadOnlyList<string> ParentSegments { get; } = parentSegments;
         public IReadOnlyDictionary<string, IReadOnlyList<string>> SnapshotSegments { get; } = BuildSegments(snapshots, state, parentId, parentSegments);
         public IReadOnlyDictionary<string, string> SlotMigrations { get; } = slotMigrations;
