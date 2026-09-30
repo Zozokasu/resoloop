@@ -26,7 +26,8 @@ public sealed class ObservationService(IResoniteClient client)
     };
 
     public async Task<ObservationEnvelope<HierarchyProfile>> ProfileAsync(string selector, string resolvedId,
-        int maxDepth = 64, int maxSlots = DefaultMaxSlots, string groupBy = "depth", CancellationToken cancellationToken = default)
+        int maxDepth = 64, int maxSlots = DefaultMaxSlots, string groupBy = "depth", bool excludeUserRoots = false,
+        CancellationToken cancellationToken = default)
     {
         ValidateBudget(maxDepth, maxSlots);
         if (groupBy is not ("depth" or "component-type" or "name"))
@@ -35,7 +36,7 @@ public sealed class ObservationService(IResoniteClient client)
         var timer = Stopwatch.StartNew();
         ResetMetrics();
         var session = await client.GetSessionInfoAsync(cancellationToken);
-        var observation = await ObserveAsync(selector, resolvedId, maxDepth, maxSlots, false, cancellationToken);
+        var observation = await ObserveAsync(selector, resolvedId, maxDepth, maxSlots, false, excludeUserRoots, cancellationToken);
 
         var depths = new Dictionary<int, int>();
         var componentTypes = new Dictionary<string, int>(StringComparer.Ordinal);
@@ -100,27 +101,45 @@ public sealed class ObservationService(IResoniteClient client)
         var session = await client.GetSessionInfoAsync(cancellationToken);
 
         var fingerprint = Fingerprint(resolvedId, filter, projection.Fields, maxDepth, maxSlots);
-        var offset = cursor is null ? 0 : DecodeCursor(cursor, session.UniqueSessionId, fingerprint);
+        // The cursor never asserts which connection it came from: the session id is a per-connection counter and
+        // a generation only lives inside one process. Continuation is re-validated against the rows before the offset
+        // (ids, paths, projected values); rows after the offset cannot be checked, so a match is not proof of one world.
+        var continuation = cursor is null ? null : DecodeCursor(cursor, fingerprint);
+        var offset = continuation?.Offset ?? 0;
 
         var observation = await ObserveAsync(selector, resolvedId, filter.DirectChildren ? 1 : maxDepth, maxSlots,
-            projection.NeedsMembers || filter.MemberName is not null || filter.ReferenceToId is not null, cancellationToken);
+            projection.NeedsMembers || filter.MemberName is not null || filter.ReferenceToId is not null, filter.ExcludeUserRoots,
+            cancellationToken);
 
         var matches = new List<HierarchyQueryMatch>();
         var matched = 0;
+        using var skippedHash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+        using var nextHash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
         foreach (var node in observation.Nodes)
         {
             if (node.Depth == 0) continue;
             if (filter.DirectChildren && node.Depth != 1) continue;
             if (!Matches(node.Slot, filter, regex)) continue;
-            if (matched++ < offset) continue;
-            if (matches.Count < limit) matches.Add(Project(node, projection));
+            if (matched++ < offset) { var skipped = RowIdentity(node, Project(node, projection)); skippedHash.AppendData(skipped); nextHash.AppendData(skipped); continue; }
+            if (matches.Count < limit)
+            {
+                var row = Project(node, projection);
+                matches.Add(row);
+                nextHash.AppendData(RowIdentity(node, row));
+            }
         }
+
+        if (continuation is not null &&
+            (matched < offset || !StringComparer.Ordinal.Equals(Convert.ToHexStringLower(skippedHash.GetHashAndReset()), continuation.PrefixDigest)))
+            throw new RLoopException("CURSOR_STALE",
+                "The rows before this cursor position (ids, paths, and projected values) are no longer the same as when it was issued, so continuing would skip or repeat rows. A match here does not prove the rows after the cursor are unchanged.",
+                ExitCodes.ValidationFailed, suggestions: ["Re-run the query without --cursor to start a fresh observation."]);
 
         var more = matched > offset + matches.Count;
         var truncation = observation.Truncation ?? (more
             ? new ObservationTruncation("result-limit", null, matches.Count)
             : null);
-        if (more) truncation = truncation! with { Continuation = EncodeCursor(session.UniqueSessionId, fingerprint, offset + matches.Count) };
+        if (more) truncation = truncation! with { Continuation = EncodeCursor(fingerprint, offset + matches.Count, Convert.ToHexStringLower(nextHash.GetHashAndReset())) };
 
         var result = new HierarchyQueryResult(matches, matches.Count, matched, observation.Nodes.Count, CacheUsable());
         return Envelope(session, observation with { Truncation = truncation }, filter.DirectChildren ? 1 : maxDepth,
@@ -129,7 +148,7 @@ public sealed class ObservationService(IResoniteClient client)
 
     public async Task<SnapshotDocument> CreateSnapshotAsync(string selector, string resolvedId, string outputPath,
         string memberScope = "references", IReadOnlyList<string>? selectedMembers = null, int maxDepth = 64,
-        int maxSlots = DefaultMaxSlots, CancellationToken cancellationToken = default)
+        int maxSlots = DefaultMaxSlots, bool excludeUserRoots = false, CancellationToken cancellationToken = default)
     {
         ValidateBudget(maxDepth, maxSlots);
         if (memberScope is not ("references" or "selected" or "all"))
@@ -140,22 +159,35 @@ public sealed class ObservationService(IResoniteClient client)
         ResetMetrics();
         var session = await client.GetSessionInfoAsync(cancellationToken);
         // Every scope needs member data observed; the scope decides only what is kept.
-        var observation = await ObserveAsync(selector, resolvedId, maxDepth, maxSlots, true, cancellationToken);
+        var observation = await ObserveAsync(selector, resolvedId, maxDepth, maxSlots, true, excludeUserRoots, cancellationToken);
 
         var excluded = new SortedSet<string>(StringComparer.Ordinal);
-        var slots = observation.Nodes.Select(node => new SnapshotSlot(
-            node.Path, node.Slot.Name, node.ParentPath, node.Slot.Id, node.Slot.IsReferenceOnly, node.ChildrenObserved,
-            node.Slot.Components
-                .GroupBy(component => NormalizeType(component.Type), StringComparer.Ordinal)
-                .SelectMany(group => group.Select((component, ordinal) => new SnapshotComponent(
-                    group.Key, ordinal, component.Id, CaptureMembers(component.Members, memberScope, selectedMembers, excluded))))
-                .OrderBy(component => component.Type, StringComparer.Ordinal).ThenBy(component => component.Ordinal).ToArray(),
-            CaptureMembers(node.Slot.Members, memberScope, selectedMembers, excluded))).ToArray();
+        var slots = observation.Nodes.Select(node =>
+        {
+            var slotMembers = CaptureMembers(node.Slot.Members, memberScope, selectedMembers, excluded, out var slotUnreadable);
+            return new SnapshotSlot(
+                node.Path, node.Slot.Name, node.ParentPath, node.Slot.Id, node.Slot.IsReferenceOnly, node.ChildrenObserved,
+                node.Slot.Components
+                    .GroupBy(component => NormalizeType(component.Type), StringComparer.Ordinal)
+                    .SelectMany(group => group.Select((component, ordinal) =>
+                    {
+                        var members = CaptureMembers(component.Members, memberScope, selectedMembers, excluded, out var unreadable);
+                        return new SnapshotComponent(group.Key, ordinal, component.Id, members,
+                            component.Members is not null, unreadable.Count == 0 ? null : unreadable);
+                    }))
+                    .OrderBy(component => component.Type, StringComparer.Ordinal).ThenBy(component => component.Ordinal).ToArray(),
+                slotMembers,
+                // A reference-only Slot carries no component list, and a Slot without member data is unread, not empty.
+                ComponentsObserved: !node.Slot.IsReferenceOnly,
+                MembersObserved: !node.Slot.IsReferenceOnly && node.Slot.Members is not null,
+                UnreadableMembers: slotUnreadable.Count == 0 ? null : slotUnreadable);
+        }).ToArray();
 
         var document = new SnapshotDocument(SnapshotDocument.CurrentSchemaVersion, DateTimeOffset.UtcNow,
             session.ResoniteVersion, session.ResoniteLinkVersion, session.UniqueSessionId,
             new ObservationRoot(selector, resolvedId, observation.RootPath), maxDepth, maxSlots,
-            observation.Truncation is null, observation.Truncation, memberScope, [.. excluded], slots);
+            observation.Truncation is null, observation.Truncation, memberScope, [.. excluded], slots,
+            memberScope == "selected" ? selectedMembers!.Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray() : null);
 
         CheckpointFiles.Write(outputPath, JsonSerializer.Serialize(document, SnapshotJson));
         return document;
@@ -165,23 +197,38 @@ public sealed class ObservationService(IResoniteClient client)
     {
         if (groupBy is not ("slot" or "component" or "member"))
             throw new RLoopException("INVALID_OPTION", "--group-by accepts slot, component, or member.", ExitCodes.InvalidArguments);
-        var before = LoadSnapshot(beforePath);
-        var after = LoadSnapshot(afterPath);
+        var (before, beforeLegacy) = LoadSnapshot(beforePath);
+        var (after, afterLegacy) = LoadSnapshot(afterPath);
 
         var issues = new List<SnapshotDiffIssue>();
+        var unobserved = new List<SnapshotUnobserved>();
+        // Raw ids (Slot, Component, reference targets) and the connection id come from sessions that cannot be proven to be
+        // the same world, so they are never compared for identity: equal ids do not prove one object, different ids do not prove two.
+        issues.Add(new("SNAPSHOT_IDENTITY_UNPROVEN", "info",
+            "Snapshots cannot be proven to come from the same world session, so raw ids and the connection id are never compared. " +
+            "Slots match by path, Components by type and order, and references by where their target sits inside each snapshot; " +
+            "references whose target is outside a snapshot are listed in unobserved."));
+        if (beforeLegacy || afterLegacy)
+            issues.Add(new("SNAPSHOT_LEGACY_OBSERVATION_FLAGS", "warning",
+                "At least one snapshot predates the observed flags, so what it actually observed is unknown; it is treated as incomplete and nothing is inferred from its absences. Recreate it with resoloop snapshot create."));
         if (!before.Complete || !after.Complete)
             issues.Add(new("SNAPSHOT_PARTIAL", "warning",
                 "At least one snapshot is partial; removals are reported only where the newer snapshot observed the parent."));
-        if (before.MemberScope != after.MemberScope)
+        var scopeMismatch = before.MemberScope != after.MemberScope ||
+            (before.MemberScope == "selected" && !SameNames(before.SelectedMembers, after.SelectedMembers));
+        if (scopeMismatch)
+        {
             issues.Add(new("SNAPSHOT_MEMBER_SCOPE_MISMATCH", "warning",
-                $"Snapshots captured different member scopes ('{before.MemberScope}' and '{after.MemberScope}'); member changes are not compared."));
-        if (before.ConnectionId is not null && after.ConnectionId is not null && before.ConnectionId != after.ConnectionId)
-            issues.Add(new("SNAPSHOT_CONNECTION_CHANGED", "warning",
-                "Snapshots come from different ResoniteLink connections; raw ids and reference targets are not comparable."));
+                $"Snapshots captured different member scopes ('{before.MemberScope}' and '{after.MemberScope}'{(before.MemberScope == after.MemberScope ? ", or different --member lists" : string.Empty)}); member changes are not compared."));
+            unobserved.Add(new(after.Root.Path, null, null, "member-scope-mismatch"));
+        }
 
-        var compareMembers = before.MemberScope == after.MemberScope;
+        var compareMembers = !scopeMismatch;
         var beforeSlots = IndexByPath(before, beforePath);
         var afterSlots = IndexByPath(after, afterPath);
+        var context = new DiffContext(TargetIndex.Build(before), TargetIndex.Build(after),
+            new HashSet<string>(before.ExcludedMembers, StringComparer.Ordinal),
+            new HashSet<string>(after.ExcludedMembers, StringComparer.Ordinal));
         var changes = new List<SnapshotChange>();
 
         foreach (var slot in after.Slots)
@@ -189,14 +236,20 @@ public sealed class ObservationService(IResoniteClient client)
             if (!beforeSlots.TryGetValue(slot.Path, out var original))
             {
                 if (Observed(beforeSlots, before, slot.ParentPath)) changes.Add(new("slot.created", slot.Path));
+                else unobserved.Add(new(slot.Path, null, null, "slot-presence-unobserved"));
                 continue;
             }
             if (!StringComparer.Ordinal.Equals(original.Name, slot.Name))
                 changes.Add(new("slot.renamed", slot.Path, Before: JsonValue.Create(original.Name), After: JsonValue.Create(slot.Name)));
             if (!StringComparer.Ordinal.Equals(original.ParentPath, slot.ParentPath))
                 changes.Add(new("slot.moved", slot.Path, Before: JsonValue.Create(original.ParentPath), After: JsonValue.Create(slot.ParentPath)));
-            DiffComponents(changes, original, slot, compareMembers);
-            if (compareMembers) DiffMembers(changes, slot.Path, null, original.Members, slot.Members);
+            DiffComponents(changes, unobserved, original, slot, compareMembers, context);
+            if (compareMembers)
+            {
+                if (original.MembersObserved && slot.MembersObserved && !original.IsReferenceOnly && !slot.IsReferenceOnly)
+                    DiffMembers(changes, unobserved, slot.Path, null, original.Members, slot.Members, original.UnreadableMembers, slot.UnreadableMembers, context);
+                else unobserved.Add(new(slot.Path, null, null, "members-not-observed"));
+            }
         }
 
         foreach (var slot in before.Slots)
@@ -204,6 +257,7 @@ public sealed class ObservationService(IResoniteClient client)
             if (afterSlots.ContainsKey(slot.Path)) continue;
             // Absence is only evidence of removal where the newer snapshot actually descended into the parent.
             if (Observed(afterSlots, after, slot.ParentPath)) changes.Add(new("slot.removed", slot.Path));
+            else unobserved.Add(new(slot.Path, null, null, "slot-presence-unobserved"));
         }
 
         var ordered = changes.OrderBy(change => change.Path, StringComparer.Ordinal)
@@ -220,9 +274,23 @@ public sealed class ObservationService(IResoniteClient client)
             .OrderBy(group => group.Key, StringComparer.Ordinal)
             .Select(group => new SnapshotChangeGroup(group.Key, group.ToArray())).ToArray();
 
-        return new SnapshotDiffResult(before.Complete && after.Complete, groupBy, ordered.Length,
-            changesOnly && ordered.Length == 0 ? [] : groups, issues);
+        if (unobserved.Count > 0)
+            issues.Add(new("SNAPSHOT_UNOBSERVED", "warning",
+                $"{unobserved.Count} comparison(s) could not be made because one side did not observe the data or identity could not be proven; they are listed in unobserved and are not reported as changes or removals."));
+        var listed = unobserved
+            .OrderBy(item => item.Path, StringComparer.Ordinal).ThenBy(item => item.ComponentType ?? string.Empty, StringComparer.Ordinal)
+            .ThenBy(item => item.Member ?? string.Empty, StringComparer.Ordinal).ThenBy(item => item.Reason, StringComparer.Ordinal)
+            .Take(MaxListedUnobserved).ToArray();
+
+        return new SnapshotDiffResult(before.Complete && after.Complete && unobserved.Count == 0, groupBy, ordered.Length,
+            changesOnly && ordered.Length == 0 ? [] : groups, issues, unobserved.Count, listed.Length == 0 ? null : listed);
     }
+
+    private const int MaxListedUnobserved = 200;
+
+    private static bool SameNames(IReadOnlyList<string>? left, IReadOnlyList<string>? right) =>
+        left is not null && right is not null &&
+        left.ToHashSet(StringComparer.Ordinal).SetEquals(right);
 
     private static bool Observed(IReadOnlyDictionary<string, SnapshotSlot> slots, SnapshotDocument document, string? parentPath)
     {
@@ -231,8 +299,44 @@ public sealed class ObservationService(IResoniteClient client)
         return slots.TryGetValue(parentPath, out var parent) && parent.ChildrenObserved;
     }
 
-    private static void DiffComponents(List<SnapshotChange> changes, SnapshotSlot before, SnapshotSlot after, bool compareMembers)
+    private sealed record DiffContext(TargetIndex BeforeTargets, TargetIndex AfterTargets,
+        HashSet<string> BeforeExcluded, HashSet<string> AfterExcluded);
+
+    /// <summary>Resolves a raw id to where its object sits inside one snapshot. An id seen twice resolves to nothing.</summary>
+    private sealed class TargetIndex
     {
+        private readonly Dictionary<string, string?> _locations = new(StringComparer.Ordinal);
+
+        public static TargetIndex Build(SnapshotDocument document)
+        {
+            var index = new TargetIndex();
+            foreach (var slot in document.Slots)
+            {
+                index.Add(slot.SessionId, "slot:" + slot.Path);
+                foreach (var component in slot.Components)
+                    index.Add(component.SessionId, $"component:{slot.Path}|{component.Type}|{component.Ordinal}");
+            }
+            return index;
+        }
+
+        private void Add(string id, string location)
+        {
+            if (string.IsNullOrEmpty(id)) return;
+            _locations[id] = _locations.ContainsKey(id) ? null : location;
+        }
+
+        public string? Locate(string id) => _locations.GetValueOrDefault(id);
+    }
+
+    private static void DiffComponents(List<SnapshotChange> changes, List<SnapshotUnobserved> unobserved,
+        SnapshotSlot before, SnapshotSlot after, bool compareMembers, DiffContext context)
+    {
+        // A reference-only Slot lists no components; comparing its empty list would read every component as created or removed.
+        if (!before.ComponentsObserved || !after.ComponentsObserved || before.IsReferenceOnly || after.IsReferenceOnly)
+        {
+            unobserved.Add(new(after.Path, null, null, "components-not-observed"));
+            return;
+        }
         var beforeComponents = before.Components.ToDictionary(component => (component.Type, component.Ordinal));
         var afterComponents = after.Components.ToDictionary(component => (component.Type, component.Ordinal));
         foreach (var (key, component) in afterComponents)
@@ -242,35 +346,113 @@ public sealed class ObservationService(IResoniteClient client)
                 changes.Add(new("component.created", after.Path, component.Type));
                 continue;
             }
-            if (!StringComparer.Ordinal.Equals(original.SessionId, component.SessionId))
-                changes.Add(new("component.replaced", after.Path, component.Type,
-                    Before: JsonValue.Create(original.SessionId), After: JsonValue.Create(component.SessionId)));
-            if (compareMembers) DiffMembers(changes, after.Path, component.Type, original.Members, component.Members);
+            // Components are matched by type and order; their raw ids are not evidence of being the same instance.
+            if (!compareMembers) continue;
+            if (original.MembersObserved && component.MembersObserved)
+                DiffMembers(changes, unobserved, after.Path, component.Type, original.Members, component.Members,
+                    original.UnreadableMembers, component.UnreadableMembers, context);
+            else unobserved.Add(new(after.Path, component.Type, null, "members-not-observed"));
         }
         foreach (var (key, component) in beforeComponents)
             if (!afterComponents.ContainsKey(key))
                 changes.Add(new("component.removed", after.Path, component.Type));
     }
 
-    private static void DiffMembers(List<SnapshotChange> changes, string path, string? componentType,
-        IReadOnlyDictionary<string, JsonNode?> before, IReadOnlyDictionary<string, JsonNode?> after)
+    private static void DiffMembers(List<SnapshotChange> changes, List<SnapshotUnobserved> unobserved, string path, string? componentType,
+        IReadOnlyDictionary<string, JsonNode?> before, IReadOnlyDictionary<string, JsonNode?> after,
+        IReadOnlyList<string>? beforeUnreadable, IReadOnlyList<string>? afterUnreadable, DiffContext context)
     {
+        // A member that could not be read on either side says nothing about its value or existence.
+        var unreadable = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var name in beforeUnreadable ?? []) unreadable.Add(name);
+        foreach (var name in afterUnreadable ?? []) unreadable.Add(name);
+        foreach (var name in unreadable.Order(StringComparer.Ordinal))
+            unobserved.Add(new(path, componentType, name, "member-unreadable"));
+
         foreach (var (name, value) in after)
         {
-            if (!before.TryGetValue(name, out var original)) { changes.Add(new("member.added", path, componentType, name, After: value?.DeepClone())); continue; }
-            if (JsonEquivalent(original, value)) continue;
-            var kind = IsReference(original) || IsReference(value) ? "reference.changed" : "member.changed";
-            changes.Add(new(kind, path, componentType, name, original?.DeepClone(), value?.DeepClone()));
+            if (unreadable.Contains(name)) continue;
+            if (!before.TryGetValue(name, out var original))
+            {
+                // The older snapshot's scope may simply have left this member out, which is not the same as it being absent.
+                if (context.BeforeExcluded.Contains(name)) unobserved.Add(new(path, componentType, name, "member-filtered-out"));
+                else changes.Add(new("member.added", path, componentType, name, After: value?.DeepClone()));
+                continue;
+            }
+            var resolvedBefore = ResolveTargets(original, context.BeforeTargets, out var beforeUnresolved);
+            var resolvedAfter = ResolveTargets(value, context.AfterTargets, out var afterUnresolved);
+            if (!EquivalentIgnoringUnresolved(resolvedBefore, resolvedAfter))
+            {
+                var kind = IsReference(original) || IsReference(value) ? "reference.changed" : "member.changed";
+                changes.Add(new(kind, path, componentType, name, original?.DeepClone(), value?.DeepClone()));
+            }
+            if (beforeUnresolved || afterUnresolved)
+                unobserved.Add(new(path, componentType, name, "reference-identity-unproven"));
         }
         foreach (var (name, value) in before)
-            if (!after.ContainsKey(name))
-                changes.Add(new("member.removed", path, componentType, name, Before: value?.DeepClone()));
+        {
+            if (after.ContainsKey(name) || unreadable.Contains(name)) continue;
+            if (context.AfterExcluded.Contains(name)) unobserved.Add(new(path, componentType, name, "member-filtered-out"));
+            else changes.Add(new("member.removed", path, componentType, name, Before: value?.DeepClone()));
+        }
     }
 
     private static bool IsReference(JsonNode? node) => node is JsonObject obj && obj.ContainsKey("targetId");
 
+    private static bool IsResolvedTarget(JsonNode? node) =>
+        node is JsonObject obj && (obj.ContainsKey("target") || obj.ContainsKey("unresolvedTarget"));
+
+    /// <summary>Rewrites every non-null reference to where its target sits inside the same snapshot. A target outside the
+    /// snapshot keeps no raw id: its identity cannot be compared with anything from another observation.</summary>
+    private static JsonNode? ResolveTargets(JsonNode? node, TargetIndex index, out bool unresolved)
+    {
+        var any = false;
+        var result = Rewrite(node);
+        unresolved = any;
+        return result;
+
+        JsonNode? Rewrite(JsonNode? current)
+        {
+            switch (current)
+            {
+                case JsonObject obj when obj.ContainsKey("targetId"):
+                {
+                    var id = obj["targetId"]?.GetValue<string>();
+                    if (id is null) return new JsonObject { ["targetId"] = null };
+                    var type = obj["targetType"]?.GetValue<string>();
+                    var location = index.Locate(id);
+                    if (location is not null) return new JsonObject { ["target"] = location, ["targetType"] = type };
+                    any = true;
+                    return new JsonObject { ["unresolvedTarget"] = true, ["targetType"] = type };
+                }
+                case JsonObject obj:
+                    return obj.Aggregate(new JsonObject(), (result, pair) => { result[pair.Key] = Rewrite(pair.Value); return result; });
+                case JsonArray array:
+                    return new JsonArray(array.Select(Rewrite).ToArray());
+                default:
+                    return current?.DeepClone();
+            }
+        }
+    }
+
+    /// <summary>An unresolved target could be any object, so against another non-null reference it is neither equal nor different.</summary>
+    private static bool EquivalentIgnoringUnresolved(JsonNode? left, JsonNode? right)
+    {
+        if (IsResolvedTarget(left) && IsResolvedTarget(right))
+        {
+            var leftObj = (JsonObject)left!;
+            var rightObj = (JsonObject)right!;
+            return leftObj.ContainsKey("unresolvedTarget") || rightObj.ContainsKey("unresolvedTarget") || JsonEquivalent(left, right);
+        }
+        if (left is JsonObject l && right is JsonObject r)
+            return l.Count == r.Count && l.All(pair => r.TryGetPropertyValue(pair.Key, out var other) && EquivalentIgnoringUnresolved(pair.Value, other));
+        if (left is JsonArray la && right is JsonArray ra)
+            return la.Count == ra.Count && la.Zip(ra).All(pair => EquivalentIgnoringUnresolved(pair.First, pair.Second));
+        return JsonEquivalent(left, right);
+    }
+
     private async Task<Observation> ObserveAsync(string selector, string resolvedId, int maxDepth, int maxSlots,
-        bool includeMembers, CancellationToken cancellationToken)
+        bool includeMembers, bool excludeUserRoots, CancellationToken cancellationToken)
     {
         var root = await client.GetSlotAsync(resolvedId, maxDepth, includeMembers, cancellationToken);
         var rootPath = root.Path ?? root.Name;
@@ -279,6 +461,9 @@ public sealed class ObservationService(IResoniteClient client)
         queue.Enqueue((root, rootPath, null, 0));
         var budgetReached = false;
         var depthBoundary = false;
+        var excludedPaths = new List<string>();
+        var excludedParents = new HashSet<string>(StringComparer.Ordinal);
+        var referenceOnlyPaths = new List<string>();
 
         while (queue.Count > 0)
         {
@@ -288,14 +473,26 @@ public sealed class ObservationService(IResoniteClient client)
             // so a Slot sitting exactly on the boundary makes completeness unprovable.
             var atBoundary = depth >= maxDepth;
             if (atBoundary) depthBoundary = true;
-            nodes.Add(new ObservedNode(slot, path, parentPath, depth, !atBoundary));
+            // A reference-only Slot carries no component list and the transport cannot say whether it has children,
+            // so its children (and any UserRoot among them) are unobserved even inside the depth budget.
+            var referenceOnlyBoundary = slot.IsReferenceOnly && !atBoundary;
+            if (referenceOnlyBoundary) referenceOnlyPaths.Add(path);
+            nodes.Add(new ObservedNode(slot, path, parentPath, depth, !atBoundary && !slot.IsReferenceOnly));
             if (atBoundary) continue;
             var ordinals = new Dictionary<string, int>(StringComparer.Ordinal);
             foreach (var child in slot.Children)
             {
                 var ordinal = ordinals.GetValueOrDefault(child.Name);
                 ordinals[child.Name] = ordinal + 1;
-                queue.Enqueue((child, path + "/" + Segment(child.Name, ordinal), path, depth + 1));
+                var childPath = path + "/" + Segment(child.Name, ordinal);
+                // Only an explicit option drops a user's subtree; it is reported as excluded (unobserved), never as absent.
+                if (excludeUserRoots && IsUserRoot(child))
+                {
+                    excludedPaths.Add(childPath);
+                    excludedParents.Add(path);
+                    continue;
+                }
+                queue.Enqueue((child, childPath, path, depth + 1));
             }
         }
 
@@ -309,11 +506,21 @@ public sealed class ObservationService(IResoniteClient client)
                     nodes[index] = nodes[index] with { ChildrenObserved = false };
         }
 
-        var truncation = budgetReached
-            ? new ObservationTruncation("max-slots", null, nodes.Count)
-            : depthBoundary ? new ObservationTruncation("depth-boundary", null, nodes.Count) : null;
+        if (excludedParents.Count > 0)
+            for (var index = 0; index < nodes.Count; index++)
+                if (nodes[index].ChildrenObserved && excludedParents.Contains(nodes[index].Path))
+                    nodes[index] = nodes[index] with { ChildrenObserved = false };
+
+        var reason = budgetReached ? "max-slots" : depthBoundary ? "depth-boundary"
+            : excludedPaths.Count > 0 ? "user-root-excluded" : referenceOnlyPaths.Count > 0 ? "reference-only-boundary" : null;
+        var truncation = reason is null ? null : new ObservationTruncation(reason, null, nodes.Count,
+            excludedPaths.Count == 0 ? null : excludedPaths.Count, excludedPaths.Count == 0 ? null : excludedPaths.Take(MaxListedUnobserved).ToArray(),
+            referenceOnlyPaths.Count == 0 ? null : referenceOnlyPaths.Count, referenceOnlyPaths.Count == 0 ? null : referenceOnlyPaths.Take(MaxListedUnobserved).ToArray());
         return new Observation(nodes, rootPath, selector, resolvedId, truncation);
     }
+
+    private static bool IsUserRoot(SlotInfo slot) =>
+        slot.Components.Any(component => NormalizeType(component.Type) is "UserRoot" or "FrooxEngine.UserRoot");
 
     private ObservationEnvelope<T> Envelope<T>(SessionInfo session, Observation observation, int depth, int maxSlots,
         IReadOnlyList<string> fieldMask, T data, Stopwatch timer)
@@ -325,6 +532,10 @@ public sealed class ObservationService(IResoniteClient client)
             fieldMask, observation.Truncation is null, observation.Truncation, metrics.Requests,
             timer.Elapsed.TotalMilliseconds, JsonSerializer.SerializeToUtf8Bytes(data, SnapshotJson).LongLength, data);
     }
+
+    /// <summary>What a cursor remembers about a row it has already passed: its raw id, path, and projected values.</summary>
+    private static byte[] RowIdentity(ObservedNode node, HierarchyQueryMatch projected) =>
+        Encoding.UTF8.GetBytes(node.Slot.Id + "\u001f" + node.Path + "\u001f" + JsonSerializer.Serialize(projected, SnapshotJson) + "\n");
 
     private static HierarchyQueryMatch Project(ObservedNode node, Projection projection)
     {
@@ -365,18 +576,21 @@ public sealed class ObservationService(IResoniteClient client)
         member.Elements?.Any(element => TargetsId(element, targetId)) == true;
 
     private static IReadOnlyDictionary<string, JsonNode?> CaptureMembers(IReadOnlyDictionary<string, MemberValue>? members,
-        string scope, IReadOnlyList<string>? selected, SortedSet<string> excluded)
+        string scope, IReadOnlyList<string>? selected, SortedSet<string> excluded, out List<string> unreadable)
     {
         var captured = new SortedDictionary<string, JsonNode?>(StringComparer.Ordinal);
+        unreadable = [];
         if (members is null) return captured;
-        foreach (var (name, member) in members)
+        foreach (var (name, member) in members.OrderBy(pair => pair.Key, StringComparer.Ordinal))
         {
             if (VolatileSlotMembers.Contains(name, StringComparer.Ordinal)) { excluded.Add(name); continue; }
+            // A listed member with no readable value is unknown; recording it as null would diff as a value change.
+            if (member is null) { unreadable.Add(name); continue; }
             var keep = scope switch
             {
                 "all" => true,
                 "selected" => selected!.Contains(name, StringComparer.Ordinal),
-                _ => member.TargetId is not null
+                _ => IsReferenceMember(member)
             };
             if (keep) captured[name] = MemberNode(member);
             else excluded.Add(name);
@@ -384,9 +598,13 @@ public sealed class ObservationService(IResoniteClient client)
         return captured;
     }
 
+    private static bool IsReferenceMember(MemberValue member) =>
+        member.TargetId is not null || StringComparer.Ordinal.Equals(member.Kind, "reference");
+
     private static JsonNode? MemberNode(MemberValue member)
     {
-        if (member.TargetId is not null)
+        // A reference stays a reference even when it points at nothing: null is a value, and X to null is a change.
+        if (IsReferenceMember(member))
             return new JsonObject { ["targetId"] = member.TargetId, ["targetType"] = member.TargetType };
         if (member.Members is { Count: > 0 })
         {
@@ -419,12 +637,21 @@ public sealed class ObservationService(IResoniteClient client)
         (left is null && right is null) || (left is not null && right is not null &&
             left.ToJsonString(SnapshotJson) == right.ToJsonString(SnapshotJson));
 
-    private static SnapshotDocument LoadSnapshot(string path)
+    /// <summary>Returns the document and whether it predates the observed flags. Such a snapshot cannot say what it
+    /// observed, so it is returned as incomplete with every unknown flag false.</summary>
+    private static (SnapshotDocument Document, bool Legacy) LoadSnapshot(string path)
     {
         if (!File.Exists(path))
             throw new RLoopException("SNAPSHOT_NOT_FOUND", $"Snapshot file '{path}' was not found.", ExitCodes.NotFound);
         SnapshotDocument? document;
-        try { document = JsonSerializer.Deserialize<SnapshotDocument>(CheckpointFiles.Read(path), SnapshotJson); }
+        var legacy = false;
+        try
+        {
+            var text = CheckpointFiles.Read(path);
+            document = JsonSerializer.Deserialize<SnapshotDocument>(text, SnapshotJson);
+            legacy = JsonNode.Parse(text) is JsonObject root && root["slots"] is JsonArray slots &&
+                slots.Any(slot => slot is not JsonObject obj || !obj.ContainsKey("componentsObserved") || !obj.ContainsKey("membersObserved"));
+        }
         catch (JsonException ex)
         {
             throw new RLoopException("SNAPSHOT_INVALID", $"Snapshot file '{path}' is not valid snapshot JSON.",
@@ -436,7 +663,7 @@ public sealed class ObservationService(IResoniteClient client)
             throw new RLoopException("SNAPSHOT_SCHEMA_UNSUPPORTED",
                 $"Snapshot '{path}' uses schema {document.SchemaVersion}; this build reads schema {SnapshotDocument.CurrentSchemaVersion}.",
                 ExitCodes.ValidationFailed, suggestions: ["Recreate the snapshot with resoloop snapshot create."]);
-        return document;
+        return (legacy ? document with { Complete = false } : document, legacy);
     }
 
     private static Projection ParseSelect(IReadOnlyList<string> select)
@@ -488,14 +715,16 @@ public sealed class ObservationService(IResoniteClient client)
         int maxDepth, int maxSlots)
     {
         var material = string.Join('\u001f', resolvedId, filter.Name, filter.NameRegex, filter.ComponentType,
-            filter.MemberName, filter.ReferenceToId, filter.DirectChildren, string.Join(',', select), maxDepth, maxSlots);
+            filter.MemberName, filter.ReferenceToId, filter.DirectChildren, filter.ExcludeUserRoots, string.Join(',', select), maxDepth, maxSlots);
         return Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(material)))[..16];
     }
 
-    private static string EncodeCursor(string? connectionId, string fingerprint, int offset) =>
-        Convert.ToBase64String(Encoding.UTF8.GetBytes($"{connectionId}\u001f{fingerprint}\u001f{offset}"));
+    private sealed record CursorState(int Offset, string PrefixDigest);
 
-    private static int DecodeCursor(string cursor, string? connectionId, string fingerprint)
+    private static string EncodeCursor(string fingerprint, int offset, string prefixDigest) =>
+        Convert.ToBase64String(Encoding.UTF8.GetBytes($"v3\u001f{fingerprint}\u001f{offset}\u001f{prefixDigest}"));
+
+    private static CursorState DecodeCursor(string cursor, string fingerprint)
     {
         string[] parts;
         try { parts = Encoding.UTF8.GetString(Convert.FromBase64String(cursor)).Split('\u001f'); }
@@ -504,17 +733,13 @@ public sealed class ObservationService(IResoniteClient client)
             throw new RLoopException("CURSOR_INVALID", "--cursor is not a cursor issued by this command.",
                 ExitCodes.InvalidArguments, innerException: ex);
         }
-        if (parts.Length != 3 || !int.TryParse(parts[2], out var offset) || offset < 0)
+        if (parts.Length != 4 || parts[0] != "v3" || !int.TryParse(parts[2], out var offset) || offset < 0 || parts[3].Length == 0)
             throw new RLoopException("CURSOR_INVALID", "--cursor is not a cursor issued by this command.", ExitCodes.InvalidArguments);
-        if (!StringComparer.Ordinal.Equals(parts[0], connectionId ?? string.Empty))
-            throw new RLoopException("CURSOR_CONNECTION_MISMATCH",
-                "This cursor was issued for a different ResoniteLink connection; ids from the earlier session are stale.",
-                ExitCodes.ValidationFailed, suggestions: ["Re-run the query without --cursor to start a fresh observation."]);
         if (!StringComparer.Ordinal.Equals(parts[1], fingerprint))
             throw new RLoopException("CURSOR_QUERY_MISMATCH",
                 "This cursor was issued for a different query; filters, projection, and budgets must match to continue.",
                 ExitCodes.ValidationFailed, suggestions: ["Re-run the query without --cursor, or restore the original options."]);
-        return offset;
+        return new CursorState(offset, parts[3]);
     }
 
     private static string NormalizeType(string value)

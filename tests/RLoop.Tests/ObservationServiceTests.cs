@@ -105,10 +105,190 @@ public sealed class ObservationServiceTests
             new HierarchyQueryFilter(Name: "Other"), [], limit: 4, cursor: cursor));
         Assert.Equal("CURSOR_QUERY_MISMATCH", differentQuery.Code);
 
+        // A reconnect is not rejected on the connection label; identical rows before the cursor revalidate it.
         var reconnected = new ObservationService(new TreeClient(tree, connectionId: "conn-2"));
-        var differentConnection = await Assert.ThrowsAsync<RLoopException>(() => reconnected.QueryAsync("Root", "root",
-            new HierarchyQueryFilter(Name: "Match"), [], limit: 4, cursor: cursor));
-        Assert.Equal("CURSOR_CONNECTION_MISMATCH", differentConnection.Code);
+        var resumed = await reconnected.QueryAsync("Root", "root", new HierarchyQueryFilter(Name: "Match"), [], limit: 4, cursor: cursor);
+        Assert.Equal(2, resumed.Data.Returned);
+    }
+
+    [Fact]
+    public async Task QueryCursorIsStaleWhenOnlyTheSequentialSessionIdMatchesAnotherWorld()
+    {
+        var first = Slot("root", "Root", Enumerable.Range(0, 6).Select(index => Slot($"a{index}", "Match")).ToArray());
+        var otherWorld = Slot("root", "Root", Enumerable.Range(0, 6).Select(index => Slot($"b{index}", "Match")).ToArray());
+        var page = await new ObservationService(new TreeClient(first, connectionId: "1"))
+            .QueryAsync("Root", "root", new HierarchyQueryFilter(Name: "Match"), [], limit: 4);
+
+        // Same UniqueSessionId ("1") by coincidence, different rows: the cursor must not be honored.
+        var error = await Assert.ThrowsAsync<RLoopException>(() => new ObservationService(new TreeClient(otherWorld, connectionId: "1"))
+            .QueryAsync("Root", "root", new HierarchyQueryFilter(Name: "Match"), [], limit: 4, cursor: page.Truncation?.Continuation));
+        Assert.Equal("CURSOR_STALE", error.Code);
+
+        var legacy = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes("1\u001fabcdef\u001f4"));
+        var old = await Assert.ThrowsAsync<RLoopException>(() => new ObservationService(new TreeClient(first, connectionId: "1"))
+            .QueryAsync("Root", "root", new HierarchyQueryFilter(Name: "Match"), [], limit: 4, cursor: legacy));
+        Assert.Equal("CURSOR_INVALID", old.Code);
+    }
+
+    [Fact]
+    public async Task QueryCursorIsStaleWhenAProjectedValueBeforeTheCursorChanged()
+    {
+        SlotInfo Build(bool withComponent) => Slot("root", "Root", Enumerable.Range(0, 6)
+            .Select(index => Slot($"s{index}", "Match",
+                components: index == 0 && withComponent ? [Component("c", "[FrooxEngine]FrooxEngine.Grabbable")] : [])).ToArray());
+        var filter = new HierarchyQueryFilter(Name: "Match");
+        var page = await new ObservationService(new TreeClient(Build(false)))
+            .QueryAsync("Root", "root", filter, ["component.type"], limit: 4);
+
+        // Ids and paths before the cursor are identical, so only the projected value can reveal the change.
+        var stale = await Assert.ThrowsAsync<RLoopException>(() => new ObservationService(new TreeClient(Build(true)))
+            .QueryAsync("Root", "root", filter, ["component.type"], limit: 4, cursor: page.Truncation?.Continuation));
+        Assert.Equal("CURSOR_STALE", stale.Code);
+    }
+
+    [Fact]
+    public async Task QueryCursorCannotDetectAWorldThatDiffersOnlyAfterTheCursorPosition()
+    {
+        // Documents the limit of the guarantee: only the rows before the offset are checked.
+        var first = Slot("root", "Root", Enumerable.Range(0, 6).Select(index => Slot($"s{index}", "Match")).ToArray());
+        var laterDiffers = Slot("root", "Root", Enumerable.Range(0, 6)
+            .Select(index => Slot(index < 4 ? $"s{index}" : $"other{index}", "Match")).ToArray());
+        var filter = new HierarchyQueryFilter(Name: "Match");
+        var page = await new ObservationService(new TreeClient(first)).QueryAsync("Root", "root", filter, [], limit: 4);
+
+        var resumed = await new ObservationService(new TreeClient(laterDiffers))
+            .QueryAsync("Root", "root", filter, [], limit: 4, cursor: page.Truncation?.Continuation);
+
+        // No error: the continuation is served from a world that only shares the first four rows.
+        Assert.Equal(["Root/Match[4]", "Root/Match[5]"], resumed.Data.Matches.Select(match => match.SlotPath).ToArray());
+        Assert.Equal(["other4", "other5"], resumed.Data.Matches.Select(match => match.SlotId).ToArray());
+    }
+
+    [Fact]
+    public async Task QueryCursorV1AndV2TokensAreInvalid()
+    {
+        var tree = Slot("root", "Root", Enumerable.Range(0, 6).Select(index => Slot($"s{index}", "Match")).ToArray());
+        foreach (var token in new[] { "1\u001fabcdef\u001f4", "v2\u001fabcdef\u001f4\u001fdigest" })
+        {
+            var cursor = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(token));
+            var error = await Assert.ThrowsAsync<RLoopException>(() => new ObservationService(new TreeClient(tree))
+                .QueryAsync("Root", "root", new HierarchyQueryFilter(Name: "Match"), [], limit: 4, cursor: cursor));
+            Assert.Equal("CURSOR_INVALID", error.Code);
+        }
+    }
+
+    [Fact]
+    public async Task UserRootSlotsAreObservedByDefaultAndExcludedOnlyWhenRequestedAsUnobserved()
+    {
+        var tree = Slot("root", "Root", [
+            Slot("u", "User Alice", [Slot("h", "Head")], [Component("c", "[FrooxEngine]FrooxEngine.UserRoot")]),
+            Slot("w", "World")
+        ]);
+        var service = new ObservationService(new TreeClient(tree));
+
+        var included = await service.ProfileAsync("Root", "root");
+        Assert.True(included.Complete);
+        Assert.Equal(4, included.Data.TotalSlots);
+
+        var excluded = await service.ProfileAsync("Root", "root", excludeUserRoots: true);
+        Assert.False(excluded.Complete);
+        Assert.Equal("user-root-excluded", excluded.Truncation?.Reason);
+        Assert.Equal(1, excluded.Truncation?.ExcludedUserRoots);
+        Assert.Equal("Root/User Alice", Assert.Single(excluded.Truncation!.ExcludedPaths!));
+        Assert.Equal(2, excluded.Data.TotalSlots);
+
+        var query = await service.QueryAsync("Root", "root", new HierarchyQueryFilter(ExcludeUserRoots: true), []);
+        Assert.False(query.Complete);
+        Assert.DoesNotContain(query.Data.Matches, match => match.SlotPath.StartsWith("Root/User Alice", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task ExcludedUserRootIsNeverReportedRemovedByDiff()
+    {
+        using var workspace = new Workspace();
+        var tree = Slot("root", "Root", [
+            Slot("u", "User Alice", components: [Component("c", "[FrooxEngine]FrooxEngine.UserRoot")]), Slot("w", "World")]);
+        await new ObservationService(new TreeClient(tree)).CreateSnapshotAsync("Root", "root", workspace.File("before.json"));
+        var after = await new ObservationService(new TreeClient(tree))
+            .CreateSnapshotAsync("Root", "root", workspace.File("after.json"), excludeUserRoots: true);
+
+        Assert.False(after.Complete);
+        Assert.False(after.Slots.Single(slot => slot.Path == "Root").ChildrenObserved);
+        var diff = ObservationService.Diff(workspace.File("before.json"), workspace.File("after.json"));
+        Assert.DoesNotContain(diff.Groups.SelectMany(group => group.Changes), change => change.Kind == "slot.removed");
+        Assert.Contains(diff.Unobserved!, item => item.Path == "Root/User Alice" && item.Reason == "slot-presence-unobserved");
+        Assert.False(diff.Complete);
+    }
+
+    [Fact]
+    public async Task UnobservedComponentListOrMembersAreNotReportedAsRemoved()
+    {
+        using var workspace = new Workspace();
+        var members = new Dictionary<string, MemberValue> { ["Target"] = new("reference", TargetId: "x") };
+        var full = Slot("root", "Root", [
+            Slot("a", "Alpha", components: [Component("c1", "[FrooxEngine]FrooxEngine.Grabbable", members)]),
+            Slot("b", "Beta", components: [Component("c2", "[FrooxEngine]FrooxEngine.Grabbable", members)])]);
+        // Alpha came back reference-only (no component list); the Beta component came back without member data.
+        var partial = Slot("root", "Root", [
+            Slot("a", "Alpha", referenceOnly: true),
+            Slot("b", "Beta", components: [new ComponentSummary("c2", "[FrooxEngine]FrooxEngine.Grabbable", null)])]);
+        await new ObservationService(new TreeClient(full)).CreateSnapshotAsync("Root", "root", workspace.File("before.json"));
+        await new ObservationService(new TreeClient(partial)).CreateSnapshotAsync("Root", "root", workspace.File("after.json"));
+
+        var diff = ObservationService.Diff(workspace.File("before.json"), workspace.File("after.json"));
+        var kinds = diff.Groups.SelectMany(group => group.Changes).Select(change => change.Kind).ToArray();
+
+        Assert.DoesNotContain("component.removed", kinds);
+        Assert.DoesNotContain("member.removed", kinds);
+        Assert.Contains(diff.Unobserved!, item => item.Path == "Root/Alpha" && item.Reason == "components-not-observed");
+        Assert.Contains(diff.Unobserved!, item => item.Path == "Root/Beta" && item.ComponentType == "FrooxEngine.Grabbable" && item.Reason == "members-not-observed");
+        Assert.False(diff.Complete);
+    }
+
+    [Fact]
+    public async Task FullyObservedNewerSnapshotStillReportsComponentAndMemberRemoval()
+    {
+        using var workspace = new Workspace();
+        var before = Slot("root", "Root", [Slot("a", "Alpha", components: [
+            Component("c1", "[FrooxEngine]FrooxEngine.Grabbable", new Dictionary<string, MemberValue>
+            {
+                ["Target"] = new("reference", TargetId: "x"), ["Other"] = new("reference", TargetId: "y")
+            }),
+            Component("c2", "[FrooxEngine]FrooxEngine.Button")]), Slot("x", "X"), Slot("y", "Y")]);
+        var after = Slot("root", "Root", [Slot("a", "Alpha", components: [
+            Component("c1", "[FrooxEngine]FrooxEngine.Grabbable", new Dictionary<string, MemberValue>
+            {
+                ["Target"] = new("reference", TargetId: "x")
+            })]), Slot("x", "X"), Slot("y", "Y")]);
+        await new ObservationService(new TreeClient(before)).CreateSnapshotAsync("Root", "root", workspace.File("before.json"));
+        await new ObservationService(new TreeClient(after)).CreateSnapshotAsync("Root", "root", workspace.File("after.json"));
+
+        var diff = ObservationService.Diff(workspace.File("before.json"), workspace.File("after.json"));
+        var kinds = diff.Groups.SelectMany(group => group.Changes).Select(change => change.Kind).ToArray();
+
+        Assert.Contains("component.removed", kinds);
+        Assert.Contains("member.removed", kinds);
+        Assert.True(diff.Complete);
+        Assert.Equal(0, diff.UnobservedCount);
+    }
+
+    [Fact]
+    public async Task UnreadableMemberIsUnknownAndNeverAValueChangeOrRemoval()
+    {
+        using var workspace = new Workspace();
+        SlotInfo Build(MemberValue? value) => Slot("root", "Root", components: [Component("c1", "[FrooxEngine]FrooxEngine.Grabbable",
+            new Dictionary<string, MemberValue> { ["Target"] = new("reference", TargetId: "x"), ["Hidden"] = value! })]);
+        await new ObservationService(new TreeClient(Build(new("reference", TargetId: "z"))))
+            .CreateSnapshotAsync("Root", "root", workspace.File("before.json"));
+        var after = await new ObservationService(new TreeClient(Build(null)))
+            .CreateSnapshotAsync("Root", "root", workspace.File("after.json"));
+
+        Assert.Equal(["Hidden"], Assert.Single(Assert.Single(after.Slots).Components).UnreadableMembers);
+        var diff = ObservationService.Diff(workspace.File("before.json"), workspace.File("after.json"));
+
+        Assert.Empty(diff.Groups);
+        Assert.Contains(diff.Unobserved!, item => item.Member == "Hidden" && item.Reason == "member-unreadable");
+        Assert.False(diff.Complete);
     }
 
     [Fact]
@@ -160,12 +340,12 @@ public sealed class ObservationServiceTests
         var before = Slot("root", "Root", [
             Slot("a", "Alpha", components: [Component("c1", "[FrooxEngine]FrooxEngine.Grabbable",
                 new Dictionary<string, MemberValue> { ["Target"] = new("reference", TargetId: "x") })]),
-            Slot("b", "Beta")
+            Slot("b", "Beta"), Slot("x", "X"), Slot("y", "Y")
         ]);
         var after = Slot("root", "Root", [
             Slot("a", "Alpha", components: [Component("c1", "[FrooxEngine]FrooxEngine.Grabbable",
                 new Dictionary<string, MemberValue> { ["Target"] = new("reference", TargetId: "y") })]),
-            Slot("c", "Gamma")
+            Slot("c", "Gamma"), Slot("x", "X"), Slot("y", "Y")
         ]);
         await new ObservationService(new TreeClient(before)).CreateSnapshotAsync("Root", "root", workspace.File("before.json"));
         await new ObservationService(new TreeClient(after)).CreateSnapshotAsync("Root", "root", workspace.File("after.json"));
@@ -273,6 +453,186 @@ public sealed class ObservationServiceTests
         Assert.Contains(diff.Issues, issue => issue.Code == "SNAPSHOT_MEMBER_SCOPE_MISMATCH");
         Assert.DoesNotContain(diff.Groups.SelectMany(group => group.Changes),
             change => change.Kind.StartsWith("member.", StringComparison.Ordinal));
+        // Members that were never compared are unobserved, so the diff cannot claim to be complete.
+        Assert.False(diff.Complete);
+        Assert.Contains(diff.Unobserved!, item => item.Reason == "member-scope-mismatch");
+    }
+
+    [Fact]
+    public async Task SelectedSnapshotsWithDifferentMemberListsAreAScopeMismatchNotMemberAddition()
+    {
+        using var workspace = new Workspace();
+        var tree = Slot("root", "Root", components: [
+            Component("c1", "[FrooxEngine]FrooxEngine.Grabbable", new Dictionary<string, MemberValue>
+            {
+                ["A"] = new("field", Value: JsonValue.Create(1)), ["B"] = new("field", Value: JsonValue.Create(2))
+            })]);
+        var service = new ObservationService(new TreeClient(tree));
+        await service.CreateSnapshotAsync("Root", "root", workspace.File("before.json"), "selected", ["A"]);
+        await service.CreateSnapshotAsync("Root", "root", workspace.File("after.json"), "selected", ["A", "B"]);
+
+        var diff = ObservationService.Diff(workspace.File("before.json"), workspace.File("after.json"));
+
+        Assert.DoesNotContain(diff.Groups.SelectMany(group => group.Changes), change => change.Kind == "member.added");
+        Assert.Contains(diff.Unobserved!, item => item.Reason == "member-scope-mismatch");
+        Assert.False(diff.Complete);
+    }
+
+    [Fact]
+    public async Task ReferenceChangingToNullIsAReferenceChangeNotAMemberRemoval()
+    {
+        using var workspace = new Workspace();
+        SlotInfo Build(MemberValue target) => Slot("root", "Root", [
+            Slot("a", "Alpha", components: [Component("c1", "[FrooxEngine]FrooxEngine.Grabbable",
+                new Dictionary<string, MemberValue> { ["Target"] = target })]), Slot("x", "X")]);
+        await new ObservationService(new TreeClient(Build(new("reference", TargetId: "x"))))
+            .CreateSnapshotAsync("Root", "root", workspace.File("before.json"));
+        var nulled = await new ObservationService(new TreeClient(Build(new("reference", TargetId: null))))
+            .CreateSnapshotAsync("Root", "root", workspace.File("after.json"));
+
+        // The null reference is kept as a value in the default references scope.
+        Assert.Contains("Target", Assert.Single(nulled.Slots.Single(slot => slot.Path == "Root/Alpha").Components).Members.Keys);
+        var diff = ObservationService.Diff(workspace.File("before.json"), workspace.File("after.json"));
+        var change = Assert.Single(diff.Groups.SelectMany(group => group.Changes));
+
+        Assert.Equal("reference.changed", change.Kind);
+        Assert.Equal("Target", change.Member);
+        Assert.True(diff.Complete);
+
+        // And back: null to a target is also a reference change.
+        var back = ObservationService.Diff(workspace.File("after.json"), workspace.File("before.json"));
+        Assert.Equal("reference.changed", Assert.Single(back.Groups.SelectMany(group => group.Changes)).Kind);
+    }
+
+    [Fact]
+    public async Task DiffDoesNotTrustRawIdsOrTheConnectionIdAsIdentity()
+    {
+        using var workspace = new Workspace();
+        SlotInfo Build(string prefix, string externalTarget) => Slot(prefix + "root", "Root", [
+            Slot(prefix + "a", "Alpha", components: [Component(prefix + "c1", "[FrooxEngine]FrooxEngine.Grabbable",
+                new Dictionary<string, MemberValue>
+                {
+                    ["Inside"] = new("reference", TargetId: prefix + "x"),
+                    ["Outside"] = new("reference", TargetId: externalTarget)
+                })]),
+            Slot(prefix + "x", "X")]);
+        // Different raw ids everywhere, but the same connection label: nothing about the ids says same or different world.
+        await new ObservationService(new TreeClient(Build("p", "ext-1"), connectionId: "1"))
+            .CreateSnapshotAsync("Root", "proot", workspace.File("before.json"));
+        await new ObservationService(new TreeClient(Build("q", "ext-2"), connectionId: "1"))
+            .CreateSnapshotAsync("Root", "qroot", workspace.File("after.json"));
+
+        var diff = ObservationService.Diff(workspace.File("before.json"), workspace.File("after.json"));
+
+        // The in-snapshot reference compares by structure (same path), so renamed ids are not a change.
+        Assert.Empty(diff.Groups);
+        Assert.DoesNotContain(diff.Unobserved!, item => item.Member == "Inside");
+        // The out-of-snapshot target can only be compared by raw id, which proves nothing.
+        var outside = Assert.Single(diff.Unobserved!);
+        Assert.Equal("Outside", outside.Member);
+        Assert.Equal("reference-identity-unproven", outside.Reason);
+        Assert.False(diff.Complete);
+        Assert.Contains(diff.Issues, issue => issue.Code == "SNAPSHOT_IDENTITY_UNPROVEN" && issue.Severity == "info");
+        Assert.DoesNotContain(diff.Issues, issue => issue.Code == "SNAPSHOT_CONNECTION_CHANGED");
+
+        // Identical raw ids prove nothing either: still unobserved, never unchanged.
+        await new ObservationService(new TreeClient(Build("p", "ext-1"), connectionId: "2"))
+            .CreateSnapshotAsync("Root", "proot", workspace.File("same-ids.json"));
+        var same = ObservationService.Diff(workspace.File("before.json"), workspace.File("same-ids.json"));
+        Assert.Empty(same.Groups);
+        Assert.Equal("reference-identity-unproven", Assert.Single(same.Unobserved!).Reason);
+        Assert.False(same.Complete);
+    }
+
+    [Fact]
+    public async Task ReferenceToNullVersusUnprovenTargetIsStillAStructuralChange()
+    {
+        using var workspace = new Workspace();
+        SlotInfo Build(string? target) => Slot("root", "Root", components: [Component("c1", "[FrooxEngine]FrooxEngine.Grabbable",
+            new Dictionary<string, MemberValue> { ["Outside"] = new("reference", TargetId: target) })]);
+        await new ObservationService(new TreeClient(Build("ext"))).CreateSnapshotAsync("Root", "root", workspace.File("before.json"));
+        await new ObservationService(new TreeClient(Build(null))).CreateSnapshotAsync("Root", "root", workspace.File("after.json"));
+
+        var diff = ObservationService.Diff(workspace.File("before.json"), workspace.File("after.json"));
+
+        Assert.Equal("reference.changed", Assert.Single(diff.Groups.SelectMany(group => group.Changes)).Kind);
+        Assert.Contains(diff.Unobserved!, item => item.Reason == "reference-identity-unproven");
+        Assert.False(diff.Complete);
+    }
+
+    [Fact]
+    public async Task ReferenceOnlySlotIsAnUnobservedBoundaryAndItsHiddenChildrenAreNeverRemoved()
+    {
+        using var workspace = new Workspace();
+        var full = Slot("root", "Root", [Slot("a", "Alpha", [Slot("hidden", "Hidden")])]);
+        // Alpha came back reference-only: it may have children, but the transport did not say.
+        var partial = Slot("root", "Root", [Slot("a", "Alpha", referenceOnly: true)]);
+
+        var envelope = await new ObservationService(new TreeClient(partial)).ProfileAsync("Root", "root");
+        Assert.False(envelope.Complete);
+        Assert.Equal("reference-only-boundary", envelope.Truncation?.Reason);
+        Assert.Equal(1, envelope.Truncation?.ReferenceOnlySlots);
+        Assert.Equal("Root/Alpha", Assert.Single(envelope.Truncation!.ReferenceOnlyPaths!));
+
+        await new ObservationService(new TreeClient(full)).CreateSnapshotAsync("Root", "root", workspace.File("before.json"));
+        var after = await new ObservationService(new TreeClient(partial)).CreateSnapshotAsync("Root", "root", workspace.File("after.json"));
+        Assert.False(after.Complete);
+        Assert.False(after.Slots.Single(slot => slot.Path == "Root/Alpha").ChildrenObserved);
+
+        var diff = ObservationService.Diff(workspace.File("before.json"), workspace.File("after.json"));
+
+        Assert.DoesNotContain(diff.Groups.SelectMany(group => group.Changes), change => change.Kind == "slot.removed");
+        Assert.Contains(diff.Unobserved!, item => item.Path == "Root/Alpha/Hidden" && item.Reason == "slot-presence-unobserved");
+        Assert.False(diff.Complete);
+    }
+
+    [Fact]
+    public async Task ExcludeUserRootsReportsReferenceOnlySlotsWhoseChildrenCouldNotBeClassified()
+    {
+        var tree = Slot("root", "Root", [
+            Slot("u", "User Alice", components: [Component("c", "[FrooxEngine]FrooxEngine.UserRoot")]),
+            Slot("a", "Alpha", referenceOnly: true)]);
+
+        var envelope = await new ObservationService(new TreeClient(tree)).ProfileAsync("Root", "root", excludeUserRoots: true);
+
+        Assert.False(envelope.Complete);
+        Assert.Equal("user-root-excluded", envelope.Truncation?.Reason);
+        Assert.Equal(1, envelope.Truncation?.ExcludedUserRoots);
+        Assert.Equal(1, envelope.Truncation?.ReferenceOnlySlots);
+    }
+
+    [Fact]
+    public async Task SnapshotWithoutObservedFlagsReadsAsUnknownNotObserved()
+    {
+        using var workspace = new Workspace();
+        var before = Slot("root", "Root", [Slot("a", "Alpha", components: [Component("c1", "[FrooxEngine]FrooxEngine.Grabbable")]), Slot("b", "Beta")]);
+        var after = Slot("root", "Root", [Slot("a", "Alpha", components: [Component("c1", "[FrooxEngine]FrooxEngine.Grabbable")])]);
+        await new ObservationService(new TreeClient(before)).CreateSnapshotAsync("Root", "root", workspace.File("before.json"));
+        await new ObservationService(new TreeClient(after)).CreateSnapshotAsync("Root", "root", workspace.File("after.json"));
+
+        // Rewrite the newer file the way an older build wrote it: no observed flags at all.
+        var node = JsonNode.Parse(File.ReadAllText(workspace.File("after.json")))!.AsObject();
+        Assert.True(node["complete"]!.GetValue<bool>());
+        foreach (var slot in node["slots"]!.AsArray().Select(item => item!.AsObject()))
+        {
+            slot.Remove("childrenObserved");
+            slot.Remove("componentsObserved");
+            slot.Remove("membersObserved");
+            foreach (var component in slot["components"]!.AsArray().Select(item => item!.AsObject()))
+                component.Remove("membersObserved");
+        }
+        File.WriteAllText(workspace.File("legacy.json"), node.ToJsonString());
+
+        // Against the intact newer snapshot, Beta removal is proven; against the legacy file it is not.
+        Assert.Contains(ObservationService.Diff(workspace.File("before.json"), workspace.File("after.json")).Groups
+            .SelectMany(group => group.Changes), change => change.Kind == "slot.removed");
+        var diff = ObservationService.Diff(workspace.File("before.json"), workspace.File("legacy.json"));
+
+        Assert.DoesNotContain(diff.Groups.SelectMany(group => group.Changes), change => change.Kind == "slot.removed");
+        Assert.Contains(diff.Issues, issue => issue.Code == "SNAPSHOT_LEGACY_OBSERVATION_FLAGS");
+        Assert.Contains(diff.Unobserved!, item => item.Path == "Root/Beta" && item.Reason == "slot-presence-unobserved");
+        Assert.Contains(diff.Unobserved!, item => item.Path == "Root/Alpha" && item.Reason == "components-not-observed");
+        Assert.False(diff.Complete);
     }
 
     [Fact]
@@ -287,10 +647,11 @@ public sealed class ObservationServiceTests
 
     private static SlotInfo Slot(string id, string name, IReadOnlyList<SlotInfo>? children = null,
         IReadOnlyList<ComponentSummary>? components = null, bool referenceOnly = false) =>
-        new(id, name, null, null, null, null, null, null, null, referenceOnly, components ?? [], children ?? []);
+        new(id, name, null, null, null, null, null, null, null, referenceOnly, components ?? [], children ?? [],
+            Members: referenceOnly ? null : new Dictionary<string, MemberValue>());
 
     private static ComponentSummary Component(string id, string type, IReadOnlyDictionary<string, MemberValue>? members = null) =>
-        new(id, type, members);
+        new(id, type, members ?? new Dictionary<string, MemberValue>());
 
     private sealed class Workspace : IDisposable
     {

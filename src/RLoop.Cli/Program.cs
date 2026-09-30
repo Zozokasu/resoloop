@@ -729,7 +729,7 @@ public static class Program
         if (subcommand == "profile")
         {
             var profile = await service.ProfileAsync(selector, resolved, maxDepth, maxSlots,
-                args.Option("group-by") ?? "depth", cancellationToken);
+                args.Option("group-by") ?? "depth", args.Has("exclude-user-roots"), cancellationToken);
             output.Success(profile, writer => WriteProfile(writer, profile));
             return;
         }
@@ -738,7 +738,7 @@ public static class Program
             ? await world.ResolveSlotSelectorAsync(target, args.Option("state"), cancellationToken)
             : null;
         var filter = new HierarchyQueryFilter(args.Option("name"), args.Option("name-regex"), args.Option("component"),
-            args.Option("member"), referenceTo, args.Has("direct-children"));
+            args.Option("member"), referenceTo, args.Has("direct-children"), args.Has("exclude-user-roots"));
         var select = (args.Option("select") ?? string.Empty)
             .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
         var result = await service.QueryAsync(selector, resolved, filter, select,
@@ -758,7 +758,8 @@ public static class Program
                 var output_ = args.RequireOption("output");
                 var document = await new ObservationService(client).CreateSnapshotAsync(selector, resolved, output_,
                     args.Option("member-scope") ?? "references", args.Options("member"),
-                    args.IntOption("max-depth", 64, 0, 64), args.IntOption("max-slots", 10000, 1, 100000), cancellationToken);
+                    args.IntOption("max-depth", 64, 0, 64), args.IntOption("max-slots", 10000, 1, 100000),
+                    args.Has("exclude-user-roots"), cancellationToken);
                 // The file carries the snapshot; stdout stays a receipt so a capture never re-inflates the observation.
                 output.Success(new
                 {
@@ -813,12 +814,15 @@ public static class Program
         }
         writer.WriteLine($"{diff.Changes} change(s) | complete {diff.Complete}");
         foreach (var issue in diff.Issues) writer.WriteLine($"  {issue.Severity}: {issue.Code} {issue.Message}");
+        foreach (var item in diff.Unobserved ?? [])
+            writer.WriteLine($"  unobserved	{item.Path}	{string.Join(' ', new[] { item.ComponentType, item.Member }.Where(part => part is not null))}	{item.Reason}");
     }
 
     private static void WriteCompleteness(TextWriter writer, bool complete, ObservationTruncation? truncation)
     {
         if (complete) return;
         writer.WriteLine($"incomplete: {truncation?.Reason ?? "unknown"}" +
+            (truncation?.ExcludedUserRoots is { } excluded ? $" | {excluded} user root(s) excluded" : string.Empty) +
             (truncation?.Continuation is null ? string.Empty : $" | --cursor {truncation.Continuation}"));
     }
 
@@ -1294,16 +1298,21 @@ Connection and observation:
   resoloop wb status [--workbench-pipe NAME] [--json]
   resoloop hierarchy [--under ID_OR_PATH_OR_STABLE --state FILE] [--depth 2] [--include-components] [--summary] [--json]
   resoloop hierarchy profile [--under SLOT --state FILE] [--max-depth 64] [--max-slots 10000]
-    [--group-by depth|component-type|name] [--json]
+    [--group-by depth|component-type|name] [--exclude-user-roots] [--json]
     Counts only: size, breadth, depth, and component mix without a per-Slot dump.
   resoloop hierarchy query [--under SLOT --state FILE] [--name TEXT] [--name-regex REGEX] [--component TYPE]
     [--member NAME] [--reference-to SLOT] [--direct-children] [--select slot.id,slot.path,component.type,member.NAME]
-    [--limit 100] [--cursor TOKEN] [--max-depth 64] [--max-slots 10000] [--json]
-    --limit bounds returned rows; --max-slots bounds traversal. Cursors are bound to one connection and query.
+    [--limit 100] [--cursor TOKEN] [--max-depth 64] [--max-slots 10000] [--exclude-user-roots] [--json]
+    --limit bounds returned rows; --max-slots bounds traversal. A cursor is bound to its query and re-validated against the
+    rows before it (ids, paths, projected values), so it fails with CURSOR_STALE if those changed. Rows after the cursor cannot
+    be checked: a different world sharing the earlier rows is not detected. Cursors from older builds give CURSOR_INVALID.
+    --exclude-user-roots leaves out Slots holding a UserRoot (off by default) and reports them as unobserved (complete=false).
   resoloop snapshot create --output FILE [--under SLOT --state FILE] [--member-scope references|selected|all]
-    [--member NAME ...] [--max-depth 64] [--max-slots 10000] [--json]
+    [--member NAME ...] [--max-depth 64] [--max-slots 10000] [--exclude-user-roots] [--json]
   resoloop snapshot diff BEFORE.json AFTER.json [--changes-only] [--group-by slot|component|member] [--json]
-    Removals are reported only where the newer snapshot observed the parent.
+    Removals are reported only where the newer snapshot observed the parent, component list, and members;
+    anything else is listed under unobserved, not as a change. Raw ids never prove identity: references to targets
+    outside a snapshot and differing member scopes are unobserved (complete=false).
   resoloop find (--name TEXT [--exact] | --component TYPE) [--under SLOT] [--direct-children] [--depth 8] [--json]
   resoloop inspect SLOT|$slot:key [--state WORLD_STATE] [--depth 1] [--members] [--component TYPE] [--member NAME] [--components-only] [--json]
   resoloop scene summary FILE.json [--output summary.json]

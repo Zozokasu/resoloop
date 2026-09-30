@@ -29,7 +29,12 @@ public sealed record ObservationEnvelope<T>(
     public string ConnectionIdScope => "ResoniteLink connection; stable keys and paths are used across connections";
 }
 
-public sealed record ObservationTruncation(string Reason, string? Continuation, int Observed);
+/// <summary>Why an observation is not the whole requested subtree. <c>ExcludedUserRoots</c> counts Slots left out by the
+/// explicit --exclude-user-roots option; an excluded Slot is unobserved, never absent. <c>ReferenceOnlySlots</c> counts Slots
+/// the transport returned without components or children: their children (and whether they hold a UserRoot) are unknown.</summary>
+public sealed record ObservationTruncation(string Reason, string? Continuation, int Observed,
+    int? ExcludedUserRoots = null, IReadOnlyList<string>? ExcludedPaths = null,
+    int? ReferenceOnlySlots = null, IReadOnlyList<string>? ReferenceOnlyPaths = null);
 
 public sealed record HierarchyProfile(
     int TotalSlots,
@@ -53,7 +58,8 @@ public sealed record HierarchyQueryFilter(
     string? ComponentType = null,
     string? MemberName = null,
     string? ReferenceToId = null,
-    bool DirectChildren = false);
+    bool DirectChildren = false,
+    bool ExcludeUserRoots = false);
 
 public sealed record HierarchyQueryMatch(
     string SlotId,
@@ -87,11 +93,12 @@ public sealed record SnapshotDocument(
     ObservationTruncation? Truncation,
     string MemberScope,
     IReadOnlyList<string> ExcludedMembers,
-    IReadOnlyList<SnapshotSlot> Slots)
+    IReadOnlyList<SnapshotSlot> Slots,
+    IReadOnlyList<string>? SelectedMembers = null)
 {
     public const int CurrentSchemaVersion = 1;
 
-    public string ConnectionIdScope => "ResoniteLink connection; stable keys and paths are used across connections";
+    public string ConnectionIdScope => "informational only: the session id is a per-connection sequence number, not proof that two snapshots share a connection; stable keys and paths are used across connections";
 }
 
 public sealed record SnapshotSlot(
@@ -102,13 +109,21 @@ public sealed record SnapshotSlot(
     bool IsReferenceOnly,
     bool ChildrenObserved,
     IReadOnlyList<SnapshotComponent> Components,
-    IReadOnlyDictionary<string, JsonNode?> Members);
+    IReadOnlyDictionary<string, JsonNode?> Members,
+    bool ComponentsObserved = false,
+    bool MembersObserved = false,
+    IReadOnlyList<string>? UnreadableMembers = null);
 
+/// <summary>MembersObserved=false means member data was not returned, which is different from a component that has no members.
+/// UnreadableMembers lists names that were present but could not be read; neither is comparable in a diff.
+/// The observed flags default to false so a snapshot written before they existed reads as unknown, never as observed.</summary>
 public sealed record SnapshotComponent(
     string Type,
     int Ordinal,
     string SessionId,
-    IReadOnlyDictionary<string, JsonNode?> Members);
+    IReadOnlyDictionary<string, JsonNode?> Members,
+    bool MembersObserved = false,
+    IReadOnlyList<string>? UnreadableMembers = null);
 
 public sealed record SnapshotChange(
     string Kind,
@@ -120,11 +135,16 @@ public sealed record SnapshotChange(
 
 public sealed record SnapshotDiffIssue(string Code, string Severity, string Message);
 
+/// <summary>A comparison the diff could not make. Reported instead of guessing a removal, addition, or value change.</summary>
+public sealed record SnapshotUnobserved(string Path, string? ComponentType, string? Member, string Reason);
+
 public sealed record SnapshotDiffResult(
     bool Complete,
     string GroupBy,
     int Changes,
     IReadOnlyList<SnapshotChangeGroup> Groups,
-    IReadOnlyList<SnapshotDiffIssue> Issues);
+    IReadOnlyList<SnapshotDiffIssue> Issues,
+    int UnobservedCount = 0,
+    IReadOnlyList<SnapshotUnobserved>? Unobserved = null);
 
 public sealed record SnapshotChangeGroup(string Key, IReadOnlyList<SnapshotChange> Changes);
