@@ -123,15 +123,19 @@ public sealed class S1ReviewFixTests
         await client.ConnectAsync(A, Timeout);
         Task? reconnect = null;
         var reconnectFinishedInsideCommit = true;
+        var reconnectAttempted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var commits = 0;
         client.AfterGenerationCheckForTests = () =>
         {
             if (++commits < 2) return; // the first commit creates the disk-cache handle; the second is the definition write
             client.AfterGenerationCheckForTests = null;
             link.Connected = false;
+            client.BeforeReconnectLockForTests = () => reconnectAttempted.TrySetResult();
             reconnect = Task.Run(() => client.ConnectAsync(B, Timeout));
-            Thread.Sleep(300); // give an unprotected reconnect ample time to run
-            reconnectFinishedInsideCommit = reconnect.IsCompleted;
+            // Wait until the reconnect is about to take the cache lock (a signal, not a guess), then give it a bounded
+            // window to (wrongly) finish while this commit still holds the lock.
+            reconnectAttempted.Task.Wait(Timeout);
+            reconnectFinishedInsideCommit = reconnect.Wait(TimeSpan.FromMilliseconds(100));
         };
 
         Assert.Equal(Comp, (await client.DescribeComponentTypeAsync(Comp)).FullTypeName);
@@ -188,5 +192,82 @@ public sealed class S1ReviewFixTests
         var ex = await Assert.ThrowsAsync<RLoopException>(() => client.SearchComponentTypesAsync("X", 10));
         Assert.Equal("NOT_CONNECTED", ex.Code);
         Assert.Equal(ExitCodes.ConnectionFailed, ex.ExitCode);
+    }
+
+    // C4 remainder: a failure answer of an old connection aborts the query instead of becoming a per-type error.
+    [Fact]
+    public async Task TypeListFailureAnswerAfterGenerationChangeAbortsTheQuery()
+    {
+        var link = new ScriptedMetadataLink { Connected = false };
+        link.AllTypesFailureGate = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        link.AllTypesStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var client = Adapter(link);
+        await client.ConnectAsync(A, Timeout);
+        var query = ReflectionQuery.RunAsync(client, new ReflectionRequest([new("Missing1", ["Intensity"]), new("Missing2", ["Intensity"])]));
+        await link.AllTypesStarted.Task.WaitAsync(Timeout);
+        link.Connected = false;
+        await client.ConnectAsync(B, Timeout);
+        link.AllTypesFailureGate.SetResult();
+
+        var ex = await Assert.ThrowsAsync<RLoopException>(() => query);
+        Assert.Equal("CONNECTION_GENERATION_CHANGED", ex.Code);
+        Assert.Equal(1, link.GetAllCalls);
+    }
+
+    [Fact]
+    public async Task TypeListFailureAnswerOnTheSameGenerationStaysTypeSearchFailed()
+    {
+        var link = new ScriptedMetadataLink();
+        link.AllTypesFailureGate = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        link.AllTypesFailureGate.SetResult();
+        await using var client = Adapter(link);
+        var ex = await Assert.ThrowsAsync<RLoopException>(() => client.SearchComponentTypesAsync("X", 10));
+        Assert.Equal("TYPE_SEARCH_FAILED", ex.Code);
+    }
+
+    [Fact]
+    public async Task TypeDefinitionFailureAnswerAfterGenerationChangeIsGenerationChanged()
+    {
+        var link = new ScriptedMetadataLink { Connected = false };
+        link.TypeDefinitionFailureGate = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        link.TypeDefinitionStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var client = Adapter(link);
+        await client.ConnectAsync(A, Timeout);
+        var describe = client.DescribeTypeAsync("Some.Type");
+        await link.TypeDefinitionStarted.Task.WaitAsync(Timeout);
+        link.Connected = false;
+        await client.ConnectAsync(B, Timeout);
+        link.TypeDefinitionFailureGate.SetResult();
+
+        var ex = await Assert.ThrowsAsync<RLoopException>(() => describe);
+        Assert.Equal("CONNECTION_GENERATION_CHANGED", ex.Code);
+        Assert.Equal(0, link.GetAllCalls);
+    }
+
+    // W1 remainder: a failure answer that comes with a dropped connection is a connection failure.
+    [Fact]
+    public async Task CategoryFailureAnswerWithDroppedConnectionIsNotConnected()
+    {
+        var link = new ScriptedMetadataLink();
+        link.CategoryFaults[""] = () =>
+        {
+            link.Connected = false;
+            return Task.FromResult(new LinkTypeList(false, "socket closed", null, null));
+        };
+        await using var client = Adapter(link);
+        var ex = await Assert.ThrowsAsync<RLoopException>(() => client.SearchComponentTypesAsync("X", 10));
+        Assert.Equal("NOT_CONNECTED", ex.Code);
+        Assert.Equal(ExitCodes.ConnectionFailed, ex.ExitCode);
+    }
+
+    [Fact]
+    public async Task CategoryFailureAnswerWhileConnectedStaysSearchIncomplete()
+    {
+        var link = new ScriptedMetadataLink();
+        link.CategoryFaults[""] = () => Task.FromResult(new LinkTypeList(false, "world loading", null, null));
+        await using var client = Adapter(link);
+        var ex = await Assert.ThrowsAsync<RLoopException>(() => client.SearchComponentTypesAsync("X", 10));
+        Assert.Equal("TYPE_SEARCH_INCOMPLETE", ex.Code);
+        Assert.Equal(ExitCodes.OperationFailed, ex.ExitCode);
     }
 }

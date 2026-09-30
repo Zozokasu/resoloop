@@ -34,10 +34,22 @@ internal sealed class ScriptedMetadataLink : IMetadataLink
 
     public Task<LinkSessionData> GetSessionData() => Task.FromResult(new LinkSessionData(true, null, "2026.1.1.1", "0.13.1", "fake-session"));
 
-    public Task<LinkTypeList> GetAllComponentTypes()
+    /// <summary>When set, GetAllComponentTypes signals AllTypesStarted, waits for this task, then answers a failure.</summary>
+    public TaskCompletionSource? AllTypesFailureGate;
+    public TaskCompletionSource? AllTypesStarted;
+    public TaskCompletionSource? TypeDefinitionFailureGate;
+    public TaskCompletionSource? TypeDefinitionStarted;
+
+    public async Task<LinkTypeList> GetAllComponentTypes()
     {
         GetAllCalls++;
-        return Task.FromResult(new LinkTypeList(true, null, AllTypes, []));
+        if (AllTypesFailureGate is not null)
+        {
+            AllTypesStarted?.TrySetResult();
+            await AllTypesFailureGate.Task;
+            return new LinkTypeList(false, "list failed", null, null);
+        }
+        return new LinkTypeList(true, null, AllTypes, []);
     }
 
     public Task<LinkTypeList> GetComponentTypes(string category)
@@ -57,9 +69,18 @@ internal sealed class ScriptedMetadataLink : IMetadataLink
             : new LinkComponentDefinition(false, "Component type not found.", default!);
     }
 
-    public Task<LinkTypeDefinition> GetTypeDefinition(string type) => Task.FromResult(TypeDefinitions.TryGetValue(type, out var definition)
-        ? new LinkTypeDefinition(true, null, definition)
-        : new LinkTypeDefinition(false, "Type not found.", default!));
+    public async Task<LinkTypeDefinition> GetTypeDefinition(string type)
+    {
+        if (TypeDefinitionFailureGate is not null)
+        {
+            TypeDefinitionStarted?.TrySetResult();
+            await TypeDefinitionFailureGate.Task;
+            return new LinkTypeDefinition(false, "type failed", default!);
+        }
+        return TypeDefinitions.TryGetValue(type, out var definition)
+            ? new LinkTypeDefinition(true, null, definition)
+            : new LinkTypeDefinition(false, "Type not found.", default!);
+    }
     public Task<LinkEnumDefinition> GetEnumDefinition(string type) => Task.FromResult(new LinkEnumDefinition(false, "Enum not found.", default!, false));
     public void Dispose() { }
 

@@ -20,6 +20,8 @@ public sealed class ResoniteLinkClientAdapter : IResoniteClient, IResoniteClient
     private readonly object _cacheLock = new();
     /// <summary>Test seam: runs inside the cache lock right after a successful generation check, before the cache update.</summary>
     internal Action? AfterGenerationCheckForTests;
+    /// <summary>Test seam: runs in ConnectAsync right before it asks for the cache lock, so a test can tell the reconnect is about to contend.</summary>
+    internal Action? BeforeReconnectLockForTests;
     private int _cacheHits;
     private string? _generation;
     private Uri? _uri;
@@ -50,6 +52,7 @@ public sealed class ResoniteLinkClientAdapter : IResoniteClient, IResoniteClient
         if (_meta.IsConnected)
             throw new RLoopException("ALREADY_CONNECTED", "The ResoniteLink client is already connected; dispose it and create a new client to connect elsewhere.",
                 ExitCodes.OperationFailed, new Dictionary<string, object?> { ["url"] = _uri?.ToString() });
+        BeforeReconnectLockForTests?.Invoke();
         lock (_cacheLock)
         {
             Volatile.Write(ref _generation, null);
@@ -227,36 +230,39 @@ public sealed class ResoniteLinkClientAdapter : IResoniteClient, IResoniteClient
     public async Task<ReflectionMetadata<ComponentTypeInfo>> DescribeComponentMetadataAsync(string type, bool refresh = false, CancellationToken ct = default)
     {
         EnsureConnected();
-        var definition = await GetComponentDefinitionCachedAsync(type, ct, refresh);
+        var (definition, observedAt, live) = await GetComponentDefinitionWithEvidenceAsync(type, ct, refresh);
         var members = definition.Members.Select(x => ModelMapper.MapMemberDefinition(x.Key, x.Value)).ToArray();
         var methods = definition.Methods.Select(ModelMapper.MapMethodDefinition).ToArray();
-        var evidence = _componentEvidence[type];
         return new(new ComponentTypeInfo(definition.Type.FullTypeName, definition.CategoryPath,
-            ModelMapper.Render(definition.Type.BaseType), definition.Type.IsGenericType, members, methods), evidence.ObservedAt, evidence.Live);
+            ModelMapper.Render(definition.Type.BaseType), definition.Type.IsGenericType, members, methods), observedAt, live);
     }
 
     public async Task<TypeInfo> DescribeTypeAsync(string type, CancellationToken cancellationToken = default)
     {
-        return (await DescribeTypeMetadataAsync(type, false, cancellationToken)).Value;
+        return (await DescribeTypeCoreAsync(type, cancellationToken, false)).Value;
     }
 
     public async Task<ReflectionMetadata<TypeInfo>> DescribeTypeMetadataAsync(string type, bool refresh = false, CancellationToken ct = default)
     {
-        var value = await DescribeTypeCoreAsync(type, ct, refresh);
-        var evidence = _typeEvidence[type];
-        return new(value, evidence.ObservedAt, evidence.Live);
+        var (value, observedAt, live) = await DescribeTypeCoreAsync(type, ct, refresh);
+        return new(value, observedAt, live);
     }
 
-    private async Task<TypeInfo> DescribeTypeCoreAsync(string type, CancellationToken cancellationToken, bool refresh)
+    /// <summary>Returns the definition together with the evidence recorded for it, read under the same lock as the cache.</summary>
+    private async Task<(TypeInfo Value, DateTimeOffset ObservedAt, bool Live)> DescribeTypeCoreAsync(string type, CancellationToken cancellationToken, bool refresh)
     {
         EnsureConnected();
         cancellationToken.ThrowIfCancellationRequested();
         var generation = CaptureGeneration();
         refresh |= _forceLiveMetadata;
-        if (_typeDefinitions.TryGetValue(type, out var cached) && (!refresh || _typeEvidence[type].Live))
+        lock (_cacheLock)
         {
-            Interlocked.Increment(ref _cacheHits);
-            return cached;
+            if (_typeDefinitions.TryGetValue(type, out var cached) && _typeEvidence.TryGetValue(type, out var cachedEvidence) &&
+                (!refresh || cachedEvidence.Live))
+            {
+                Interlocked.Increment(ref _cacheHits);
+                return (cached, cachedEvidence.ObservedAt, cachedEvidence.Live);
+            }
         }
         var disk = await GetReflectionCacheAsync(cancellationToken);
         EnsureGeneration(generation);
@@ -266,15 +272,19 @@ public sealed class ResoniteLinkClientAdapter : IResoniteClient, IResoniteClient
         if (stored is not null)
         {
             CommitIfCurrent(generation, () => RememberType(type, stored.Value, stored.ObservedAt, false));
-            return stored.Value;
+            return (stored.Value, stored.ObservedAt, false);
         }
         var response = await Wait(_meta.GetTypeDefinition(type), "type.get", cancellationToken);
+        // A failure answer of an old connection says nothing about the current one: check the generation first.
+        EnsureGeneration(generation);
         if (!response.Success)
         {
             try
             {
                 var resolved = await ResolveComponentTypeAsync(type, cancellationToken);
+                EnsureGeneration(generation);
                 response = await Wait(_meta.GetTypeDefinition(resolved), "type.get", cancellationToken);
+                EnsureGeneration(generation);
             }
             catch (RLoopException ex) when (ex.Code == "COMPONENT_TYPE_NOT_FOUND")
             {
@@ -296,6 +306,7 @@ public sealed class ResoniteLinkClientAdapter : IResoniteClient, IResoniteClient
         if (response.Definition.IsEnum)
         {
             var enumResponse = await Wait(_meta.GetEnumDefinition(response.Definition.FullTypeName), "enum.get", cancellationToken);
+            EnsureGeneration(generation);
             EnsureSuccess(enumResponse.Success, enumResponse.ErrorInfo, "ENUM_DESCRIBE_FAILED");
             enumValues = enumResponse.Values;
             isFlags = enumResponse.IsFlags;
@@ -308,7 +319,7 @@ public sealed class ResoniteLinkClientAdapter : IResoniteClient, IResoniteClient
             disk.Write("type", type, mapped, observedAt);
             if (type != mapped.FullTypeName) disk.Write("type", mapped.FullTypeName, mapped, observedAt);
         });
-        return mapped;
+        return (mapped, observedAt, true);
     }
 
     public async Task<SyncMethodCallResult> CallComponentMethodAsync(string componentId, string method,
@@ -411,6 +422,8 @@ public sealed class ResoniteLinkClientAdapter : IResoniteClient, IResoniteClient
             return _allComponentTypes;
         }
         var response = await Wait(_meta.GetAllComponentTypes(), "component-types.get-all", cancellationToken);
+        // Check the generation before judging the answer: a failure of an old connection must abort, not become a type error.
+        EnsureGeneration(generation);
         EnsureSuccess(response.Success, response.ErrorInfo, "TYPE_SEARCH_FAILED");
         if (response.ComponentTypes is { Count: > 0 })
             return CommitIfCurrent(generation, () => _allComponentTypes = response.ComponentTypes!);
@@ -444,7 +457,11 @@ public sealed class ResoniteLinkClientAdapter : IResoniteClient, IResoniteClient
             throw CategoryWalkIncomplete(category, $"{ex.GetType().Name}: {ex.Message}", ex);
         }
         if (!response.Success)
+        {
+            // A failure answer that arrives with a dropped connection is a connection failure (same as the exception path).
+            EnsureConnected();
             throw CategoryWalkIncomplete(category, string.IsNullOrWhiteSpace(response.ErrorInfo) ? "ResoniteLink reported a failure" : response.ErrorInfo);
+        }
         if (response.ComponentTypes is null) throw CategoryWalkIncomplete(category, "the response has no ComponentTypes");
         if (response.SubCategories is null) throw CategoryWalkIncomplete(category, "the response has no SubCategories");
         foreach (var type in response.ComponentTypes) results.Add(type);
@@ -471,15 +488,20 @@ public sealed class ResoniteLinkClientAdapter : IResoniteClient, IResoniteClient
             ["Retry after the world finishes loading, or read the component with inspect --members."]);
 
     private async Task<Link.ComponentDefinition> GetComponentDefinitionCachedAsync(string type,
-        CancellationToken cancellationToken, bool refresh = false)
+        CancellationToken cancellationToken, bool refresh = false) =>
+        (await GetComponentDefinitionWithEvidenceAsync(type, cancellationToken, refresh)).Definition;
+
+    /// <summary>Returns the definition together with the evidence recorded for it, read under the same lock as the cache.</summary>
+    private async Task<(Link.ComponentDefinition Definition, DateTimeOffset ObservedAt, bool Live)> GetComponentDefinitionWithEvidenceAsync(
+        string type, CancellationToken cancellationToken, bool refresh = false)
     {
         cancellationToken.ThrowIfCancellationRequested();
         var generation = CaptureGeneration();
         refresh |= _forceLiveMetadata;
-        if (_componentDefinitions.TryGetValue(type, out var cached) && (!refresh || _componentEvidence[type].Live))
+        if (TryGetCachedComponent(type, refresh, out var hit))
         {
             Interlocked.Increment(ref _cacheHits);
-            return cached;
+            return hit;
         }
         var disk = await GetReflectionCacheAsync(cancellationToken);
         EnsureGeneration(generation);
@@ -488,7 +510,7 @@ public sealed class ResoniteLinkClientAdapter : IResoniteClient, IResoniteClient
         if (stored is not null)
         {
             CommitIfCurrent(generation, () => RememberComponent(type, stored.Value, stored.ObservedAt, false));
-            return stored.Value;
+            return (stored.Value, stored.ObservedAt, false);
         }
         var first = await TryGetComponentDefinitionAsync(type, cancellationToken);
         if (first.Response is not { Success: true })
@@ -496,16 +518,21 @@ public sealed class ResoniteLinkClientAdapter : IResoniteClient, IResoniteClient
             EnsureGeneration(generation);
             var resolved = await ResolveComponentTypeAsync(type, cancellationToken);
             EnsureGeneration(generation);
-            if (_componentDefinitions.TryGetValue(resolved, out cached) && (!refresh || _componentEvidence[resolved].Live))
+            if (TryGetCachedComponent(resolved, refresh, out _))
             {
-                var alias = cached;
-                CommitIfCurrent(generation, () =>
+                // Read again inside the commit lock, after the generation check, so a reconnect clear cannot race it.
+                var aliased = CommitIfCurrent(generation, () =>
                 {
-                    _componentDefinitions[type] = alias;
-                    _componentEvidence[type] = _componentEvidence[resolved];
+                    if (!TryGetCachedComponent(resolved, refresh, out var again)) return ((Link.ComponentDefinition, DateTimeOffset, bool)?)null;
+                    _componentDefinitions[type] = again.Definition;
+                    _componentEvidence[type] = (again.ObservedAt, again.Live);
+                    return again;
                 });
-                Interlocked.Increment(ref _cacheHits);
-                return cached;
+                if (aliased is { } value)
+                {
+                    Interlocked.Increment(ref _cacheHits);
+                    return value;
+                }
             }
             first = await TryGetComponentDefinitionAsync(resolved, cancellationToken);
             EnsureGeneration(generation);
@@ -534,7 +561,22 @@ public sealed class ResoniteLinkClientAdapter : IResoniteClient, IResoniteClient
             disk.Write("component-sdk", type, definition, observedAt);
             if (type != definition.Type.FullTypeName) disk.Write("component-sdk", definition.Type.FullTypeName, definition, observedAt);
         });
-        return definition;
+        return (definition, observedAt, true);
+    }
+
+    private bool TryGetCachedComponent(string type, bool refresh, out (Link.ComponentDefinition Definition, DateTimeOffset ObservedAt, bool Live) hit)
+    {
+        lock (_cacheLock)
+        {
+            if (_componentDefinitions.TryGetValue(type, out var definition) && _componentEvidence.TryGetValue(type, out var evidence) &&
+                (!refresh || evidence.Live))
+            {
+                hit = (definition, evidence.ObservedAt, evidence.Live);
+                return true;
+            }
+        }
+        hit = default;
+        return false;
     }
 
     /// <summary>Reads one component definition; an SDK exception is kept as data so callers can classify it as unreadable.</summary>
