@@ -26,6 +26,7 @@
         is eligible for stop.
       - The state file lives under %LOCALAPPDATA%, never in the repository.
       - This script never runs dotnet build.
+      - Do not run start/stop concurrently (no locking is performed).
 
     Requires Windows PowerShell 5.1. ASCII only on purpose: comments and
     messages stay English so nothing mojibakes under 5.1.
@@ -90,6 +91,12 @@ function Quote-Argv {
 function Get-Prop {
     param($Obj, [string[]]$Names)
     if ($null -eq $Obj) { return $null }
+    if ($Obj -is [System.Collections.IDictionary]) {
+        foreach ($n in $Names) {
+            if ($Obj.Contains($n)) { return $Obj[$n] }
+        }
+        return $null
+    }
     foreach ($n in $Names) {
         $p = $Obj.PSObject.Properties[$n]
         if ($null -ne $p -and $null -ne $p.Value) { return $p.Value }
@@ -166,16 +173,39 @@ function Remove-State {
 function Test-RecordedProcess {
     # Checks whether the process recorded in $State is still the same process.
     # Returns @{ Found; Match; Process; Reason }:
-    #   Found=$false -> no process with the recorded PID exists
-    #   Match=$false -> a process exists but is a different one (PID reuse)
+    #   Found=$false               -> record is complete but the PID is not a live process
+    #   Found=$true, Match=$false  -> record incomplete/invalid, or the live process
+    #                                 is a different one (PID reuse); Reason explains why
+    #   Found=$true, Match=$true   -> verified same process
+    # All three record fields (pid, processName, startTimeUtc) are REQUIRED.
+    # A missing/blank/invalid field is never treated as a match; it yields
+    # Found=$true, Match=$false so callers refuse instead of cleaning up.
     param([Parameter(Mandatory = $true)]$State)
     $pidValue = Get-Prop $State @('pid')
-    if ($null -eq $pidValue) {
-        return @{ Found = $false; Match = $false; Process = $null; Reason = 'record has no pid' }
+    if ($null -eq $pidValue -or [string]::IsNullOrWhiteSpace([string]$pidValue)) {
+        return @{ Found = $true; Match = $false; Process = $null; Reason = 'incomplete record: missing pid' }
+    }
+    $pidInt = 0
+    if (-not [int]::TryParse(([string]$pidValue).Trim(), [ref]$pidInt)) {
+        return @{ Found = $true; Match = $false; Process = $null; Reason = 'incomplete record: invalid pid' }
+    }
+    $recordedName = Get-Prop $State @('processName')
+    if ([string]::IsNullOrWhiteSpace([string]$recordedName)) {
+        return @{ Found = $true; Match = $false; Process = $null; Reason = 'incomplete record: missing processName' }
+    }
+    $recordedStart = Get-Prop $State @('startTimeUtc')
+    if ([string]::IsNullOrWhiteSpace([string]$recordedStart)) {
+        return @{ Found = $true; Match = $false; Process = $null; Reason = 'incomplete record: missing startTimeUtc' }
+    }
+    $parsed = $null
+    try {
+        $parsed = [DateTime]::Parse(([string]$recordedStart), [System.Globalization.CultureInfo]::InvariantCulture, [System.Globalization.DateTimeStyles]::RoundtripKind)
+    } catch {
+        return @{ Found = $true; Match = $false; Process = $null; Reason = 'unparseable recorded startTimeUtc' }
     }
     $proc = $null
     try {
-        $proc = Get-Process -Id ([int]$pidValue) -ErrorAction Stop
+        $proc = Get-Process -Id $pidInt -ErrorAction Stop
     } catch {
         $proc = $null
     }
@@ -190,22 +220,12 @@ function Test-RecordedProcess {
     } catch {
         return @{ Found = $false; Match = $false; Process = $null; Reason = 'process exited' }
     }
-    $recordedName = Get-Prop $State @('processName')
-    if (-not [string]::IsNullOrEmpty($recordedName) -and $actualName -ne $recordedName) {
+    if ($actualName -ne $recordedName) {
         return @{ Found = $true; Match = $false; Process = $proc; Reason = ("process name mismatch (recorded=" + $recordedName + " actual=" + $actualName + ")") }
     }
-    $recordedStart = Get-Prop $State @('startTimeUtc')
-    if (-not [string]::IsNullOrEmpty($recordedStart)) {
-        $parsed = $null
-        try {
-            $parsed = [DateTime]::Parse($recordedStart, [System.Globalization.CultureInfo]::InvariantCulture, [System.Globalization.DateTimeStyles]::RoundtripKind)
-        } catch {
-            return @{ Found = $true; Match = $false; Process = $proc; Reason = 'unparseable recorded startTimeUtc' }
-        }
-        $diff = [Math]::Abs(($actualStart - $parsed.ToUniversalTime()).TotalSeconds)
-        if ($diff -gt 2) {
-            return @{ Found = $true; Match = $false; Process = $proc; Reason = ("start time mismatch (" + $diff + "s > 2s)") }
-        }
+    $diff = [Math]::Abs(($actualStart - $parsed.ToUniversalTime()).TotalSeconds)
+    if ($diff -gt 2) {
+        return @{ Found = $true; Match = $false; Process = $proc; Reason = ("start time mismatch (" + $diff + "s > 2s)") }
     }
     return @{ Found = $true; Match = $true; Process = $proc; Reason = '' }
 }
@@ -261,30 +281,39 @@ function Invoke-Rwb {
 
         $proc = New-Object System.Diagnostics.Process
         $proc.StartInfo = $psi
-        $null = $proc.Start()
-        $stdoutTask = $proc.StandardOutput.ReadToEndAsync()
-        $stderrTask = $proc.StandardError.ReadToEndAsync()
-        $timedOut = $false
-        $exited = $proc.WaitForExit(30000)
-        if (-not $exited) {
-            $timedOut = $true
-            try { $proc.Kill() } catch { }
-            $proc.WaitForExit()
-        }
-        $stdout = ''
-        $stderr = ''
-        try { $stdout = $stdoutTask.Result } catch { $stdout = '' }
-        try { $stderr = $stderrTask.Result } catch { $stderr = '' }
-        if ($null -eq $stdout) { $stdout = '' }
-        if ($null -eq $stderr) { $stderr = '' }
-        $exitCode = -1
-        if ($exited) { $exitCode = $proc.ExitCode }
-        $proc.Dispose()
-        return [ordered]@{
-            ExitCode = $exitCode
-            TimedOut = $timedOut
-            StdOut   = $stdout
-            StdErr   = $stderr
+        try {
+            $null = $proc.Start()
+            $stdoutTask = $proc.StandardOutput.ReadToEndAsync()
+            $stderrTask = $proc.StandardError.ReadToEndAsync()
+            $timedOut = $false
+            $exited = $proc.WaitForExit(30000)
+            if (-not $exited) {
+                $timedOut = $true
+                try {
+                    $proc.Kill()
+                } catch {
+                    throw ("rwb " + $Method + " exceeded the 30s timeout and Kill() failed: " + $_.Exception.Message)
+                }
+                if (-not $proc.WaitForExit(5000)) {
+                    throw ("rwb " + $Method + " did not exit within 5s after Kill")
+                }
+            }
+            $stdout = ''
+            $stderr = ''
+            try { $stdout = $stdoutTask.Result } catch { $stdout = '' }
+            try { $stderr = $stderrTask.Result } catch { $stderr = '' }
+            if ($null -eq $stdout) { $stdout = '' }
+            if ($null -eq $stderr) { $stderr = '' }
+            $exitCode = -1
+            if ($exited) { $exitCode = $proc.ExitCode }
+            return [ordered]@{
+                ExitCode = $exitCode
+                TimedOut = $timedOut
+                StdOut   = $stdout
+                StdErr   = $stderr
+            }
+        } finally {
+            $proc.Dispose()
         }
     } finally {
         if ($null -ne $tmpFile -and (Test-Path -LiteralPath $tmpFile)) {
@@ -358,6 +387,36 @@ function Get-CandidateList {
     return ($items -join '; ')
 }
 
+function Wait-SessionConnected {
+    # Polls session.status every 500ms until state Connected or TimeoutSec
+    # elapses. Returns @{ TimedOut; State; SessionId; Endpoint; Match }.
+    # Match=$true only when the Connected status carries ExpectedSessionId;
+    # a missing sessionId counts as not matching.
+    param(
+        [Parameter(Mandatory = $true)][string]$ExpectedSessionId,
+        [int]$TimeoutSec = 10
+    )
+    $st = ''
+    $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSec)
+    while ([DateTime]::UtcNow -lt $deadline) {
+        Start-Sleep -Milliseconds 500
+        $poll = Invoke-RwbChecked -Method 'session.status' -Params @{}
+        $st = [string](Get-Prop $poll @('state'))
+        if ($st -eq 'Connected') {
+            $t = Get-Prop $poll @('targetSession')
+            $sid = [string](Get-Prop $t @('sessionId'))
+            return @{
+                TimedOut  = $false
+                State     = $st
+                SessionId = $sid
+                Endpoint  = Get-Prop $t @('endpoint')
+                Match     = (-not [string]::IsNullOrWhiteSpace($sid) -and $sid -eq $ExpectedSessionId)
+            }
+        }
+    }
+    return @{ TimedOut = $true; State = $st; SessionId = ''; Endpoint = $null; Match = $false }
+}
+
 # ---------------------------------------------------------------------------
 # Subcommands
 # ---------------------------------------------------------------------------
@@ -369,6 +428,22 @@ function Invoke-Start {
         if ($null -ne $state) {
             $check = Test-RecordedProcess $state
             if ($check.Found -and $check.Match) {
+                $recordedPipe = [string](Get-Prop $state @('pipeName'))
+                if ([string]::IsNullOrWhiteSpace($recordedPipe) -or
+                    -not [string]::Equals($recordedPipe, $PipeName, [System.StringComparison]::OrdinalIgnoreCase)) {
+                    Write-Host ("FAIL: recorded App (PID " + (Get-Prop $state @('pid')) + ") has pipeName '" + $(if ([string]::IsNullOrWhiteSpace($recordedPipe)) { '(none)' } else { $recordedPipe }) + "', expected '" + $PipeName + "'; not starting a second App")
+                    return 1
+                }
+                $pipeReady = $false
+                $pipeDeadline = [DateTime]::UtcNow.AddSeconds(5)
+                while ([DateTime]::UtcNow -lt $pipeDeadline -and -not $pipeReady) {
+                    if (Test-PipeReachable -Name $PipeName -TimeoutMs 500) { $pipeReady = $true }
+                    else { Start-Sleep -Milliseconds 250 }
+                }
+                if (-not $pipeReady) {
+                    Write-Host ("FAIL: recorded App (PID " + (Get-Prop $state @('pid')) + ") is alive but pipe '" + $PipeName + "' does not answer; not starting a second App")
+                    return 1
+                }
                 Write-Host ("already started by this script (PID " + (Get-Prop $state @('pid')) + ")")
                 return 0
             }
@@ -504,14 +579,38 @@ function Invoke-Connect {
         $state = [string](Get-Prop $statusResult @('state'))
         $target = Get-Prop $statusResult @('targetSession')
         $currentEndpoint = [string](Get-Prop $target @('endpoint'))
+        $currentSessionId = [string](Get-Prop $target @('sessionId'))
 
         if ($state -eq 'Connected' -or $state -eq 'Connecting' -or $state -eq 'Reconnecting') {
+            $sameTarget = $false
+            $candSessionId = $null
             if ($cands.Count -eq 1) {
+                $candSessionId = [string](Get-Prop $cands[0] @('sessionId'))
                 $candEndpoint = Get-Prop $cands[0] @('endpoint')
-                if (Test-EndpointMatch $currentEndpoint $candEndpoint) {
-                    Write-Host ("already connected to " + $currentEndpoint)
-                    return 0
+                $sameTarget = (-not [string]::IsNullOrWhiteSpace($candSessionId)) -and
+                              (-not [string]::IsNullOrWhiteSpace($currentSessionId)) -and
+                              ($currentSessionId -eq $candSessionId) -and
+                              (Test-EndpointMatch $currentEndpoint $candEndpoint)
+            }
+            if ($state -eq 'Connected' -and $sameTarget) {
+                Write-Host ("already connected to " + $currentEndpoint)
+                return 0
+            }
+            if (($state -eq 'Connecting' -or $state -eq 'Reconnecting') -and $sameTarget) {
+                # a connect to the chosen target is already in progress; wait for it,
+                # never issue a second session.connect
+                Write-Host ("connect already in progress to " + $currentEndpoint + "; polling for Connected")
+                $w = Wait-SessionConnected -ExpectedSessionId $candSessionId -TimeoutSec $ConnectTimeoutSec
+                if ($w.TimedOut) {
+                    Write-Host ("FAIL: session did not reach Connected within " + $ConnectTimeoutSec + "s (state=" + $w.State + ")")
+                    return 1
                 }
+                if (-not $w.Match) {
+                    Write-Host ("FAIL: session reached Connected but sessionId is " + $(if ([string]::IsNullOrWhiteSpace($w.SessionId)) { '(none)' } else { $w.SessionId }) + ", expected " + $candSessionId)
+                    return 1
+                }
+                Write-Host ("connected to " + $(if ($null -eq $w.Endpoint) { '(endpoint unknown)' } else { $w.Endpoint }))
+                return 0
             }
             Write-Host ("FAIL: already connected to " + $(if ([string]::IsNullOrWhiteSpace($currentEndpoint)) { '(unknown endpoint)' } else { $currentEndpoint }) + "; refusing to change the connection (candidates: " + (Get-CandidateList $cands) + ")")
             return 1
@@ -538,24 +637,27 @@ function Invoke-Connect {
         $connectResult = Invoke-RwbChecked -Method 'session.connect' -Params ([ordered]@{ sessionId = $sessionId }) -Grants @('session.control')
         $st2 = [string](Get-Prop $connectResult @('state'))
         if ($st2 -eq 'Connected') {
-            $ep = Get-Prop (Get-Prop $connectResult @('targetSession')) @('endpoint')
-            Write-Host ("connected to " + $(if ($null -eq $ep) { '(endpoint unknown)' } else { $ep }))
-            return 0
-        }
-        $st3 = $st2
-        $deadline = [DateTime]::UtcNow.AddSeconds($ConnectTimeoutSec)
-        while ([DateTime]::UtcNow -lt $deadline -and $st3 -ne 'Connected') {
-            Start-Sleep -Milliseconds 500
-            $poll = Invoke-RwbChecked -Method 'session.status' -Params @{}
-            $st3 = [string](Get-Prop $poll @('state'))
-            if ($st3 -eq 'Connected') {
-                $ep2 = Get-Prop (Get-Prop $poll @('targetSession')) @('endpoint')
-                Write-Host ("connected to " + $(if ($null -eq $ep2) { '(endpoint unknown)' } else { $ep2 }))
+            $connTarget = Get-Prop $connectResult @('targetSession')
+            $connSid = [string](Get-Prop $connTarget @('sessionId'))
+            if (-not [string]::IsNullOrWhiteSpace($connSid) -and $connSid -eq $sessionId) {
+                $ep = Get-Prop $connTarget @('endpoint')
+                Write-Host ("connected to " + $(if ($null -eq $ep) { '(endpoint unknown)' } else { $ep }))
                 return 0
             }
+            Write-Host ("FAIL: session.connect reported Connected but sessionId is " + $(if ([string]::IsNullOrWhiteSpace($connSid)) { '(none)' } else { $connSid }) + ", expected " + $sessionId)
+            return 1
         }
-        Write-Host ("FAIL: session did not reach Connected within " + $ConnectTimeoutSec + "s (state=" + $st3 + ")")
-        return 1
+        $w = Wait-SessionConnected -ExpectedSessionId $sessionId -TimeoutSec $ConnectTimeoutSec
+        if ($w.TimedOut) {
+            Write-Host ("FAIL: session did not reach Connected within " + $ConnectTimeoutSec + "s (state=" + $w.State + ")")
+            return 1
+        }
+        if (-not $w.Match) {
+            Write-Host ("FAIL: session reached Connected but sessionId is " + $(if ([string]::IsNullOrWhiteSpace($w.SessionId)) { '(none)' } else { $w.SessionId }) + ", expected " + $sessionId)
+            return 1
+        }
+        Write-Host ("connected to " + $(if ($null -eq $w.Endpoint) { '(endpoint unknown)' } else { $w.Endpoint }))
+        return 0
     } catch {
         Write-Host ("FAIL: " + $_.Exception.Message)
         return 1
@@ -577,8 +679,7 @@ function Invoke-Stop {
             return 0
         }
         if (-not $check.Match) {
-            Remove-State
-            Write-Host ("FAIL: PID " + $pidText + " is now a different process; not killing (" + $check.Reason + ")")
+            Write-Host ("FAIL: PID " + $(if ($null -eq $pidText) { '(none)' } else { $pidText }) + " is not verified as the recorded process (" + $check.Reason + "); not killing; state file kept")
             return 1
         }
         $proc = $check.Process
@@ -626,6 +727,7 @@ Options:
                            (default: %LOCALAPPDATA%\resoloop-dev\workbench-app.json)
 
 Exit codes: 0 = success, 1 = failure (reason printed with a FAIL: prefix).
+Note: do not run start/stop concurrently (no locking is performed).
 '@
 }
 
