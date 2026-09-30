@@ -29,6 +29,10 @@
       - This script never runs dotnet build.
       - Do not run start/stop concurrently (no locking is performed).
 
+    Note: the build freshness check compares file times only; it cannot
+    confirm which commit the App build came from. It is a heuristic for
+    catching stale builds, not provenance verification.
+
     Requires Windows PowerShell 5.1. ASCII only on purpose: comments and
     messages stay English so nothing mojibakes under 5.1.
 
@@ -59,7 +63,11 @@
 .PARAMETER RequireFreshBuild
     When set, start fails instead of launching if the App exe or
     ResoniteWorkbench.Core.dll is older than the WorkbenchRepo HEAD
-    commit. Without it a stale build only prints a WARN line.
+    commit, or when the freshness cannot be verified at all (for
+    example when the HEAD commit time cannot be read). The check
+    compares file times only and cannot confirm which commit the
+    build came from; it is a heuristic against forgotten rebuilds.
+    Without it a stale build only prints a WARN line.
 
 .PARAMETER StateFile
     Override path of the JSON state file. Default:
@@ -251,10 +259,12 @@ function Invoke-Rwb {
     # Runs: dotnet run --no-build --project src/ResoniteWorkbench.Cli --
     #         --pipe <PipeName> [--grant <cap>]... <method> @<tmpfile>
     # Returns an ordered hashtable: ExitCode / TimedOut / StdOut / StdErr.
+    # The child process is killed after TimeoutSec seconds (default 30).
     param(
         [Parameter(Mandatory = $true)][string]$Method,
         [AllowNull()]$Params,
-        [string[]]$Grants = @()
+        [string[]]$Grants = @(),
+        [int]$TimeoutSec = 30
     )
     if (-not (Test-Path -LiteralPath $WorkbenchRepo -PathType Container)) {
         throw ("rwb " + $Method + " failed: WorkbenchRepo not found: " + $WorkbenchRepo)
@@ -299,13 +309,13 @@ function Invoke-Rwb {
             $stdoutTask = $proc.StandardOutput.ReadToEndAsync()
             $stderrTask = $proc.StandardError.ReadToEndAsync()
             $timedOut = $false
-            $exited = $proc.WaitForExit(30000)
+            $exited = $proc.WaitForExit([int]($TimeoutSec * 1000))
             if (-not $exited) {
                 $timedOut = $true
                 try {
                     $proc.Kill()
                 } catch {
-                    throw ("rwb " + $Method + " exceeded the 30s timeout and Kill() failed: " + $_.Exception.Message)
+                    throw ("rwb " + $Method + " exceeded the " + $TimeoutSec + "s timeout and Kill() failed: " + $_.Exception.Message)
                 }
                 if (-not $proc.WaitForExit(5000)) {
                     throw ("rwb " + $Method + " did not exit within 5s after Kill")
@@ -365,30 +375,43 @@ function Get-StderrTail {
     return ($lines[($lines.Count - 10)..($lines.Count - 1)] -join ' | ')
 }
 
+function Resolve-RwbResponse {
+    # Applies the rwb success contract to a completed (not timed-out)
+    # Invoke-Rwb result: exit code 0 and parseable JSON carrying a
+    # 'result' property. Returns the 'result' value; throws otherwise.
+    param(
+        [Parameter(Mandatory = $true)]$R,
+        [Parameter(Mandatory = $true)][string]$Method
+    )
+    $hint = '(rwb build missing? run dotnet build in the workbench repo)'
+    if ($R.ExitCode -ne 0) {
+        throw ("rwb " + $Method + " exited with code " + $R.ExitCode + ": " + (Get-StderrTail $R.StdErr) + " " + $hint)
+    }
+    $json = Read-RwbJson $R.StdOut
+    if ($null -eq $json) {
+        throw ("rwb " + $Method + " returned unparseable output: " + (Get-StderrTail $R.StdErr) + " " + $hint)
+    }
+    if (-not (Test-PropExists $json 'result')) {
+        throw ("rwb " + $Method + " response has no 'result' property: " + (Get-StderrTail $R.StdErr) + " " + $hint)
+    }
+    return $json.PSObject.Properties['result'].Value
+}
+
 function Invoke-RwbChecked {
     # Invoke-Rwb plus success contract: exit 0, not timed out, JSON with a
     # 'result' property. Throws a descriptive error otherwise.
     param(
         [Parameter(Mandatory = $true)][string]$Method,
         [AllowNull()]$Params,
-        [string[]]$Grants = @()
+        [string[]]$Grants = @(),
+        [int]$TimeoutSec = 30
     )
     $hint = '(rwb build missing? run dotnet build in the workbench repo)'
-    $r = Invoke-Rwb -Method $Method -Params $Params -Grants $Grants
+    $r = Invoke-Rwb -Method $Method -Params $Params -Grants $Grants -TimeoutSec $TimeoutSec
     if ($r.TimedOut) {
-        throw ("rwb " + $Method + " timed out after 30s " + $hint)
+        throw ("rwb " + $Method + " timed out after " + $TimeoutSec + "s " + $hint)
     }
-    if ($r.ExitCode -ne 0) {
-        throw ("rwb " + $Method + " exited with code " + $r.ExitCode + ": " + (Get-StderrTail $r.StdErr) + " " + $hint)
-    }
-    $json = Read-RwbJson $r.StdOut
-    if ($null -eq $json) {
-        throw ("rwb " + $Method + " returned unparseable output: " + (Get-StderrTail $r.StdErr) + " " + $hint)
-    }
-    if (-not (Test-PropExists $json 'result')) {
-        throw ("rwb " + $Method + " response has no 'result' property: " + (Get-StderrTail $r.StdErr) + " " + $hint)
-    }
-    return $json.PSObject.Properties['result'].Value
+    return (Resolve-RwbResponse -R $r -Method $Method)
 }
 
 function Get-CandidateList {
@@ -428,6 +451,59 @@ function Wait-SessionConnected {
         }
     }
     return @{ TimedOut = $true; State = $st; SessionId = ''; Endpoint = $null; Match = $false }
+}
+
+function Resolve-ExistingConnection {
+    # connect helper: decides what to do when session.status reports an
+    # existing connection. Returns $null when the state is not Connected /
+    # Connecting / Reconnecting (the caller continues to session.connect);
+    # otherwise returns the exit code after printing the outcome:
+    #   0 = already connected (or finished connecting) to the single
+    #       discovered candidate
+    #   1 = connected elsewhere, the wait failed, or a sessionId mismatch
+    param(
+        [Parameter(Mandatory = $true)][AllowNull()]$StatusResult,
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()]$Cands
+    )
+    $state = [string](Get-Prop $StatusResult @('state'))
+    if ($state -ne 'Connected' -and $state -ne 'Connecting' -and $state -ne 'Reconnecting') {
+        return $null
+    }
+    $target = Get-Prop $StatusResult @('targetSession')
+    $currentEndpoint = [string](Get-Prop $target @('endpoint'))
+    $currentSessionId = [string](Get-Prop $target @('sessionId'))
+    $sameTarget = $false
+    $candSessionId = $null
+    if ($Cands.Count -eq 1) {
+        $candSessionId = [string](Get-Prop $Cands[0] @('sessionId'))
+        $candEndpoint = Get-Prop $Cands[0] @('endpoint')
+        $sameTarget = (-not [string]::IsNullOrWhiteSpace($candSessionId)) -and
+                      (-not [string]::IsNullOrWhiteSpace($currentSessionId)) -and
+                      ($currentSessionId -eq $candSessionId) -and
+                      (Test-EndpointMatch $currentEndpoint $candEndpoint)
+    }
+    if ($state -eq 'Connected' -and $sameTarget) {
+        Write-Host ("already connected to " + $currentEndpoint)
+        return 0
+    }
+    if (($state -eq 'Connecting' -or $state -eq 'Reconnecting') -and $sameTarget) {
+        # a connect to the chosen target is already in progress; wait for it,
+        # never issue a second session.connect
+        Write-Host ("connect already in progress to " + $currentEndpoint + "; polling for Connected")
+        $w = Wait-SessionConnected -ExpectedSessionId $candSessionId -TimeoutSec $ConnectTimeoutSec
+        if ($w.TimedOut) {
+            Write-Host ("FAIL: session did not reach Connected within " + $ConnectTimeoutSec + "s (state=" + $w.State + ")")
+            return 1
+        }
+        if (-not $w.Match) {
+            Write-Host ("FAIL: session reached Connected but sessionId is " + $(if ([string]::IsNullOrWhiteSpace($w.SessionId)) { '(none)' } else { $w.SessionId }) + ", expected " + $candSessionId)
+            return 1
+        }
+        Write-Host ("connected to " + $(if ($null -eq $w.Endpoint) { '(endpoint unknown)' } else { $w.Endpoint }))
+        return 0
+    }
+    Write-Host ("FAIL: already connected to " + $(if ([string]::IsNullOrWhiteSpace($currentEndpoint)) { '(unknown endpoint)' } else { $currentEndpoint }) + "; refusing to change the connection (candidates: " + (Get-CandidateList $Cands) + ")")
+    return 1
 }
 
 function Get-RepoHeadInfo {
@@ -526,10 +602,18 @@ function Invoke-Start {
             return 1
         }
 
-        # 4. warn when the App build predates the workbench repo HEAD
+        # 4. warn when the App build predates the workbench repo HEAD.
+        #    Heuristic only: it compares file LastWriteTimeUtc to the HEAD
+        #    commit time and cannot confirm which commit the build came
+        #    from. With -RequireFreshBuild an unreadable HEAD commit time
+        #    also fails, since freshness cannot be verified then.
         $headInfo = Get-RepoHeadInfo -RepoPath $WorkbenchRepo
         if ($null -eq $headInfo) {
-            Write-Host 'WARN: could not determine the workbench repo HEAD commit time; skipping the build freshness check'
+            if ($RequireFreshBuild) {
+                Write-Host 'FAIL: cannot verify the App build freshness (could not read the workbench repo HEAD commit time); not launching; note: this compares file times only and cannot confirm which commit the build came from'
+                return 1
+            }
+            Write-Host 'WARN: could not determine the workbench repo HEAD commit time; skipping the build freshness check; note: this compares file times only and cannot confirm which commit the build came from'
         } else {
             $headStamp = $headInfo.CommitTimeUtc.ToString('o')
             $headLabel = $headInfo.ShortHash
@@ -543,11 +627,11 @@ function Invoke-Start {
             foreach ($f in $buildItems) {
                 if ($f.LastWriteTimeUtc -lt $headInfo.CommitTimeUtc) {
                     $stale += $f
-                    Write-Host ("WARN: " + $f.FullName + " (LastWriteTimeUtc " + $f.LastWriteTimeUtc.ToString('o') + ") is older than the workbench repo HEAD commit " + $headLabel + " (" + $headStamp + "); rebuild with dotnet build ResoniteWorkbench.slnx in the workbench repo before start (the running App may lack recent RPC changes)")
+                    Write-Host ("WARN: " + $f.FullName + " (LastWriteTimeUtc " + $f.LastWriteTimeUtc.ToString('o') + ") is older than the workbench repo HEAD commit " + $headLabel + " (" + $headStamp + "); rebuild with dotnet build ResoniteWorkbench.slnx in the workbench repo before start (the running App may lack recent RPC changes); note: this compares file times only and cannot confirm which commit the build came from")
                 }
             }
             if ($stale.Count -gt 0 -and $RequireFreshBuild) {
-                Write-Host ("FAIL: App build is older than the workbench repo HEAD (commit " + $headLabel + " at " + $headStamp + "); not launching")
+                Write-Host ("FAIL: App build is older than the workbench repo HEAD (commit " + $headLabel + " at " + $headStamp + "); not launching; note: this compares file times only and cannot confirm which commit the build came from")
                 return 1
             }
         }
@@ -647,55 +731,34 @@ function Invoke-Connect {
         if ($null -ne $discoverResult) {
             $cands = @($discoverResult | Where-Object { $null -ne $_ })
         }
-        $state = [string](Get-Prop $statusResult @('state'))
-        $target = Get-Prop $statusResult @('targetSession')
-        $currentEndpoint = [string](Get-Prop $target @('endpoint'))
-        $currentSessionId = [string](Get-Prop $target @('sessionId'))
+        $existing = Resolve-ExistingConnection -StatusResult $statusResult -Cands $cands
+        if ($null -ne $existing) { return $existing }
 
-        if ($state -eq 'Connected' -or $state -eq 'Connecting' -or $state -eq 'Reconnecting') {
-            $sameTarget = $false
-            $candSessionId = $null
-            if ($cands.Count -eq 1) {
-                $candSessionId = [string](Get-Prop $cands[0] @('sessionId'))
-                $candEndpoint = Get-Prop $cands[0] @('endpoint')
-                $sameTarget = (-not [string]::IsNullOrWhiteSpace($candSessionId)) -and
-                              (-not [string]::IsNullOrWhiteSpace($currentSessionId)) -and
-                              ($currentSessionId -eq $candSessionId) -and
-                              (Test-EndpointMatch $currentEndpoint $candEndpoint)
-            }
-            if ($state -eq 'Connected' -and $sameTarget) {
-                Write-Host ("already connected to " + $currentEndpoint)
-                return 0
-            }
-            if (($state -eq 'Connecting' -or $state -eq 'Reconnecting') -and $sameTarget) {
-                # a connect to the chosen target is already in progress; wait for it,
-                # never issue a second session.connect
-                Write-Host ("connect already in progress to " + $currentEndpoint + "; polling for Connected")
-                $w = Wait-SessionConnected -ExpectedSessionId $candSessionId -TimeoutSec $ConnectTimeoutSec
-                if ($w.TimedOut) {
-                    Write-Host ("FAIL: session did not reach Connected within " + $ConnectTimeoutSec + "s (state=" + $w.State + ")")
-                    return 1
-                }
-                if (-not $w.Match) {
-                    Write-Host ("FAIL: session reached Connected but sessionId is " + $(if ([string]::IsNullOrWhiteSpace($w.SessionId)) { '(none)' } else { $w.SessionId }) + ", expected " + $candSessionId)
-                    return 1
-                }
-                Write-Host ("connected to " + $(if ($null -eq $w.Endpoint) { '(endpoint unknown)' } else { $w.Endpoint }))
-                return 0
-            }
-            Write-Host ("FAIL: already connected to " + $(if ([string]::IsNullOrWhiteSpace($currentEndpoint)) { '(unknown endpoint)' } else { $currentEndpoint }) + "; refusing to change the connection (candidates: " + (Get-CandidateList $cands) + ")")
-            return 1
-        }
-
+        $retriedDiscovery = $false
         if ($cands.Count -eq 0 -and $DiscoverTimeoutSec -gt 0) {
             # UDP discovery can lag App start by tens of seconds; keep asking.
             # Exits on the first non-empty result, so >=2 candidates still
-            # fails below without waiting for the full timeout.
+            # fails below without waiting for the full timeout. Both the
+            # sleep and each rwb call are capped by the remaining time so
+            # the loop never runs past -DiscoverTimeoutSec.
             Write-Host ("no ResoniteLink session discovered yet; retrying for up to " + $DiscoverTimeoutSec + "s")
             $discoverDeadline = [DateTime]::UtcNow.AddSeconds($DiscoverTimeoutSec)
             while ([DateTime]::UtcNow -lt $discoverDeadline -and $cands.Count -eq 0) {
-                Start-Sleep -Seconds 3
-                $discoverResult = Invoke-RwbChecked -Method 'session.discover' -Params @{}
+                $retriedDiscovery = $true
+                $sleepMs = [int]([Math]::Min(3000, ($discoverDeadline - [DateTime]::UtcNow).TotalMilliseconds))
+                if ($sleepMs -gt 0) {
+                    Start-Sleep -Milliseconds $sleepMs
+                }
+                $remainingSec = ($discoverDeadline - [DateTime]::UtcNow).TotalSeconds
+                if ($remainingSec -le 0) { break }
+                $callTimeoutSec = [Math]::Min(30, [Math]::Max(1, [int]([Math]::Ceiling($remainingSec))))
+                $r = Invoke-Rwb -Method 'session.discover' -Params @{} -TimeoutSec $callTimeoutSec
+                if ($r.TimedOut) {
+                    # rwb used the rest of the retry budget; treat it as the
+                    # discovery deadline expiring, not a call failure.
+                    break
+                }
+                $discoverResult = Resolve-RwbResponse -R $r -Method 'session.discover'
                 $cands = @()
                 if ($null -ne $discoverResult) {
                     $cands = @($discoverResult | Where-Object { $null -ne $_ })
@@ -722,6 +785,15 @@ function Invoke-Connect {
         if ([string]::IsNullOrWhiteSpace($sessionId)) {
             Write-Host 'FAIL: the single discovered candidate has no sessionId; refusing to connect'
             return 1
+        }
+
+        if ($retriedDiscovery) {
+            # The App may have connected elsewhere while discovery retried;
+            # re-check the state just before session.connect so an existing
+            # connection is never changed.
+            $statusResult = Invoke-RwbChecked -Method 'session.status' -Params @{}
+            $existing = Resolve-ExistingConnection -StatusResult $statusResult -Cands $cands
+            if ($null -ne $existing) { return $existing }
         }
 
         $connectResult = Invoke-RwbChecked -Method 'session.connect' -Params ([ordered]@{ sessionId = $sessionId }) -Grants @('session.control')
@@ -818,7 +890,9 @@ Options:
   -DiscoverTimeoutSec <int> seconds connect retries session.discover while no
                            candidate is found (default: 45; 0 = fail immediately)
   -RequireFreshBuild       start: fail instead of launching when the App build is
-                           older than the workbench repo HEAD (default: warn only)
+                           older than the workbench repo HEAD or when freshness
+                           cannot be verified (default: warn only); compares file
+                           times only, cannot confirm the build's source commit
   -StateFile <path>        override state file
                            (default: %LOCALAPPDATA%\resoloop-dev\workbench-app.json)
 
