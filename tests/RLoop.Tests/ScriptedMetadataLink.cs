@@ -19,6 +19,10 @@ internal sealed class ScriptedMetadataLink : IMetadataLink
     public int ConnectCalls;
     public int DefinitionCalls;
     public int GetAllCalls;
+    public int SessionCalls;
+    public TaskCompletionSource? SessionFailureGate;
+    public TaskCompletionSource? SessionStarted;
+    public readonly Dictionary<string, string> TypeDefinitionFailures = new();
     /// <summary>When set, GetComponentDefinition waits for this task before answering.</summary>
     public TaskCompletionSource? DefinitionGate;
     public TaskCompletionSource? DefinitionStarted;
@@ -32,7 +36,17 @@ internal sealed class ScriptedMetadataLink : IMetadataLink
         return Task.CompletedTask;
     }
 
-    public Task<LinkSessionData> GetSessionData() => Task.FromResult(new LinkSessionData(true, null, "2026.1.1.1", "0.13.1", "fake-session"));
+    public async Task<LinkSessionData> GetSessionData()
+    {
+        SessionCalls++;
+        if (SessionFailureGate is not null)
+        {
+            SessionStarted?.TrySetResult();
+            await SessionFailureGate.Task;
+            return new(false, "old session failed", null, null, null);
+        }
+        return new(true, null, "2026.1.1.1", "0.13.1", "fake-session");
+    }
 
     /// <summary>When set, GetAllComponentTypes signals AllTypesStarted, waits for this task, then answers a failure.</summary>
     public TaskCompletionSource? AllTypesFailureGate;
@@ -71,6 +85,7 @@ internal sealed class ScriptedMetadataLink : IMetadataLink
 
     public async Task<LinkTypeDefinition> GetTypeDefinition(string type)
     {
+        if (TypeDefinitionFailures.TryGetValue(type, out var error)) return new(false, error, default!);
         if (TypeDefinitionFailureGate is not null)
         {
             TypeDefinitionStarted?.TrySetResult();
