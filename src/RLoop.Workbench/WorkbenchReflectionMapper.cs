@@ -61,6 +61,56 @@ internal static class WorkbenchReflectionMapper
             .Select(pair => pair.Name)
             .ToArray();
 
+    /// <summary>
+    /// What a component type declares: the member names member.read must read, in the reported
+    /// order, and for each field member the CLR type name <see cref="MemberValue.Type"/> should
+    /// report when the definition's valueType is a plain (non-generic) type.
+    /// </summary>
+    public sealed record DeclaredMembers(
+        IReadOnlyList<string> Names,
+        IReadOnlyDictionary<string, string> FieldValueTypes);
+
+    /// <summary>reflection.component result -> declared member names + field value types. Unknown -> COMPONENT_TYPE_NOT_FOUND.</summary>
+    public static DeclaredMembers MemberDefinitions(JsonElement reflectionResult, string requestedType)
+    {
+        var names = new List<string>();
+        var fieldTypes = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (JsonProperty pair in WireJson.ObjectProperty(
+                WireJson.Object(ComponentValue(reflectionResult, requestedType), "component type definition"),
+                "members", "component type definition")
+            .EnumerateObject())
+        {
+            names.Add(pair.Name);
+            if (PlainFieldValueType(pair.Value) is { } fieldType)
+                fieldTypes[pair.Name] = fieldType;
+        }
+        return new DeclaredMembers(names, fieldTypes);
+    }
+
+    /// <summary>
+    /// The MemberValue.Type the direct backend reports for a field (Type.FullName), recovered
+    /// from the member definition's valueType TypeReference by dropping the "[Assembly]"
+    /// prefix. Only field definitions with a plain, non-generic valueType convert: a rendered
+    /// name containing '&lt;' or '`' (generics, nullable-style arity names) returns null
+    /// instead of guessing, and so do non-field members and missing valueTypes.
+    /// </summary>
+    public static string? PlainFieldValueType(JsonElement memberDefinition)
+    {
+        if (memberDefinition.ValueKind != JsonValueKind.Object
+            || !"field".Equals(WireJson.OptionalString(memberDefinition, "kind"), StringComparison.OrdinalIgnoreCase)
+            || WireJson.OptionalObject(memberDefinition, "valueType", "member definition") is not { } valueType)
+            return null;
+        string rendered = Render(valueType);
+        return rendered.IndexOf('<') < 0 && rendered.IndexOf('`') < 0 ? StripAssembly(rendered) : null;
+    }
+
+    /// <summary>"[Assembly]Namespace.Name" -> "Namespace.Name"; names without a prefix pass through.</summary>
+    public static string StripAssembly(string type)
+    {
+        var end = type.IndexOf(']');
+        return end >= 0 ? type[(end + 1)..] : type;
+    }
+
     /// <summary>reflection.type result (+ the reflection.enum result when the type is an enum) -> Core TypeInfo.</summary>
     public static Core.TypeInfo MapType(JsonElement typeResult, JsonElement? enumResult, string requestedType)
     {

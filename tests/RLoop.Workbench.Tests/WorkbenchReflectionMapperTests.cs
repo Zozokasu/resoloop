@@ -190,6 +190,39 @@ public sealed class WorkbenchReflectionMapperTests
         Assert.Equal("COMPONENT_TYPE_NOT_FOUND", ex.Code);
     }
 
+    [Fact]
+    public void MemberDefinitions_ReportsNamesAndPlainFieldValueTypes()
+    {
+        WorkbenchReflectionMapper.DeclaredMembers declared = WorkbenchReflectionMapper.MemberDefinitions(
+            Json(ComponentResult), "[FrooxEngine]FrooxEngine.Slider");
+
+        Assert.Equal(new[] { "Value", "Target", "Items", "Mode" }, declared.Names);
+        // Value's "[mscorlib]System.Single" strips to the CLR name the direct backend reports;
+        // Mode's valueType renders generic ("Slider<float>+Direction") so it cannot stand in
+        // for a FullName, and non-field members never qualify.
+        Assert.Equal(new Dictionary<string, string> { ["Value"] = "System.Single" },
+            declared.FieldValueTypes);
+    }
+
+    [Fact]
+    public void MemberDefinitions_Unknown_ThrowsComponentTypeNotFound()
+    {
+        const string json = """{ "value": null, "unknownReason": "gone" }""";
+
+        var ex = Throws(() => WorkbenchReflectionMapper.MemberDefinitions(Json(json), "Nope"));
+
+        Assert.Equal("COMPONENT_TYPE_NOT_FOUND", ex.Code);
+    }
+
+    [Theory]
+    [InlineData("""{"kind":"Field","valueType":{"type":"[Elements.Core]Elements.Core.float3","isGenericParameter":false,"genericArguments":[]}}""", "Elements.Core.float3")]
+    [InlineData("""{"kind":"Field","valueType":{"type":"`1","isGenericParameter":false,"genericArguments":[]}}""", null)]
+    [InlineData("""{"kind":"Field","valueType":{"type":"[mscorlib]System.Nullable<>","isGenericParameter":false,"genericArguments":[{"type":"[mscorlib]System.Single","isGenericParameter":false,"genericArguments":[]}]}}""", null)]
+    [InlineData("""{"kind":"Reference","valueType":{"type":"[mscorlib]System.Single","isGenericParameter":false,"genericArguments":[]}}""", null)]
+    [InlineData("""{"kind":"Field","valueType":null}""", null)]
+    public void PlainFieldValueType_OnlyPlainFieldTypesConvert(string definition, string? expected) =>
+        Assert.Equal(expected, WorkbenchReflectionMapper.PlainFieldValueType(Json(definition)));
+
     private static string TypeResult(string typeDefinition) => $$"""
         { "value": {{typeDefinition}}, "provenance": null, "unknownReason": null }
         """;

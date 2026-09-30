@@ -20,6 +20,7 @@ public sealed class WorkbenchCliReadTests : IDisposable
     private const string Slider = "[FrooxEngine]FrooxEngine.Slider";
     private const string Alignment = "[FrooxEngine]FrooxEngine.Alignment";
     private const string GeneratedContent = "[FrooxEngine]FrooxEngine.AI_GeneratedContent";
+    private const string GradientStrip = "[FrooxEngine]FrooxEngine.GradientStripTexture";
     private const string ConnectionId = "conn-1";
     private const string UniqueSessionId = "uni-123";
 
@@ -301,6 +302,17 @@ public sealed class WorkbenchCliReadTests : IDisposable
         _ => SearchResult([]),
     };
 
+    /// <summary>The unknownReason the live Workbench reported for GradientStripTexture (W2B-R2 B1).</summary>
+    private static string UnknownDefinitionReason(string componentType) =>
+        $"ResoniteLink failed to read the definition of component type {componentType}: " +
+        "Object reference not set to an instance of an object.";
+
+    /// <summary>reflection.component answers "unknown" with no connection identity, like the live B1 case.</summary>
+    private static RpcMessage UnknownComponentDefinition(RpcRequest request, string componentType) =>
+        Wb.Response(request.Id,
+            ReflectionResult(null, UnknownDefinitionReason(componentType)).ToJsonString(),
+            connectionId: null, sessionId: null);
+
     private static FakeWorkbenchServer Serve(string pipeName, ConcurrentQueue<RpcRequest> log,
         Func<RpcRequest, RpcMessage>? respond = null) =>
         FakeWorkbenchServer.Start(pipeName, (s, ct) => Wb.ServeAsync(s, respond ?? Respond, ct, log));
@@ -540,6 +552,105 @@ public sealed class WorkbenchCliReadTests : IDisposable
         Assert.Equal("field", member.GetProperty("kind").GetString());
         Assert.Equal("m-value", member.GetProperty("id").GetString());
         Assert.Equal(1.5, member.GetProperty("value").GetDouble());
+    }
+
+    [Fact]
+    public async Task Inspect_Members_FieldType_ComesFromDefinitionValueType()
+    {
+        // B2: the declared valueType fills MemberValue.Type with the CLR name the direct
+        // backend reports - "[mscorlib]System.Single" shows as "System.Single".
+        string pipeName = Wb.NewPipeName();
+        var log = new ConcurrentQueue<RpcRequest>();
+        await using var server = Serve(pipeName, log);
+
+        var (exit, report) = await RunCliAsync(WbArgs(pipeName, "inspect", "Root", "--members"));
+
+        Assert.Equal(ExitCodes.Success, exit);
+        JsonElement component = Assert.Single(report.GetProperty("data").GetProperty("components").EnumerateArray());
+        JsonElement members = component.GetProperty("members");
+        Assert.Equal("System.Single", members.GetProperty("Value").GetProperty("type").GetString());
+        Assert.Equal("reference", members.GetProperty("Target").GetProperty("kind").GetString());
+        Assert.False(members.GetProperty("Target").TryGetProperty("type", out JsonElement targetType)
+            && targetType.ValueKind == JsonValueKind.String && targetType.GetString()!.Length > 0);
+    }
+
+    [Fact]
+    public async Task Inspect_Members_UnknownComponentDefinition_FailsUnavailable()
+    {
+        // B1: an "unknown" reflection.component answer carries no connection identity; the
+        // command must report the undescribable type, not "connection changed mid-read".
+        string pipeName = Wb.NewPipeName();
+        var log = new ConcurrentQueue<RpcRequest>();
+        await using var server = Serve(pipeName, log, request => request.Method switch
+        {
+            RpcMethods.ReflectionComponent => UnknownComponentDefinition(request, Param(request, "componentType")),
+            _ => Respond(request),
+        });
+
+        var (exit, report) = await RunCliAsync(WbArgs(pipeName, "inspect", "Root", "--members"));
+
+        Assert.Equal(ExitCodes.ConnectionFailed, exit);
+        JsonElement error = report.GetProperty("error");
+        Assert.Equal("WORKBENCH_UNAVAILABLE", error.GetProperty("code").GetString());
+        string message = error.GetProperty("message").GetString()!;
+        Assert.Contains(Grabbable, message);
+        Assert.Contains("Object reference not set to an instance of an object.", message);
+        Assert.DoesNotContain("connection changed", message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task Hierarchy_IncludeComponents_UnknownComponentDefinition_FailsUnavailable()
+    {
+        string pipeName = Wb.NewPipeName();
+        var log = new ConcurrentQueue<RpcRequest>();
+        await using var server = Serve(pipeName, log, request => request.Method switch
+        {
+            RpcMethods.ReflectionComponent => UnknownComponentDefinition(request, Param(request, "componentType")),
+            _ => Respond(request),
+        });
+
+        var (exit, report) = await RunCliAsync(WbArgs(pipeName, "hierarchy", "--include-components"));
+
+        Assert.Equal(ExitCodes.ConnectionFailed, exit);
+        JsonElement error = report.GetProperty("error");
+        Assert.Equal("WORKBENCH_UNAVAILABLE", error.GetProperty("code").GetString());
+        string message = error.GetProperty("message").GetString()!;
+        Assert.Contains(Grabbable, message);
+        Assert.Contains("Object reference not set to an instance of an object.", message);
+        Assert.DoesNotContain("connection changed", message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task Hierarchy_IncludeComponents_OneUndescribableComponent_FailsWholeCommand()
+    {
+        // comp-1 (Grabbable) reads fine, but comp-2's type answers "unknown": the command
+        // fails as a whole instead of returning a partially filled hierarchy.
+        string pipeName = Wb.NewPipeName();
+        var log = new ConcurrentQueue<RpcRequest>();
+        JsonObject observe = ObserveResult(Snapshot("Root", new JsonObject
+        {
+            ["Root"] = SlotRecord("Root", "Root", null, true, 0, ["child-1"],
+                components: ComponentRefs(("comp-1", Grabbable))),
+            ["child-1"] = SlotRecord("child-1", "Child", "Root", true, 1,
+                components: ComponentRefs(("comp-2", GradientStrip))),
+        }));
+        await using var server = Serve(pipeName, log, request => request.Method switch
+        {
+            RpcMethods.WorldObserve => Wb.Response(request.Id, observe.ToJsonString(), connectionId: ConnectionId),
+            RpcMethods.ReflectionComponent when Param(request, "componentType") == GradientStrip =>
+                UnknownComponentDefinition(request, GradientStrip),
+            _ => Respond(request),
+        });
+
+        var (exit, report) = await RunCliAsync(WbArgs(pipeName, "hierarchy", "--include-components"));
+
+        Assert.Equal(ExitCodes.ConnectionFailed, exit);
+        Assert.False(report.GetProperty("ok").GetBoolean());
+        JsonElement error = report.GetProperty("error");
+        Assert.Equal("WORKBENCH_UNAVAILABLE", error.GetProperty("code").GetString());
+        string message = error.GetProperty("message").GetString()!;
+        Assert.Contains(GradientStrip, message);
+        Assert.Contains("Object reference not set to an instance of an object.", message);
     }
 
     [Fact]

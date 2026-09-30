@@ -15,6 +15,7 @@ public sealed class WorkbenchReadTests
     private const string Grabbable = "[FrooxEngine]FrooxEngine.Grabbable";
     private const string Dial = "[FrooxEngine]FrooxEngine.Dial";
     private const string Slider = "[FrooxEngine]FrooxEngine.Slider";
+    private const string GradientStrip = "[FrooxEngine]FrooxEngine.GradientStripTexture";
 
     private static string Param(RpcRequest request, string property) =>
         request.Params!.Value.GetProperty(property).GetString()!;
@@ -131,8 +132,17 @@ public sealed class WorkbenchReadTests
             ["interfaces"] = new JsonArray(),
         };
 
-    private static JsonObject TypeRef(string type) =>
-        new() { ["type"] = type, ["isGenericParameter"] = false, ["genericArguments"] = new JsonArray() };
+    private static JsonObject TypeRef(string type, params JsonNode?[] genericArguments) =>
+        new()
+        {
+            ["type"] = type, ["isGenericParameter"] = false,
+            ["genericArguments"] = new JsonArray(genericArguments),
+        };
+
+    /// <summary>The unknownReason the live Workbench reported for GradientStripTexture (W2B-R2 B1).</summary>
+    private static string UnknownDefinitionReason(string componentType) =>
+        $"ResoniteLink failed to read the definition of component type {componentType}: " +
+        "Object reference not set to an instance of an object.";
 
     private static JsonObject MemberDef(string name, string kind, JsonNode? valueType = null,
         JsonNode? targetType = null) =>
@@ -642,6 +652,129 @@ public sealed class WorkbenchReadTests
     }
 
     [Fact]
+    public async Task GetComponentAsync_UnknownComponentDefinitionNullMeta_ThrowsUnavailableNamingType()
+    {
+        // Live B1: reflection.component answered "unknown" with a null meta.connectionId and
+        // meta.sessionId. That is an undescribable type, not a mid-read connection change.
+        string pipeName = Wb.NewPipeName();
+        using var guard = new CancellationTokenSource(Wb.GuardTimeout);
+        JsonObject unknown = ReflectionResult(null, UnknownDefinitionReason(GradientStrip));
+        await using var server = FakeWorkbenchServer.Start(pipeName, (s, ct) =>
+            Wb.ServeAsync(s, request => request.Method switch
+            {
+                RpcMethods.MemberRead => Wb.Response(request.Id,
+                    ReadbackFor(request, GradientStrip, (_, _) => null).ToJsonString()),
+                RpcMethods.ReflectionComponent => Wb.Response(request.Id, unknown.ToJsonString(),
+                    connectionId: null, sessionId: null),
+                _ => Unexpected(request),
+            }, ct));
+        await using var client = new WorkbenchResoniteClient();
+        await client.ConnectAsync(Wb.PipeUri(pipeName), Wb.ConnectTimeout, guard.Token);
+
+        var ex = await Assert.ThrowsAsync<RLoopException>(
+            () => client.GetComponentAsync("comp-1", guard.Token));
+
+        Assert.Equal("WORKBENCH_UNAVAILABLE", ex.Code);
+        Assert.Contains(GradientStrip, ex.Message);
+        Assert.Contains("Object reference not set to an instance of an object.", ex.Message);
+        Assert.DoesNotContain("connection changed", ex.Message, StringComparison.OrdinalIgnoreCase);
+        // The identity-less answer must not erase the ids earlier responses reported.
+        Assert.Equal("conn-meta-1", client.Meta.ConnectionId);
+        Assert.Equal("sess-meta-1", client.Meta.SessionId);
+    }
+
+    [Fact]
+    public async Task GetSlotAsync_IncludeComponentData_UnknownComponentDefinition_ThrowsUnavailableNamingType()
+    {
+        string pipeName = Wb.NewPipeName();
+        using var guard = new CancellationTokenSource(Wb.GuardTimeout);
+        JsonObject slots = new()
+        {
+            ["root"] = SlotRecord("root", "Root", null, true, 0,
+                components: ComponentRefs(("comp-1", GradientStrip))),
+        };
+        JsonObject observe = ObserveResult(Snapshot("root", slots));
+        JsonObject unknown = ReflectionResult(null, UnknownDefinitionReason(GradientStrip));
+        await using var server = FakeWorkbenchServer.Start(pipeName, (s, ct) =>
+            Wb.ServeAsync(s, request => request.Method switch
+            {
+                RpcMethods.WorldObserve => Wb.Response(request.Id, observe.ToJsonString()),
+                RpcMethods.ReflectionComponent => Wb.Response(request.Id, unknown.ToJsonString(),
+                    connectionId: null, sessionId: null),
+                _ => Unexpected(request),
+            }, ct));
+        await using var client = new WorkbenchResoniteClient();
+        await client.ConnectAsync(Wb.PipeUri(pipeName), Wb.ConnectTimeout, guard.Token);
+
+        var ex = await Assert.ThrowsAsync<RLoopException>(
+            () => client.GetSlotAsync("root", 1, includeComponentData: true, guard.Token));
+
+        Assert.Equal("WORKBENCH_UNAVAILABLE", ex.Code);
+        Assert.Contains(GradientStrip, ex.Message);
+        Assert.Contains("Object reference not set to an instance of an object.", ex.Message);
+        Assert.DoesNotContain("connection changed", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal("conn-meta-1", client.Meta.ConnectionId);
+        Assert.Equal("sess-meta-1", client.Meta.SessionId);
+    }
+
+    [Fact]
+    public async Task GetSlotAsync_NullConnectionIdOnKnownResponse_StillReportsConnectionChange()
+    {
+        // Only an "unknown" reflection answer may lack a connectionId; a defined answer from
+        // nowhere still means the read mixed sessions.
+        string pipeName = Wb.NewPipeName();
+        using var guard = new CancellationTokenSource(Wb.GuardTimeout);
+        JsonObject slots = new()
+        {
+            ["root"] = SlotRecord("root", "Root", null, true, 0,
+                components: ComponentRefs(("comp-1", Grabbable))),
+        };
+        JsonObject observe = ObserveResult(Snapshot("root", slots));
+        JsonObject grabbableDef = ReflectionResult(GrabbableDefinition());
+        await using var server = FakeWorkbenchServer.Start(pipeName, (s, ct) =>
+            Wb.ServeAsync(s, request => request.Method switch
+            {
+                RpcMethods.WorldObserve => Wb.Response(request.Id, observe.ToJsonString()),
+                RpcMethods.ReflectionComponent => Wb.Response(request.Id, grabbableDef.ToJsonString(),
+                    connectionId: null),
+                _ => Unexpected(request),
+            }, ct));
+        await using var client = new WorkbenchResoniteClient();
+        await client.ConnectAsync(Wb.PipeUri(pipeName), Wb.ConnectTimeout, guard.Token);
+
+        var ex = await Assert.ThrowsAsync<RLoopException>(
+            () => client.GetSlotAsync("root", 1, includeComponentData: true, guard.Token));
+
+        Assert.Equal("WORKBENCH_UNAVAILABLE", ex.Code);
+        Assert.Contains("connection changed", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task DescribeComponentTypeAsync_UnknownResultNullMeta_StillThrowsComponentTypeNotFound()
+    {
+        // type describe keeps mapping an unknown reflection.component to COMPONENT_TYPE_NOT_FOUND,
+        // even when the answer carries no connection identity.
+        string pipeName = Wb.NewPipeName();
+        using var guard = new CancellationTokenSource(Wb.GuardTimeout);
+        JsonObject unknown = ReflectionResult(null, UnknownDefinitionReason(GradientStrip));
+        await using var server = FakeWorkbenchServer.Start(pipeName, (s, ct) =>
+            Wb.ServeAsync(s, request => request.Method switch
+            {
+                RpcMethods.ReflectionComponent => Wb.Response(request.Id, unknown.ToJsonString(),
+                    connectionId: null, sessionId: null),
+                _ => Unexpected(request),
+            }, ct));
+        await using var client = new WorkbenchResoniteClient();
+        await client.ConnectAsync(Wb.PipeUri(pipeName), Wb.ConnectTimeout, guard.Token);
+
+        var ex = await Assert.ThrowsAsync<RLoopException>(
+            () => client.DescribeComponentTypeAsync(GradientStrip, guard.Token));
+
+        Assert.Equal("COMPONENT_TYPE_NOT_FOUND", ex.Code);
+        Assert.Equal(ExitCodes.NotFound, ex.ExitCode);
+    }
+
+    [Fact]
     public async Task GetSlotAsync_NotConnectedError_ThrowsNotConnected()
     {
         string pipeName = Wb.NewPipeName();
@@ -827,6 +960,63 @@ public sealed class WorkbenchReadTests
         Assert.Equal("field", list.Elements[0].Kind);
         Assert.Equal("reference", list.Elements[1].Kind);
         Assert.Equal("Reso_7", list.Elements[1].TargetId);
+    }
+
+    [Fact]
+    public async Task GetComponentAsync_FieldDefinitions_FillMemberValueTypes()
+    {
+        // B2: member.read reports wire names ("float"), so Type comes from the declared
+        // valueType instead - "[mscorlib]System.Single" -> "System.Single" like the direct path.
+        string pipeName = Wb.NewPipeName();
+        using var guard = new CancellationTokenSource(Wb.GuardTimeout);
+        JsonObject def = ReflectionResult(ComponentDefinition(Grabbable, new JsonObject
+        {
+            ["Value"] = MemberDef("Value", "Field", valueType: TypeRef("[mscorlib]System.Single")),
+            ["Maybe"] = MemberDef("Maybe", "Field",
+                valueType: TypeRef("[mscorlib]System.Nullable<>", TypeRef("[mscorlib]System.Single"))),
+            ["Mode"] = MemberDef("Mode", "Field", valueType: TypeRef("[FrooxEngine]FrooxEngine.Alignment")),
+            ["Mystery"] = MemberDef("Mystery", "Field"),
+            ["Items"] = MemberDef("Items", "List"),
+            ["Target"] = MemberDef("Target", "Reference", targetType: TypeRef("[FrooxEngine]FrooxEngine.Slot")),
+        }, "Grabbable"));
+        JsonNode? Member(string id, string name) => name switch
+        {
+            "Value" => Field("m-value", "float", "1.5"),
+            "Maybe" => Field("m-maybe", "nullable<float>", "0.5"),
+            "Mode" => Field("m-mode", "enum", "\"Near\"", "[FrooxEngine]FrooxEngine.Alignment"),
+            "Mystery" => Field("m-mystery", "colorX", "\"#fff\""),
+            "Items" => new JsonObject
+            {
+                ["kind"] = "list", ["id"] = "m-items",
+                ["elements"] = new JsonArray(Field("e-1", "float", "1")),
+            },
+            "Target" => Reference("m-target", "Reso_9", "[FrooxEngine]FrooxEngine.Slot"),
+            _ => null,
+        };
+        await using var server = FakeWorkbenchServer.Start(pipeName, (s, ct) =>
+            Wb.ServeAsync(s, request => request.Method switch
+            {
+                RpcMethods.MemberRead => Wb.Response(request.Id,
+                    ReadbackFor(request, Grabbable, Member).ToJsonString()),
+                RpcMethods.ReflectionComponent => Wb.Response(request.Id, def.ToJsonString()),
+                _ => Unexpected(request),
+            }, ct));
+        await using var client = new WorkbenchResoniteClient();
+        await client.ConnectAsync(Wb.PipeUri(pipeName), Wb.ConnectTimeout, guard.Token);
+
+        ComponentInfo component = await client.GetComponentAsync("comp-1", guard.Token);
+
+        Assert.Equal("System.Single", component.Members["Value"].Type);
+        // A generic definition cannot be flattened to a FullName: Type stays null.
+        Assert.Null(component.Members["Maybe"].Type);
+        // member.read's own enumType is never overridden by the definition.
+        Assert.Equal("[FrooxEngine]FrooxEngine.Alignment", component.Members["Mode"].Type);
+        // A field whose definition reports no valueType stays null.
+        Assert.Null(component.Members["Mystery"].Type);
+        // Non-field members and nested element members are untouched.
+        Assert.Null(component.Members["Target"].Type);
+        Assert.Equal("[FrooxEngine]FrooxEngine.Slot", component.Members["Target"].TargetType);
+        Assert.Null(component.Members["Items"].Elements![0].Type);
     }
 
     [Fact]

@@ -25,8 +25,8 @@ public sealed partial class WorkbenchResoniteClient
     /// <summary>componentId → componentType, learned from world.observe records and type probes.</summary>
     private readonly ConcurrentDictionary<string, string> _componentTypes = new(StringComparer.Ordinal);
 
-    /// <summary>componentType → declared member names; only successful reflection.component answers are stored.</summary>
-    private readonly ConcurrentDictionary<string, IReadOnlyList<string>> _memberNames = new(StringComparer.Ordinal);
+    /// <summary>componentType → declared member names and field value types; only successful reflection.component answers are stored.</summary>
+    private readonly ConcurrentDictionary<string, WorkbenchReflectionMapper.DeclaredMembers> _memberNames = new(StringComparer.Ordinal);
 
     public async Task<SlotInfo> GetSlotAsync(string id, int depth, bool includeComponentData,
         CancellationToken cancellationToken = default)
@@ -175,8 +175,16 @@ public sealed partial class WorkbenchResoniteClient
 
         // A reconnect invalidates everything learned from earlier responses.
         InvalidateCachesIfConnectionChanged(Meta.ConnectionId, response.Meta.ConnectionId);
+
+        // An "unknown" reflection.* answer reports no connection identity (meta.connectionId
+        // and meta.sessionId are null): it means the Workbench could not describe the type,
+        // not that the connection changed. Its null fields must neither erase the known ids
+        // nor feed the mid-read connection check; a different non-null id still does both.
+        bool unknownReflection = IsUnknownReflectionResult(method, response);
         Meta = new WorkbenchConnectionMeta(
-            response.Meta.ConnectionId, response.Meta.SessionId, response.Meta.WorldRevision, Meta.ObservedScopeRootId);
+            response.Meta.ConnectionId ?? (unknownReflection ? Meta.ConnectionId : null),
+            response.Meta.SessionId ?? (unknownReflection ? Meta.SessionId : null),
+            response.Meta.WorldRevision, Meta.ObservedScopeRootId);
 
         if (response.Meta.Stale == true)
         {
@@ -184,7 +192,8 @@ public sealed partial class WorkbenchResoniteClient
                 $"The Workbench {method} response is stale; the connection changed during the read.");
         }
 
-        operation.Observe(response.Meta.ConnectionId, method);
+        if (!unknownReflection || response.Meta.ConnectionId is not null)
+            operation.Observe(response.Meta.ConnectionId, method);
         return response;
     }
 
@@ -222,6 +231,15 @@ public sealed partial class WorkbenchResoniteClient
         reflectionResult.ValueKind == JsonValueKind.Object
         && (!reflectionResult.TryGetProperty("value", out JsonElement value)
             || value.ValueKind == JsonValueKind.Null);
+
+    /// <summary>
+    /// True for a reflection.* response carrying an "unknown" result. Scoped to reflection.*:
+    /// member.read results have no "value" property and would classify as unknown otherwise.
+    /// </summary>
+    private static bool IsUnknownReflectionResult(string method, RpcResponse response) =>
+        method.StartsWith("reflection.", StringComparison.Ordinal)
+        && response.Result is { } result
+        && IsUnknown(result);
 
     /// <summary>True when the reflection.type result is a known enum type; also reads its reported name.</summary>
     private static bool TryReadEnum(JsonElement typeResult, out string? fullTypeName)
@@ -304,17 +322,40 @@ public sealed partial class WorkbenchResoniteClient
             new Dictionary<string, object?> { ["componentId"] = componentId });
     }
 
-    /// <summary>Declared member names of a component type, cached by type name.</summary>
-    private async Task<IReadOnlyList<string>> MemberNamesAsync(string componentType,
-        ReadOperation operation, CancellationToken cancellationToken)
+    /// <summary>Declared members of a component type, cached by type name.</summary>
+    private async Task<WorkbenchReflectionMapper.DeclaredMembers> MemberDefinitionsAsync(
+        string componentType, ReadOperation operation, CancellationToken cancellationToken)
     {
-        if (_memberNames.TryGetValue(componentType, out IReadOnlyList<string>? cached)) return cached;
+        if (_memberNames.TryGetValue(componentType, out WorkbenchReflectionMapper.DeclaredMembers? cached))
+            return cached;
         RpcResponse response = await CallReadAsync(RpcMethods.ReflectionComponent,
             new ReflectionComponentParams(componentType), operation, cancellationToken).ConfigureAwait(false);
-        IReadOnlyList<string> names = WorkbenchReflectionMapper.MemberNames(ResultOf(response), componentType);
-        _memberNames[componentType] = names;
-        return names;
+        JsonElement result = ResultOf(response);
+        // An "unknown" reflection.component answer is not "no such type": the direct backend
+        // can still read the members, so report the Workbench's own reason as Unavailable
+        // (and cache nothing) instead of the mapper's COMPONENT_TYPE_NOT_FOUND.
+        if (IsUnknown(result))
+        {
+            throw WorkbenchErrors.Unavailable(
+                $"The Workbench could not describe component type '{componentType}' " +
+                $"(reflection.component returned no definition): {UnknownReason(result)}; " +
+                "the members of a component of this type cannot be read. " +
+                "Use --backend link for this subtree.");
+        }
+        WorkbenchReflectionMapper.DeclaredMembers declared =
+            WorkbenchReflectionMapper.MemberDefinitions(result, componentType);
+        _memberNames[componentType] = declared;
+        return declared;
     }
+
+    /// <summary>The unknownReason an "unknown" reflection result reports, or a note that it reported none.</summary>
+    private static string UnknownReason(JsonElement reflectionResult) =>
+        reflectionResult.ValueKind == JsonValueKind.Object
+        && reflectionResult.TryGetProperty("unknownReason", out JsonElement reason)
+        && reason.ValueKind == JsonValueKind.String
+        && reason.GetString() is { Length: > 0 } text
+            ? text
+            : "the Workbench reported no reason";
 
     /// <summary>
     /// Reads every declared member live, one member.read call each, in declaration order.
@@ -325,11 +366,11 @@ public sealed partial class WorkbenchResoniteClient
     {
         string type = await RequireComponentTypeAsync(componentId, componentType, operation, cancellationToken)
             .ConfigureAwait(false);
-        IReadOnlyList<string> names = await MemberNamesAsync(type, operation, cancellationToken)
-            .ConfigureAwait(false);
+        WorkbenchReflectionMapper.DeclaredMembers declared =
+            await MemberDefinitionsAsync(type, operation, cancellationToken).ConfigureAwait(false);
 
         var members = new Dictionary<string, MemberValue>(StringComparer.Ordinal);
-        foreach (string name in names)
+        foreach (string name in declared.Names)
         {
             RpcResponse response = await CallReadAsync(RpcMethods.MemberRead,
                 new MemberReadParams(componentId, name), operation, cancellationToken).ConfigureAwait(false);
@@ -340,10 +381,23 @@ public sealed partial class WorkbenchResoniteClient
                     $"member.read could not read member '{name}' of component '{componentId}'" +
                     (readback.UnknownReason is null ? "." : $": {readback.UnknownReason}"));
             }
-            members[name] = readback.Member;
+            members[name] = WithDeclaredFieldType(readback.Member, name, declared);
         }
         return members;
     }
+
+    /// <summary>
+    /// member.read reports wire value types ("float"), not the CLR names the direct backend puts
+    /// in MemberValue.Type ("System.Single"), so the mapper leaves it null on plain fields; the
+    /// reflection.component definition's valueType supplies it. Only a top-level field with no
+    /// Type of its own is filled - enum types from member.read and nested members stay as mapped.
+    /// </summary>
+    private static MemberValue WithDeclaredFieldType(MemberValue member, string name,
+        WorkbenchReflectionMapper.DeclaredMembers declared) =>
+        member is { Kind: "field", Type: null }
+        && declared.FieldValueTypes.TryGetValue(name, out string? fieldType)
+            ? member with { Type = fieldType }
+            : member;
 
     /// <summary>
     /// Resolves a short component type name the way the direct path's ResolveComponentTypeAsync
@@ -369,7 +423,7 @@ public sealed partial class WorkbenchResoniteClient
         IReadOnlyList<string> names = WorkbenchReflectionMapper.MapSearch(ResultOf(response), out bool truncated);
         var matches = names.Where(name =>
         {
-            string bare = StripAssembly(name);
+            string bare = WorkbenchReflectionMapper.StripAssembly(name);
             return bare.Equals(type, StringComparison.OrdinalIgnoreCase)
                 || bare.EndsWith("." + type, StringComparison.OrdinalIgnoreCase);
         }).Take(20).ToArray();
@@ -397,17 +451,11 @@ public sealed partial class WorkbenchResoniteClient
     // exact bare match < name ending < last-segment prefix < substring.
     private static int SearchScore(string type, string query)
     {
-        var bare = StripAssembly(type);
+        var bare = WorkbenchReflectionMapper.StripAssembly(type);
         if (bare.Equals(query, StringComparison.OrdinalIgnoreCase)) return 0;
         if (bare.EndsWith('.' + query, StringComparison.OrdinalIgnoreCase)) return 1;
         if (bare.Split('.').Last().StartsWith(query, StringComparison.OrdinalIgnoreCase)) return 2;
         return 3;
-    }
-
-    private static string StripAssembly(string type)
-    {
-        var end = type.IndexOf(']');
-        return end >= 0 ? type[(end + 1)..] : type;
     }
 
     /// <summary>

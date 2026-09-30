@@ -25,10 +25,10 @@ internal static class Wb
         new("9.9.9-test", 1, ReadCapabilities, ReadCapabilities, active);
 
     public static RpcResponse Response(string id, string resultJson,
-        string? connectionId = "conn-meta-1", bool? stale = null) =>
+        string? connectionId = "conn-meta-1", bool? stale = null, string? sessionId = "sess-meta-1") =>
         new(id,
             new ResultMeta(DateTimeOffset.UtcNow,
-                ConnectionId: connectionId, SessionId: "sess-meta-1", WorldRevision: 12, Stale: stale),
+                ConnectionId: connectionId, SessionId: sessionId, WorldRevision: 12, Stale: stale),
             JsonDocument.Parse(resultJson).RootElement.Clone());
 
     /// <summary>
