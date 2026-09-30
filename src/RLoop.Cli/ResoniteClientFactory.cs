@@ -38,9 +38,9 @@ public static class ResoniteClientFactory
                 await workbench.ConnectAsync(new Uri($"{WorkbenchResoniteClient.UriScheme}:///{config.WorkbenchPipe}"), timeout, cancellationToken);
                 return workbench;
             }
-            catch
+            catch (Exception connectFailure)
             {
-                await workbench.DisposeAsync();
+                await DisposeQuietlyAsync(workbench, connectFailure);
                 throw;
             }
         }
@@ -51,10 +51,34 @@ public static class ResoniteClientFactory
             await link.ConnectAsync(uri, timeout, cancellationToken);
             return link;
         }
-        catch
+        catch (Exception connectFailure)
         {
-            await link.DisposeAsync();
+            await DisposeQuietlyAsync(link, connectFailure);
             throw;
+        }
+    }
+
+    /// <summary>
+    /// Disposes a client whose connect attempt failed. A disposal failure must never replace the
+    /// original exception, so it is attached to the original exception's <see cref="Exception.Data"/>
+    /// when possible and otherwise discarded.
+    /// </summary>
+    private static async Task DisposeQuietlyAsync(IResoniteClient client, Exception connectFailure)
+    {
+        try
+        {
+            await client.DisposeAsync();
+        }
+        catch (Exception disposeFailure)
+        {
+            try
+            {
+                connectFailure.Data["disposeException"] = disposeFailure.Message;
+            }
+            catch
+            {
+                // Exception.Data can be read-only; the disposal failure is then discarded.
+            }
         }
     }
 }
