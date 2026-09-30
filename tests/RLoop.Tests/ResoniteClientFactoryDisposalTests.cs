@@ -95,11 +95,80 @@ public sealed class ResoniteClientFactoryDisposalTests
         Assert.Equal(1, fake.DisposeCount);
     }
 
+    [Fact]
+    public async Task WorkbenchBranch_DisposeFailure_OriginalConnectExceptionWins()
+    {
+        var config = new RLoopConfig(TimeoutSeconds: 1, Backend: "workbench", WorkbenchPipe: NewMissingPipe());
+        var args = ParsedArguments.Parse(["status"]);
+        using var guard = new CancellationTokenSource(GuardTimeout);
+        var thrown = new InvalidOperationException("probe-" + Guid.NewGuid());
+        var fake = new DisposeTrackingClient(thrown, new ApplicationException("dispose-" + Guid.NewGuid()));
+
+        var caught = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            ResoniteClientFactory.ConnectAsync(args, config, new ReflectionCacheOptions("off"), guard.Token,
+                linkUri: null, workbenchClientFactory: () => fake, linkClientFactory: null));
+
+        Assert.Same(thrown, caught);
+        Assert.Equal(1, fake.DisposeCount);
+    }
+
+    [Fact]
+    public async Task LinkBranch_DisposeFailure_OriginalConnectExceptionWins()
+    {
+        var config = new RLoopConfig(ResoniteLinkUrl: "ws://127.0.0.1:1/", TimeoutSeconds: 5, Backend: "link");
+        var args = ParsedArguments.Parse(["status"]);
+        using var guard = new CancellationTokenSource(GuardTimeout);
+        var thrown = new InvalidOperationException("probe-" + Guid.NewGuid());
+        var fake = new DisposeTrackingClient(thrown, new ApplicationException("dispose-" + Guid.NewGuid()));
+
+        var caught = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            ResoniteClientFactory.ConnectAsync(args, config, new ReflectionCacheOptions("off"), guard.Token,
+                linkUri: new Uri("ws://127.0.0.1:1/"), workbenchClientFactory: null, linkClientFactory: () => fake));
+
+        Assert.Same(thrown, caught);
+        Assert.Equal(1, fake.DisposeCount);
+    }
+
+    [Fact]
+    public async Task WorkbenchBranch_DisposeFailure_OriginalCancellationWins()
+    {
+        var config = new RLoopConfig(TimeoutSeconds: 1, Backend: "workbench", WorkbenchPipe: NewMissingPipe());
+        var args = ParsedArguments.Parse(["status"]);
+        using var guard = new CancellationTokenSource(GuardTimeout);
+        var fake = new DisposeTrackingClient(new OperationCanceledException(), new ApplicationException("dispose-" + Guid.NewGuid()));
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            ResoniteClientFactory.ConnectAsync(args, config, new ReflectionCacheOptions("off"), guard.Token,
+                linkUri: null, workbenchClientFactory: () => fake, linkClientFactory: null));
+
+        Assert.Equal(1, fake.DisposeCount);
+    }
+
+    [Fact]
+    public async Task LinkBranch_DisposeFailure_OriginalCancellationWins()
+    {
+        var config = new RLoopConfig(ResoniteLinkUrl: "ws://127.0.0.1:1/", TimeoutSeconds: 5, Backend: "link");
+        var args = ParsedArguments.Parse(["status"]);
+        using var guard = new CancellationTokenSource(GuardTimeout);
+        var fake = new DisposeTrackingClient(new OperationCanceledException(), new ApplicationException("dispose-" + Guid.NewGuid()));
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            ResoniteClientFactory.ConnectAsync(args, config, new ReflectionCacheOptions("off"), guard.Token,
+                linkUri: new Uri("ws://127.0.0.1:1/"), workbenchClientFactory: null, linkClientFactory: () => fake));
+
+        Assert.Equal(1, fake.DisposeCount);
+    }
+
     private sealed class DisposeTrackingClient : IResoniteClient
     {
         private readonly Exception _connectException;
+        private readonly Exception? _disposeException;
 
-        internal DisposeTrackingClient(Exception connectException) => _connectException = connectException;
+        internal DisposeTrackingClient(Exception connectException, Exception? disposeException = null)
+        {
+            _connectException = connectException;
+            _disposeException = disposeException;
+        }
 
         public int DisposeCount { get; private set; }
 
@@ -112,7 +181,9 @@ public sealed class ResoniteClientFactoryDisposalTests
         public ValueTask DisposeAsync()
         {
             DisposeCount++;
-            return ValueTask.CompletedTask;
+            return _disposeException is null
+                ? ValueTask.CompletedTask
+                : new ValueTask(Task.FromException(_disposeException));
         }
 
         public Task<SessionInfo> GetSessionInfoAsync(CancellationToken cancellationToken = default) =>
