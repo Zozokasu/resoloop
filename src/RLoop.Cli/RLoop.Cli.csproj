@@ -21,6 +21,7 @@
   </PropertyGroup>
   <ItemGroup>
     <InternalsVisibleTo Include="RLoop.Tests" />
+    <InternalsVisibleTo Include="RLoop.Workbench.Tests" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="../RLoop.Core/RLoop.Core.csproj" />

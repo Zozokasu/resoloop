@@ -93,18 +93,41 @@ public sealed class BackendSupportTests : IDisposable
     }
 
     [Theory]
-    [InlineData("status")]
-    [InlineData("hierarchy")]
     [InlineData("apply")]
     [InlineData("slot")]
+    [InlineData("component")]
+    [InlineData("test")]
     [InlineData("flux")]
+    [InlineData("diff")]
+    [InlineData("plan")]
+    [InlineData("uix")]
+    [InlineData("item")]
+    [InlineData("tool")]
+    [InlineData("capture")]
+    [InlineData("doctor")]
+    [InlineData("scene")]
+    [InlineData("blender")]
+    [InlineData("logs")]
     public void ListedCommandsThrowOnWorkbench(string command)
     {
         var ex = Assert.Throws<RLoopException>(() => BackendSupport.RequireSupported(command, "workbench"));
         Assert.Equal("BACKEND_UNSUPPORTED", ex.Code);
         Assert.Equal(ExitCodes.OperationFailed, ex.ExitCode);
         Assert.NotEmpty(ex.Suggestions);
+        Assert.True(ex.Context.ContainsKey("reason"));
     }
+
+    [Theory]
+    [InlineData("status")]
+    [InlineData("ping")]
+    [InlineData("hierarchy")]
+    [InlineData("find")]
+    [InlineData("observe")]
+    [InlineData("inspect")]
+    [InlineData("type")]
+    [InlineData("validate")]
+    public void SupportedCommandsPassOnWorkbench(string command) =>
+        BackendSupport.RequireSupported(command, "workbench");
 
     [Fact]
     public void LinkBackendAndUnlistedCommandsPassThrough()
@@ -117,9 +140,9 @@ public sealed class BackendSupportTests : IDisposable
     }
 
     [Theory]
-    [InlineData("status")]
-    [InlineData("hierarchy")]
     [InlineData("apply")]
+    [InlineData("uix")]
+    [InlineData("doctor")]
     public async Task WorkbenchBackendRejectsCommandBeforeConnecting(string command)
     {
         // No URL is configured: without the gate these commands would fail with

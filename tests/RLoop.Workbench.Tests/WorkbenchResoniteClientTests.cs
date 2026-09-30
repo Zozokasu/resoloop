@@ -1,7 +1,5 @@
 using System.Buffers.Binary;
 using System.Diagnostics;
-using System.IO.Pipes;
-using System.Text.Json;
 using ResoniteWorkbench.Protocol;
 using RLoop.Core;
 using RLoop.Workbench;
@@ -13,32 +11,19 @@ public sealed class WorkbenchResoniteClientTests
     private static readonly TimeSpan GuardTimeout = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan ConnectTimeout = TimeSpan.FromSeconds(5);
 
-    private static string NewPipeName() => "RLoop.Workbench.Tests." + Guid.NewGuid().ToString("N");
+    private static string NewPipeName() => Wb.NewPipeName();
 
-    private static Uri PipeUri(string pipeName) => new($"{WorkbenchResoniteClient.UriScheme}:///{pipeName}");
+    private static Uri PipeUri(string pipeName) => Wb.PipeUri(pipeName);
 
-    private static RpcWelcome Welcome(RpcActiveConnection? active = null) =>
-        new("9.9.9-test", 1, [RpcCapabilities.SessionRead], [RpcCapabilities.SessionRead], active);
+    private static RpcWelcome Welcome(RpcActiveConnection? active = null) => Wb.Welcome(active);
 
     private static RpcResponse Response(string id, string resultJson,
         string? connectionId = "conn-meta-1", bool? stale = null) =>
-        new(id,
-            new ResultMeta(DateTimeOffset.UtcNow,
-                ConnectionId: connectionId, SessionId: "sess-meta-1", WorldRevision: 12, Stale: stale),
-            JsonDocument.Parse(resultJson).RootElement.Clone());
+        Wb.Response(id, resultJson, connectionId, stale);
 
     /// <summary>Answers handshake with a welcome, then answers every request with the handler.</summary>
-    private static async Task RespondAsync(FakeWorkbenchServer server, Func<RpcRequest, RpcMessage> respond, CancellationToken ct)
-    {
-        await server.WaitForConnectionAsync(ct);
-        _ = await server.ReadAsync(ct); // hello
-        await server.WriteAsync(Welcome(new RpcActiveConnection("conn-1", "sess-1")), ct);
-        while (await server.ReadAsync(ct) is { } message)
-        {
-            if (message is RpcRequest request)
-                await server.WriteAsync(respond(request), ct);
-        }
-    }
+    private static Task RespondAsync(FakeWorkbenchServer server, Func<RpcRequest, RpcMessage> respond, CancellationToken ct) =>
+        Wb.ServeAsync(server, respond, ct);
 
     [Fact]
     public async Task ConnectAsync_ValidWelcome_SucceedsAndExposesHandshake()
@@ -391,8 +376,8 @@ public sealed class WorkbenchResoniteClientTests
             await s.WaitForConnectionAsync(ct);
             _ = await s.ReadAsync(ct); // hello
             await s.WriteAsync(new RpcWelcome("9.9.9-test", 1,
-                [RpcCapabilities.SessionRead, RpcCapabilities.WorldRead],
-                [RpcCapabilities.SessionRead, RpcCapabilities.WorldRead],
+                [RpcCapabilities.SessionRead, RpcCapabilities.SessionControl],
+                [RpcCapabilities.SessionRead, RpcCapabilities.SessionControl],
                 null), ct);
             await Task.Delay(Timeout.Infinite, ct);
         });
@@ -565,7 +550,7 @@ public sealed class WorkbenchResoniteClientTests
         await using var client = new WorkbenchResoniteClient();
 
         var ex = await Assert.ThrowsAsync<RLoopException>(
-            () => client.GetSlotAsync("slot-1", 1, false, CancellationToken.None));
+            () => client.CreateSlotAsync(new SlotCreateRequest("root", "child"), CancellationToken.None));
         Assert.Equal("BACKEND_UNSUPPORTED", ex.Code);
         Assert.Equal(ExitCodes.OperationFailed, ex.ExitCode);
 
@@ -606,74 +591,6 @@ public sealed class WorkbenchResoniteClientTests
         finally
         {
             if (File.Exists(reportPath)) File.Delete(reportPath);
-        }
-    }
-
-    /// <summary>
-    /// A scripted Workbench peer on a named pipe. Script failures from teardown (pipe closed,
-    /// cancellation) are swallowed; the pipe stays open until disposal.
-    /// </summary>
-    private sealed class FakeWorkbenchServer : IAsyncDisposable
-    {
-        private readonly NamedPipeServerStream _pipe;
-        private readonly CancellationTokenSource _stop = new();
-
-        private FakeWorkbenchServer(string pipeName)
-        {
-            _pipe = new NamedPipeServerStream(pipeName, PipeDirection.InOut, 1,
-                PipeTransmissionMode.Byte, PipeOptions.Asynchronous);
-        }
-
-        public Task Script { get; private set; } = Task.CompletedTask;
-
-        public static FakeWorkbenchServer Start(string pipeName, Func<FakeWorkbenchServer, CancellationToken, Task> script)
-        {
-            var server = new FakeWorkbenchServer(pipeName);
-            server.Script = Task.Run(() => server.RunAsync(script));
-            return server;
-        }
-
-        private async Task RunAsync(Func<FakeWorkbenchServer, CancellationToken, Task> script)
-        {
-            try
-            {
-                await script(this, _stop.Token);
-            }
-            catch (Exception ex) when (ex is OperationCanceledException or IOException or ObjectDisposedException)
-            {
-                // Teardown: the client hung up or the test disposed the pipe.
-            }
-        }
-
-        public Task WaitForConnectionAsync(CancellationToken ct) => _pipe.WaitForConnectionAsync(ct);
-
-        public async Task<RpcMessage?> ReadAsync(CancellationToken ct) =>
-            await RpcFrameCodec.ReadAsync(_pipe, ct).ConfigureAwait(false);
-
-        public Task WriteAsync(RpcMessage message, CancellationToken ct) =>
-            RpcFrameCodec.WriteAsync(_pipe, message, ct).AsTask();
-
-        public async Task WriteRawAsync(byte[] bytes, CancellationToken ct)
-        {
-            await _pipe.WriteAsync(bytes, ct);
-            await _pipe.FlushAsync(ct);
-        }
-
-        public void Disconnect() => _pipe.Disconnect();
-
-        public async ValueTask DisposeAsync()
-        {
-            await _stop.CancelAsync();
-            await _pipe.DisposeAsync();
-            try
-            {
-                await Script;
-            }
-            catch
-            {
-                // A script that faulted for another reason must not mask the test outcome.
-            }
-            _stop.Dispose();
         }
     }
 }

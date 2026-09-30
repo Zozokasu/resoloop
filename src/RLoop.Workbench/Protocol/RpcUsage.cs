@@ -186,7 +186,7 @@ public static class RpcUsageErrorText
 
 public static class RpcUsageCatalog
 {
-    public const int Version = 3;
+    public const int Version = 4;
 
     private static readonly string[] NoCapErrors = ["INVALID_PARAMS", "CANCELLED", "INTERNAL_ERROR"];
 
@@ -402,6 +402,24 @@ public static class RpcUsageCatalog
             """{"componentType":"[FrooxEngine]FrooxEngine.Slot","memberName":"member-name-example"}""", UnknownReflection,
             [RpcMethods.ReflectionComponent, RpcMethods.MemberRead],
             ["params must be a JSON object.", "A missing connection is reported as an unknown result, not an error."],
+            RpcErrors: Errors()),
+
+        [RpcMethods.ReflectionSearch] = new(RpcCapabilities.ReflectionRead,
+            "Component type names matching a substring.",
+            "Searches the connected session's component type names for query as a case-insensitive substring; matches are sorted by ordinal and capped at limit, truncated flagging the cut.",
+            """{"query":"light"}""",
+            """{"value":{"types":["[FrooxEngine]FrooxEngine.Light","[FrooxEngine]FrooxEngine.LightProbe"],"truncated":false},"provenance":{"sessionId":"session-example","connectionId":"conn-example","resoniteVersion":"2025.1.1.1","observedAt":"2025-01-01T00:00:00Z","source":"Live"},"unknownReason":null}""",
+            [RpcMethods.ReflectionComponent, RpcMethods.ReflectionType, RpcMethods.ReflectionCapabilities],
+            ["params must be a JSON object.", "query must be a non-blank string.", "limit is 1-500 and defaults to 50; truncated is true when more than limit names matched.", "Type names are returned exactly as the session reports them; matching ignores case but never completes or normalizes names.", "A missing connection is reported as an unknown result, not an error."],
+            RpcErrors: Errors()),
+
+        [RpcMethods.ReflectionEnum] = new(RpcCapabilities.ReflectionRead,
+            "An enum type's declared values, by type name.",
+            "Resolves the type through the connected session's reflection; status Found carries underlyingType, isFlags and the values in the order the engine reports them, while NotAnEnum carries detail instead.",
+            """{"typeName":"[FrooxEngine]FrooxEngine.BlendMode"}""",
+            """{"value":{"status":"Found","typeName":"[FrooxEngine]FrooxEngine.BlendMode","underlyingType":"System.Int32","isFlags":false,"values":[{"name":"Normal","value":0},{"name":"Add","value":1},{"name":"Multiply","value":2}],"detail":null},"provenance":{"sessionId":"session-example","connectionId":"conn-example","resoniteVersion":"2025.1.1.1","observedAt":"2025-01-01T00:00:00Z","source":"Live"},"unknownReason":null}""",
+            [RpcMethods.ReflectionType, RpcMethods.ReflectionComponent, RpcMethods.ReflectionCapabilities],
+            ["params must be a JSON object.", "typeName must be a non-blank string, named like reflection.type (assembly-qualified names such as [FrooxEngine]FrooxEngine.BlendMode).", "A type name the engine cannot resolve, a missing connection and a lost session are all reported as an unknown result (value null, unknownReason set), like reflection.type.", "A type that resolves but is not an enum is a known result with status NotAnEnum; then underlyingType is null and values is empty, with detail explaining the miss.", "values keep the order ResoniteLink reports them; they are not re-sorted and the order is not guaranteed to be the enum's declaration order."],
             RpcErrors: Errors()),
 
         [RpcMethods.WritersFind] = new(RpcCapabilities.WorldRead,

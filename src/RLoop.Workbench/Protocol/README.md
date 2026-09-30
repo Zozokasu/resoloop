@@ -4,7 +4,7 @@ The 10 `.cs` files in this directory are imported verbatim (unchanged) from the
 `ResoniteWorkbench.Protocol` project in the user's own `resonite-workbench` repository:
 
 - Source repository: `C:\Users\jojoh\Documents\resonite-workbench`
-- Source commit: `d549280` (`d549280ecaf3dc2b82dd99c5bde611aba096440c`)
+- Source commit: `7d40c92` (`7d40c9292296362c71d106552172488dbf37c14a`)
 - Source path: `src/ResoniteWorkbench.Protocol/`
 
 Imported files:

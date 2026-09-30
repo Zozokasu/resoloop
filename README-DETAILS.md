@@ -111,20 +111,50 @@ resoloop wb status --json
 
 `--backend workbench` 時のコマンド対応（正本は `src/RLoop.Cli/BackendSupport.cs` の `WorkbenchSupport`、将来のmilestoneで順次対応予定）:
 
-| 対応予定 | コマンド |
+| 対応 | コマンド |
 |---|---|
-| planned-w2 | status, ping, hierarchy, find, observe, inspect, type, validate, diff, plan, uix, item, tool, doctor, capture |
-| planned-w4 | slot, component, apply, test, flux |
+| supported | status, ping, hierarchy, find, observe, inspect, type, validate |
+| planned-w2 | doctor, uix, item, tool, capture |
+| planned-w4 | diff, plan, slot, component, apply, test, flux |
 | link-only | scene, blender, logs |
 
-表内のコマンドを `--backend workbench` で実行すると `BACKEND_UNSUPPORTED` になります。表にないコマンド（help, init, schema, manifest, uix recipe, skills, discover など）は接続を開かないためbackendの影響を受けません。`wb` は表に含めず、常にWorkbenchへ接続します。
+supported以外の表内コマンドを `--backend workbench` で実行すると `BACKEND_UNSUPPORTED` になります。`validate`（非strict）は接続を要しません。`validate --strict` と `type check --manifest` はmember値の変換検証をWorkbench経路では実行できないため、`BACKEND_UNSUPPORTED` で明示的に失敗します。表にないコマンド（help, init, schema, manifest, uix recipe, skills, discover など）は接続を開かないためbackendの影響を受けません。`wb` は表に含めず、常にWorkbenchへ接続します。
+
+planned-w2の延期理由: `doctor` はlink URLの探索に依存します。`tool audit` はtransformが未報告のとき単位値へ黙ってフォールバックし、`uix audit` はmember値がnullのときを「有効」と扱い、`item audit` は深さ64固定、`capture` はComponent/Slotの作成を伴うため、直結経路と同じ結果を保証できません。`diff`/`plan` は書き込み経路の前提ゲートとしてW4で扱います。
+
+### 観測の上限
+
+`world.observe` は深さ0〜32、8,192 Slotまでです。上限は切り詰めずに拒否します。深さ33以上または `--depth -1`（無制限）はWorkbenchを呼ばず、観測が8,192 Slotを超えたときも、どちらも `WORKBENCH_OBSERVE_LIMIT_EXCEEDED`（終了コード7）で失敗します。`--under` で範囲を絞るか `--backend link` を使ってください。
+
+`--depth` の範囲（最大64）と既定値（hierarchy 2、find 8、inspect 1、tool audit 16）は直結経路と同じままです。既定値が32を超えるコマンドは無いため、Workbench経由のときだけ既定を32にする切り替えは入れていません。深さ64固定の内部処理（runtimeRelocatable Slotの再解決、item audit、diff/planの観測）は、Workbench経由ではこの上限で失敗します。
+
+### 直結経路との違い
+
+Workbenchが報告しなかった値は0や単位値で埋めず、null（JSON出力ではキーが省略される）で返します。
+
+- Slotの `position`/`rotation`/`scale`/`isActive`/`isPersistent`/`tag` は未報告のときnullです。slotレベルの `members`（`inspect --members` のslot部分）は得られません。
+- 要求した深さより下の子（`--depth 0` ではルート以外すべて）と、除外された子は、`isReferenceOnly: true` のスタブ（id・name・parentIdのみ）として返ります。要求した深さより下でWorkbenchが読めなかった子も、子のないスタブとして扱われ、失敗しません。
+- 要求した深さの範囲内で、Workbenchが読み取れなかった子Slot（`unexpanded` の reason が `ReadFailed`）があると、hierarchy / find / observe / inspect などSlotを観測するコマンドは、不完全な結果を返さず `WORKBENCH_UNAVAILABLE`（終了コード4、接続失敗と同じ）で失敗します。原因は接続断ではなく一部Slotの読み取り失敗です。コマンドを再試行するか `--backend link` を使ってください。
+- Componentのmember値: 非enumのfieldの `type` はnullです（直結はCLR型名）。`value` はwireのJSONです。enumは `type` がenum型名になります。配列・辞書のmemberは `kind: "opaque"`（値なし）、playbackも値なしです。
+- `type describe` の非Component型: `isWorldElement` と `genericParameters` はWorkbenchが報告しません（R5、保留中）。`isComponent`/`isSyncObject` はtrue、`isEnum`または値型はfalseと決められる型だけが答えられ、それ以外（普通のclass、閉じたgenericなど）は `BACKEND_UNSUPPORTED` です。open genericのパラメータ名は取れます。
+- `type search` が返す型名は `[Assembly]Namespace.Name` の形です。`Slider` などの短い名前は、`reflection.search`（500件の窓）で一意に解決できるときだけ受け付けます。曖昧または切り詰められたときは `COMPONENT_TYPE_NOT_FOUND` です。
+
+### 往復回数
+
+1回の論理読み取りが複数のRPC往復になります。`hierarchy --include-components`、`inspect --members`、`inspect --component/--member` は掛け算になるため、memberの多いComponentや大きなsubtreeでは遅くなります。
+
+- `GetSlot` = `world.observe` 1回。`includeComponentData` のときは、さらにComponentの型ごとに `reflection.component` 1回（client内でcache）＋ memberごとに `member.read` 1回。
+- `GetComponent` = 型が不明なとき `member.read` 1回（型特定のprobe）＋ `reflection.component` 1回（型ごとにcache）＋ member数分の `member.read`。直前の `GetSlot` で型が既知ならmember数分だけです。`member.read` は1回ごとにComponent全体をResoniteLinkから読みます。
+- `type search` = 1回、`type describe`（Component型）= 1〜2回、（非Component型）= 1〜4回。
 
 Workbench関連のエラーコード:
 
-- `WORKBENCH_UNAVAILABLE`: pipeへ接続できない、またはhandshakeを完了できない（Workbench未起動など）
+- `WORKBENCH_UNAVAILABLE`: pipeへ接続できない、またはhandshakeを完了できない（Workbench未起動など）。読み取り中の接続切り替わり、`stale` 応答、memberの読み取り失敗、要求した深さの範囲内のSlot読み取り失敗（`ReadFailed`）、不正な応答形式も同じコードです
 - `WORKBENCH_PROTOCOL_INCOMPATIBLE`: Workbenchがprotocol versionを拒否。ResoLoopまたはWorkbench Appの更新が必要
 - `WORKBENCH_NOT_CONNECTED`: Workbenchは応答したがResonite sessionへ未接続。`wb status` では `connected: false` として正常出力されます
+- `WORKBENCH_OBSERVE_LIMIT_EXCEEDED`: 観測上限（深さ32・8,192 Slot）を超えた。`--under` で絞るか `--backend link` を使用
 - `BACKEND_UNSUPPORTED`: `--backend workbench` で未対応の接続コマンドを実行した
+- `SLOT_NOT_FOUND` / `COMPONENT_NOT_FOUND` / `COMPONENT_TYPE_NOT_FOUND` / `TYPE_NOT_FOUND`: Workbenchの「Unknown」（不在の証明ではない）のときにも同じコードで返ります
 
 ## Quick start
 
