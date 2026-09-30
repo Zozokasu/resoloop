@@ -101,7 +101,7 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
             ? "Root"
             : options.Under!.Contains('/') ? NormalizePath(options.Under) : root.Name;
         var results = new List<SlotMatch>();
-        Visit(root, rootPath, slot =>
+        void Collect(SlotInfo slot)
         {
             if (options.DirectChildren && slot.Id == root.Id) return;
             if (options.ExcludeReferenceOnly && slot.IsReferenceOnly) return;
@@ -112,7 +112,14 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
                 c.Type.Contains(componentType, StringComparison.OrdinalIgnoreCase));
             if (nameMatches && componentMatches)
                 results.Add(new SlotMatch(slot.Id, slot.Name, slot.Path!, slot.Components));
-        });
+        }
+        // --direct-children evaluates only the root's direct children: backends may mark
+        // grandchildren as reference-only stubs, but they are never direct children.
+        if (options.DirectChildren)
+            foreach (var child in root.Children)
+                Collect(child with { Path = rootPath + "/" + child.Name });
+        else
+            Visit(root, rootPath, Collect);
         return results;
     }
 

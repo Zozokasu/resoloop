@@ -108,8 +108,8 @@ internal static class WorkbenchSlotMapper
         foreach (JsonProperty property in slotsElement.EnumerateObject())
             slots[property.Name] = property.Value;
 
-        IReadOnlyDictionary<string, string?> unexpanded = ReadStubNames(value, "unexpanded");
-        IReadOnlyDictionary<string, string?> excluded = ReadStubNames(value, "excluded");
+        IReadOnlyDictionary<string, (string? Name, Truncation Reason)> unexpanded = ReadStubEntries(value, "unexpanded");
+        IReadOnlyDictionary<string, (string? Name, Truncation Reason)> excluded = ReadStubEntries(value, "excluded");
 
         if (!slots.TryGetValue(scopeRootId, out JsonElement root))
         {
@@ -128,8 +128,8 @@ internal static class WorkbenchSlotMapper
         int level,
         int depth,
         IReadOnlyDictionary<string, JsonElement> slots,
-        IReadOnlyDictionary<string, string?> unexpanded,
-        IReadOnlyDictionary<string, string?> excluded,
+        IReadOnlyDictionary<string, (string? Name, Truncation Reason)> unexpanded,
+        IReadOnlyDictionary<string, (string? Name, Truncation Reason)> excluded,
         HashSet<string> ancestors)
     {
         if (record.ValueKind != JsonValueKind.Object)
@@ -181,7 +181,8 @@ internal static class WorkbenchSlotMapper
                 throw Malformed($"{path}.childIds contains a non-string entry.");
             string childId = childElement.GetString()!;
 
-            if (level + 1 <= depth && slots.TryGetValue(childId, out JsonElement childRecord))
+            bool withinDepth = level + 1 <= depth;
+            if (withinDepth && slots.TryGetValue(childId, out JsonElement childRecord))
             {
                 if (!ancestors.Add(childId))
                     throw Malformed($"slot '{childId}' appears twice on one path; the hierarchy is not a tree.");
@@ -190,6 +191,17 @@ internal static class WorkbenchSlotMapper
             }
             else
             {
+                // A child inside the requested depth that could not be read cannot become a
+                // stub: searches would silently miss whatever the unread subtree holds.
+                if (withinDepth && unexpanded.TryGetValue(childId, out var stub)
+                    && (stub.Reason & Truncation.ReadFailed) != 0)
+                {
+                    string label = stub.Name is { Length: > 0 } stubName ? $" ('{stubName}')" : string.Empty;
+                    throw WorkbenchErrors.Unavailable(
+                        $"world.observe could not read slot '{childId}'{label}, a child of '{id}' " +
+                        "inside the requested depth, so the result would be incomplete. " +
+                        "Retry the command or use --backend link.");
+                }
                 children.Add(new SlotInfo(
                     childId,
                     StubName(childId, slots, unexpanded, excluded),
@@ -217,11 +229,11 @@ internal static class WorkbenchSlotMapper
     private static string StubName(
         string childId,
         IReadOnlyDictionary<string, JsonElement> slots,
-        IReadOnlyDictionary<string, string?> unexpanded,
-        IReadOnlyDictionary<string, string?> excluded)
+        IReadOnlyDictionary<string, (string? Name, Truncation Reason)> unexpanded,
+        IReadOnlyDictionary<string, (string? Name, Truncation Reason)> excluded)
     {
-        if (unexpanded.TryGetValue(childId, out string? name)) return name ?? string.Empty;
-        if (excluded.TryGetValue(childId, out name)) return name ?? string.Empty;
+        if (unexpanded.TryGetValue(childId, out var unexpandedEntry)) return unexpandedEntry.Name ?? string.Empty;
+        if (excluded.TryGetValue(childId, out var excludedEntry)) return excludedEntry.Name ?? string.Empty;
         if (slots.TryGetValue(childId, out JsonElement record)
             && record.ValueKind == JsonValueKind.Object
             && record.TryGetProperty("name", out JsonElement nameElement)
@@ -230,10 +242,11 @@ internal static class WorkbenchSlotMapper
         return string.Empty;
     }
 
-    /// <summary>Reads the id/name pairs of an unexpanded/excluded entry list for stub naming.</summary>
-    private static IReadOnlyDictionary<string, string?> ReadStubNames(JsonElement snapshot, string property)
+    /// <summary>Reads the id/name/reason of each unexpanded/excluded entry for stub handling.</summary>
+    private static IReadOnlyDictionary<string, (string? Name, Truncation Reason)> ReadStubEntries(
+        JsonElement snapshot, string property)
     {
-        var names = new Dictionary<string, string?>(StringComparer.Ordinal);
+        var entries = new Dictionary<string, (string?, Truncation)>(StringComparer.Ordinal);
         if (!snapshot.TryGetProperty(property, out JsonElement list))
             throw Malformed($"value.{property} is missing.");
         if (list.ValueKind != JsonValueKind.Array)
@@ -246,10 +259,29 @@ internal static class WorkbenchSlotMapper
             string id = RequiredString(entry, "id", path);
             string? name = RequiredNullableString(entry, "name", path);
             _ = RequiredString(entry, "parentId", path);
-            _ = Required(entry, "reason", path); // present on the wire; any reason maps to a stub either way.
-            names[id] = name;
+            entries[id] = (name, StubReason(entry, path));
         }
-        return names;
+        return entries;
+    }
+
+    /// <summary>
+    /// The entry reason is serialized as a TruncationReasons flag (a string like
+    /// "ReadFailed", or a number); names outside that enum still parse to a stub-worthy
+    /// reason of <see cref="Truncation.None"/> instead of failing.
+    /// </summary>
+    private static Truncation StubReason(JsonElement entry, string path)
+    {
+        JsonElement element = Required(entry, "reason", path);
+        if (element.ValueKind == JsonValueKind.String && element.GetString() is { Length: > 0 } text)
+        {
+            Truncation reason = Truncation.None;
+            foreach (string part in text.Split(','))
+                if (Enum.TryParse(part.Trim(), out Truncation flag)) reason |= flag;
+            return reason;
+        }
+        if (element.ValueKind == JsonValueKind.Number && element.TryGetInt32(out int bits))
+            return (Truncation)bits;
+        throw Malformed($"{path}.reason is not a string or number.");
     }
 
     /// <summary>

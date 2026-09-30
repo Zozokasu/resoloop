@@ -216,7 +216,7 @@ public sealed class WorkbenchSlotMapperTests
     }
 
     [Fact]
-    public void MapObservation_UnexpandedReadFailedChild_BecomesReferenceOnlyStub()
+    public void MapObservation_UnexpandedReadFailedChild_WithinDepth_ThrowsUnavailable()
     {
         JsonObject slots = new()
         {
@@ -224,14 +224,35 @@ public sealed class WorkbenchSlotMapperTests
         };
         JsonArray unexpanded = new(StubEntry("child", "Unread", "root", "ReadFailed"));
 
-        SlotInfo root = WorkbenchSlotMapper.MapObservation(
-            Result(Snapshot("root", slots, unexpanded, truncation: "ReadFailed")), "root", depth: 4);
+        var ex = Assert.Throws<RLoopException>(() => WorkbenchSlotMapper.MapObservation(
+            Result(Snapshot("root", slots, unexpanded, truncation: "ReadFailed")), "root", depth: 4));
 
-        SlotInfo stub = Assert.Single(root.Children);
+        // A stub here would let find/hierarchy report an incomplete tree as complete.
+        Assert.Equal("WORKBENCH_UNAVAILABLE", ex.Code);
+        Assert.Contains("child", ex.Message);
+        Assert.Contains("Unread", ex.Message);
+    }
+
+    [Fact]
+    public void MapObservation_UnexpandedReadFailedChild_BelowDepth_BecomesReferenceOnlyStub()
+    {
+        JsonObject slots = new()
+        {
+            ["root"] = Slot("root", "Root", null, true, 0, ["child"]),
+            ["child"] = Slot("child", "Child", "root", true, 1, ["grandchild"]),
+        };
+        JsonArray unexpanded = new(StubEntry("grandchild", "Unread", "child", "ReadFailed"));
+
+        SlotInfo root = WorkbenchSlotMapper.MapObservation(
+            Result(Snapshot("root", slots, unexpanded, truncation: "ReadFailed")), "root", depth: 1);
+
+        SlotInfo child = Assert.Single(root.Children);
+        Assert.False(child.IsReferenceOnly);
+        SlotInfo stub = Assert.Single(child.Children);
         Assert.True(stub.IsReferenceOnly);
-        Assert.Equal("child", stub.Id);
+        Assert.Equal("grandchild", stub.Id);
         Assert.Equal("Unread", stub.Name);
-        Assert.Equal("root", stub.ParentId);
+        Assert.Equal("child", stub.ParentId);
         Assert.Empty(stub.Children);
         Assert.Empty(stub.Components);
         Assert.Null(stub.Position);

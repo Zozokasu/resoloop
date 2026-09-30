@@ -369,7 +369,7 @@ public sealed class WorkbenchReadTests
     }
 
     [Fact]
-    public async Task GetSlotAsync_UnexpandedChild_BecomesReferenceOnlyStub()
+    public async Task GetSlotAsync_UnexpandedReadFailedChild_WithinDepth_ThrowsUnavailable()
     {
         string pipeName = Wb.NewPipeName();
         using var guard = new CancellationTokenSource(Wb.GuardTimeout);
@@ -385,7 +385,31 @@ public sealed class WorkbenchReadTests
         await using var client = new WorkbenchResoniteClient();
         await client.ConnectAsync(Wb.PipeUri(pipeName), Wb.ConnectTimeout, guard.Token);
 
-        SlotInfo root = await client.GetSlotAsync("root", 2, false, guard.Token);
+        var ex = await Assert.ThrowsAsync<RLoopException>(
+            () => client.GetSlotAsync("root", 2, false, guard.Token));
+
+        Assert.Equal("WORKBENCH_UNAVAILABLE", ex.Code);
+        Assert.Contains("far", ex.Message);
+    }
+
+    [Fact]
+    public async Task GetSlotAsync_UnexpandedReadFailedChild_BelowDepth_BecomesReferenceOnlyStub()
+    {
+        string pipeName = Wb.NewPipeName();
+        using var guard = new CancellationTokenSource(Wb.GuardTimeout);
+        JsonObject slots = new()
+        {
+            ["root"] = SlotRecord("root", "Root", null, true, 0, ["far"]),
+        };
+        JsonObject observe = ObserveResult(Snapshot("root", slots,
+            unexpanded: new JsonArray(StubEntry("far", "Far", "root", "ReadFailed")),
+            truncation: "ReadFailed"));
+        await using var server = FakeWorkbenchServer.Start(pipeName, (s, ct) =>
+            Wb.ServeAsync(s, request => Wb.Response(request.Id, observe.ToJsonString()), ct));
+        await using var client = new WorkbenchResoniteClient();
+        await client.ConnectAsync(Wb.PipeUri(pipeName), Wb.ConnectTimeout, guard.Token);
+
+        SlotInfo root = await client.GetSlotAsync("root", 0, false, guard.Token);
 
         SlotInfo stub = Assert.Single(root.Children);
         Assert.True(stub.IsReferenceOnly);
@@ -394,6 +418,68 @@ public sealed class WorkbenchReadTests
         Assert.Equal("root", stub.ParentId);
         Assert.Empty(stub.Components);
         Assert.Empty(stub.Children);
+    }
+
+    [Fact]
+    public async Task FindAsync_ReadFailedChildWithinDepth_FailsInsteadOfEmptySuccess()
+    {
+        // hierarchy/observe/inspect share this GetSlotAsync path; a within-depth read
+        // failure must surface as WORKBENCH_UNAVAILABLE rather than an empty match list.
+        string pipeName = Wb.NewPipeName();
+        using var guard = new CancellationTokenSource(Wb.GuardTimeout);
+        JsonObject slots = new()
+        {
+            ["root"] = SlotRecord("root", "Root", null, true, 0, ["far"]),
+        };
+        JsonObject observe = ObserveResult(Snapshot("root", slots,
+            unexpanded: new JsonArray(StubEntry("far", "Far", "root", "ReadFailed")),
+            truncation: "ReadFailed"));
+        await using var server = FakeWorkbenchServer.Start(pipeName, (s, ct) =>
+            Wb.ServeAsync(s, request => Wb.Response(request.Id, observe.ToJsonString()), ct));
+        await using var client = new WorkbenchResoniteClient();
+        await client.ConnectAsync(Wb.PipeUri(pipeName), Wb.ConnectTimeout, guard.Token);
+        var world = new WorldService(client);
+
+        var ex = await Assert.ThrowsAsync<RLoopException>(
+            () => world.FindAsync(null, false, Grabbable, 4, guard.Token));
+
+        Assert.Equal("WORKBENCH_UNAVAILABLE", ex.Code);
+    }
+
+    [Fact]
+    public async Task FindAsync_DirectChildren_DoesNotMatchGrandchildStub()
+    {
+        // A depth-1 observe reports the grandchildren of level-1 slots as stubs; a
+        // --direct-children find must evaluate only the root's direct children.
+        string pipeName = Wb.NewPipeName();
+        using var guard = new CancellationTokenSource(Wb.GuardTimeout);
+        var log = new ConcurrentQueue<RpcRequest>();
+        JsonObject slots = new()
+        {
+            ["root"] = SlotRecord("root", "Root", null, true, 0, ["child"]),
+            ["child"] = SlotRecord("child", "Child", "root", true, 1, ["grand"]),
+        };
+        JsonObject observe = ObserveResult(Snapshot("root", slots,
+            unexpanded: new JsonArray(StubEntry("grand", "Grand", "child", "DepthLimit")),
+            truncation: "DepthLimit"));
+        await using var server = FakeWorkbenchServer.Start(pipeName, (s, ct) =>
+            Wb.ServeAsync(s, request => Wb.Response(request.Id, observe.ToJsonString()), ct, log));
+        await using var client = new WorkbenchResoniteClient();
+        await client.ConnectAsync(Wb.PipeUri(pipeName), Wb.ConnectTimeout, guard.Token);
+        var world = new WorldService(client);
+
+        var direct = await world.FindAsync("Grand", false, null, 8, guard.Token,
+            new FindOptions(DirectChildren: true));
+
+        Assert.Empty(direct);
+        RpcRequest request = Assert.Single(log);
+        Assert.Equal(RpcMethods.WorldObserve, request.Method);
+        Assert.Equal(1, request.Params!.Value.GetProperty("maxDepth").GetInt32());
+
+        // Without --direct-children the same stub is still found by name.
+        var deep = await world.FindAsync("Grand", false, null, 8, guard.Token);
+        Assert.Equal("grand", Assert.Single(deep).Id);
+        Assert.Equal("Root/Child/Grand", deep[0].Path);
     }
 
     [Fact]
