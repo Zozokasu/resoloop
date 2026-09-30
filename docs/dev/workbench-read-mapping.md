@@ -1,7 +1,7 @@
 # Workbench読み取り対応表（W2-B）
 
 更新: 2026-09-30
-対象: ResoLoop W2-B の実装（このブランチ、HEAD `<W2B-R1-HEAD>`）、resonite-workbench `7d40c92`。
+対象: ResoLoop W2-B の実装（このブランチ、コード確定 commit `2979890`（W2-B R1 修正後。この文書の更新 commit を除く））、resonite-workbench `7d40c92`。
 表記: 無印はResoLoop（このworktreeのルート）からの相対パス。`WB:`はresonite-workbench側の参照（このworktreeには同梱されていない）。行番号は1-based。
 根拠を確認できなかった項目には「未確認」と書く。
 
