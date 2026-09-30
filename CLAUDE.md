@@ -6,7 +6,7 @@ ResoLoopは、AIコーディングエージェントがResoniteLink経由でReso
 アーキテクチャ、コマンド、Resonite安全規則、上流の扱い、テストとSkillの同期規則は[`AGENTS.md`](AGENTS.md)を正とする。
 この文書はClaude向けの入口で、AGENTS.mdと重複する規則は書かない。
 
-このリポジトリはorange3134/resoloopのforkである。当面はupstreamを取り込まず、Workbench対応を優先する。方針と調査結果は[`docs/dev/fork-strategy.md`](docs/dev/fork-strategy.md)にある。
+このリポジトリはorange3134/resoloopのforkである。当面はupstreamを取り込まない。通常制作は直結（ResoniteLink）主経路へ統一し、Workbench backendは凍結・S5で除去予定である（計画: `plan/resoloop-slimming-plan.md`）。方針と調査結果は[`docs/dev/fork-strategy.md`](docs/dev/fork-strategy.md)にある。
 
 ## 製品ファイルと開発用ファイルの区別
 
@@ -27,11 +27,9 @@ ResoLoopは、AIコーディングエージェントがResoniteLink経由でReso
 
 ## エージェント体制
 
-`/ccg:go`の役割、決定権、Devinへの依頼、並列作業、検証の正本は[`docs/dev/agent-workflow.md`](docs/dev/agent-workflow.md)とする。
-Opusが目標と機能間契約を決め、Sonnet機能マネージャ（`.claude/agents/feature-manager.md`）がSWE-2の作業と統合を管理し、Devin SWE-2 Max（`--model swe-2-max`）が実装・ビルド・テストを行う。Codexは必要に応じて機能横断レビューや設計分析を担当する。
-
-`/ccg:go`実行時は、プロジェクトhook（`scripts/agents/ccg-go-roles.mjs`）が正本の要点を注入する。
-Devinへの指示は正本の必須項目と許可済みコマンドを使い、会話内容がDevinへ自動共有されるとは仮定しない。
+`/ccg:go`の役割、決定権、検証、Devin利用の正本は[`docs/dev/agent-workflow.md`](docs/dev/agent-workflow.md)とする。
+Opusが目標・優先順位・機能間契約・charter・受け入れを決め、Sonnet担当（`.claude/agents/feature-manager.md`）が調査・実装・関連build/test・短い報告までを一貫して行い、agent/*ブランチでcommitする。
+Devin SWE-2 Max（`--model swe-2-max`）は大量の並列実装や長時間build/testで担当が選ぶ任意手段、Codexは高影響変更のレビューに限る。
 
 ## 完了の報告
 
