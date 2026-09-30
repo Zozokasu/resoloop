@@ -116,7 +116,8 @@ public static class Program
                 ["backend"] = parsed.Option("backend"), ["workbench-pipe"] = parsed.Option("workbench-pipe")
             };
             var resolution = ConfigResolver.Resolve(Environment.CurrentDirectory, cliConfig);
-            BackendSupport.RequireSupported(parsed.Positionals[0], resolution.Config.Backend);
+            BackendSupport.RequireSupported(parsed.Positionals[0], resolution.Config.Backend,
+                parsed.Positionals.Count > 1 ? parsed.Positionals[1] : null);
             commandCancellation = CancellationTokenSource.CreateLinkedTokenSource(userCancellation.Token);
             commandCancellation.CancelAfter(TimeSpan.FromSeconds(resolution.Config.CommandTimeoutSeconds));
             var commandToken = commandCancellation.Token;
@@ -167,6 +168,16 @@ public static class Program
                 output.Success(new { openGeneric, arguments = typeArguments, specialized }, writer => writer.WriteLine(specialized));
                 return ExitCodes.Success;
             }
+            // Comparing two stored snapshots reads no world state, so it must not require a connection.
+            if (parsed.Positionals[0].Equals("snapshot", StringComparison.OrdinalIgnoreCase) &&
+                parsed.Positionals.Count > 1 && parsed.Positionals[1].Equals("diff", StringComparison.OrdinalIgnoreCase))
+            {
+                var diff = ObservationService.Diff(parsed.Positional(2, "BEFORE snapshot file"),
+                    parsed.Positional(3, "AFTER snapshot file"), parsed.Has("changes-only"), parsed.Option("group-by") ?? "slot");
+                output.Success(diff, writer => WriteDiff(writer, diff));
+                return ExitCodes.Success;
+            }
+
             if (parsed.Positionals[0].Equals("scene", StringComparison.OrdinalIgnoreCase))
             {
                 if (!parsed.Positional(1, "scene subcommand").Equals("summary", StringComparison.OrdinalIgnoreCase))
@@ -516,6 +527,12 @@ public static class Program
             }
             case "hierarchy":
             {
+                var subcommand = args.Positionals.Count > 1 ? args.Positionals[1].ToLowerInvariant() : null;
+                if (subcommand is "profile" or "query")
+                {
+                    await RunHierarchyObservation(subcommand, args, output, client, world, cancellationToken);
+                    break;
+                }
                 var depth = args.IntOption("depth", 2, -1, 64);
                 var root = await world.ResolveSlotSelectorAsync(args.Option("under") ?? "Root", args.Option("state"), cancellationToken);
                 var slot = await client.GetSlotAsync(root, depth, args.Has("include-components") && !args.Has("summary"), cancellationToken);
@@ -524,6 +541,7 @@ public static class Program
                 else output.Success(slot, w => OutputWriter.Hierarchy(w, slot));
                 break;
             }
+            case "snapshot": await RunSnapshot(args, output, client, world, cancellationToken); break;
             case "find":
             {
                 var under = args.Option("under");
@@ -697,6 +715,111 @@ public static class Program
             }
             default: throw UnknownCommand(string.Join(' ', args.Positionals));
         }
+    }
+
+    private static async Task RunHierarchyObservation(string subcommand, ParsedArguments args, OutputWriter output,
+        IResoniteClient client, WorldService world, CancellationToken cancellationToken)
+    {
+        var selector = args.Option("under") ?? "Root";
+        var resolved = await world.ResolveSlotSelectorAsync(selector, args.Option("state"), cancellationToken);
+        var service = new ObservationService(client);
+        var maxDepth = args.IntOption("max-depth", 64, 0, 64);
+        var maxSlots = args.IntOption("max-slots", 10000, 1, 100000);
+
+        if (subcommand == "profile")
+        {
+            var profile = await service.ProfileAsync(selector, resolved, maxDepth, maxSlots,
+                args.Option("group-by") ?? "depth", cancellationToken);
+            output.Success(profile, writer => WriteProfile(writer, profile));
+            return;
+        }
+
+        var referenceTo = args.Option("reference-to") is { } target
+            ? await world.ResolveSlotSelectorAsync(target, args.Option("state"), cancellationToken)
+            : null;
+        var filter = new HierarchyQueryFilter(args.Option("name"), args.Option("name-regex"), args.Option("component"),
+            args.Option("member"), referenceTo, args.Has("direct-children"));
+        var select = (args.Option("select") ?? string.Empty)
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        var result = await service.QueryAsync(selector, resolved, filter, select,
+            args.IntOption("limit", 100, 1, 1000), maxDepth, maxSlots, args.Option("cursor"), cancellationToken);
+        output.Success(result, writer => WriteQuery(writer, result));
+    }
+
+    private static async Task RunSnapshot(ParsedArguments args, OutputWriter output, IResoniteClient client,
+        WorldService world, CancellationToken cancellationToken)
+    {
+        switch (args.Positional(1, "snapshot action (create or diff)").ToLowerInvariant())
+        {
+            case "create":
+            {
+                var selector = args.Option("under") ?? "Root";
+                var resolved = await world.ResolveSlotSelectorAsync(selector, args.Option("state"), cancellationToken);
+                var output_ = args.RequireOption("output");
+                var document = await new ObservationService(client).CreateSnapshotAsync(selector, resolved, output_,
+                    args.Option("member-scope") ?? "references", args.Options("member"),
+                    args.IntOption("max-depth", 64, 0, 64), args.IntOption("max-slots", 10000, 1, 100000), cancellationToken);
+                // The file carries the snapshot; stdout stays a receipt so a capture never re-inflates the observation.
+                output.Success(new
+                {
+                    file = output_,
+                    document.SchemaVersion,
+                    document.Root,
+                    document.Complete,
+                    document.Truncation,
+                    document.MemberScope,
+                    document.ExcludedMembers,
+                    slots = document.Slots.Count,
+                    components = document.Slots.Sum(slot => slot.Components.Count)
+                }, writer => writer.WriteLine(
+                    $"snapshot {output_} | slots {document.Slots.Count} | complete {document.Complete}" +
+                    (document.Truncation is null ? string.Empty : $" | truncated {document.Truncation.Reason}")));
+                break;
+            }
+            default:
+                throw new RLoopException("UNKNOWN_COMMAND", "snapshot accepts create or diff.", ExitCodes.InvalidArguments,
+                    suggestions: ["resoloop snapshot create --under SLOT --output before.json", "resoloop snapshot diff before.json after.json"]);
+        }
+    }
+
+    private static void WriteProfile(TextWriter writer, ObservationEnvelope<HierarchyProfile> envelope)
+    {
+        var profile = envelope.Data;
+        writer.WriteLine($"{envelope.Root.Path} | slots {profile.TotalSlots} | components {profile.TotalComponents} | depth {profile.MaxObservedDepth}");
+        writer.WriteLine($"reference-only {profile.ReferenceOnlySlots} | without components {profile.EmptySlots} | widest {profile.MaxSiblingCount} children at {profile.MaxSiblingParentPath ?? "(none)"}");
+        foreach (var group in profile.Groups.Take(20)) writer.WriteLine($"  {group.Key}\t{group.Count}");
+        WriteCompleteness(writer, envelope.Complete, envelope.Truncation);
+    }
+
+    private static void WriteQuery(TextWriter writer, ObservationEnvelope<HierarchyQueryResult> envelope)
+    {
+        foreach (var match in envelope.Data.Matches)
+        {
+            var components = match.Components is null ? string.Empty :
+                "\t" + string.Join(", ", match.Components.Select(component => component.Type ?? component.Id));
+            writer.WriteLine($"{match.SlotId}\t{match.SlotPath}{components}");
+        }
+        writer.WriteLine($"returned {envelope.Data.Returned} of {envelope.Data.Matched} matched | traversed {envelope.Data.Traversed}");
+        WriteCompleteness(writer, envelope.Complete, envelope.Truncation);
+    }
+
+    private static void WriteDiff(TextWriter writer, SnapshotDiffResult diff)
+    {
+        foreach (var group in diff.Groups)
+        {
+            writer.WriteLine(group.Key);
+            foreach (var change in group.Changes)
+                writer.WriteLine($"  {change.Kind}\t{string.Join(' ', new[] { change.ComponentType, change.Member }.Where(part => part is not null))}".TrimEnd());
+        }
+        writer.WriteLine($"{diff.Changes} change(s) | complete {diff.Complete}");
+        foreach (var issue in diff.Issues) writer.WriteLine($"  {issue.Severity}: {issue.Code} {issue.Message}");
+    }
+
+    private static void WriteCompleteness(TextWriter writer, bool complete, ObservationTruncation? truncation)
+    {
+        if (complete) return;
+        writer.WriteLine($"incomplete: {truncation?.Reason ?? "unknown"}" +
+            (truncation?.Continuation is null ? string.Empty : $" | --cursor {truncation.Continuation}"));
     }
 
     private static async Task RunSlot(ParsedArguments args, OutputWriter output, IResoniteClient client, WorldService world, CancellationToken ct)
@@ -1146,6 +1269,17 @@ Connection and observation:
   resoloop status|ping [--url ws://localhost:PORT] [--json]
   resoloop wb status [--workbench-pipe NAME] [--json]
   resoloop hierarchy [--under ID_OR_PATH_OR_STABLE --state FILE] [--depth 2] [--include-components] [--summary] [--json]
+  resoloop hierarchy profile [--under SLOT --state FILE] [--max-depth 64] [--max-slots 10000]
+    [--group-by depth|component-type|name] [--json]
+    Counts only: size, breadth, depth, and component mix without a per-Slot dump.
+  resoloop hierarchy query [--under SLOT --state FILE] [--name TEXT] [--name-regex REGEX] [--component TYPE]
+    [--member NAME] [--reference-to SLOT] [--direct-children] [--select slot.id,slot.path,component.type,member.NAME]
+    [--limit 100] [--cursor TOKEN] [--max-depth 64] [--max-slots 10000] [--json]
+    --limit bounds returned rows; --max-slots bounds traversal. Cursors are bound to one connection and query.
+  resoloop snapshot create --output FILE [--under SLOT --state FILE] [--member-scope references|selected|all]
+    [--member NAME ...] [--max-depth 64] [--max-slots 10000] [--json]
+  resoloop snapshot diff BEFORE.json AFTER.json [--changes-only] [--group-by slot|component|member] [--json]
+    Removals are reported only where the newer snapshot observed the parent.
   resoloop find (--name TEXT [--exact] | --component TYPE) [--under SLOT] [--direct-children] [--depth 8] [--json]
   resoloop inspect SLOT|$slot:key [--state WORLD_STATE] [--depth 1] [--members] [--component TYPE] [--member NAME] [--components-only] [--json]
   resoloop scene summary FILE.json [--output summary.json]
