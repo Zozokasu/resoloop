@@ -20,8 +20,10 @@ public sealed class ResoniteLinkClientAdapter : IResoniteClient, IResoniteClient
     private readonly object _cacheLock = new();
     /// <summary>Test seam: runs inside the cache lock right after a successful generation check, before the cache update.</summary>
     internal Action? AfterGenerationCheckForTests;
-    /// <summary>Test seam: runs in ConnectAsync right before it asks for the cache lock, so a test can tell the reconnect is about to contend.</summary>
-    internal Action? BeforeReconnectLockForTests;
+    /// <summary>Test seam: runs inside the cache lock right after the cache update, before the lock is released.</summary>
+    internal Action? AfterCommitForTests;
+    /// <summary>Test seam: runs inside ConnectAsync's cache lock (the reconnect clear), so a test can record when the reconnect got the lock.</summary>
+    internal Action? InsideReconnectLockForTests;
     private int _cacheHits;
     private string? _generation;
     private Uri? _uri;
@@ -52,9 +54,9 @@ public sealed class ResoniteLinkClientAdapter : IResoniteClient, IResoniteClient
         if (_meta.IsConnected)
             throw new RLoopException("ALREADY_CONNECTED", "The ResoniteLink client is already connected; dispose it and create a new client to connect elsewhere.",
                 ExitCodes.OperationFailed, new Dictionary<string, object?> { ["url"] = _uri?.ToString() });
-        BeforeReconnectLockForTests?.Invoke();
         lock (_cacheLock)
         {
+            InsideReconnectLockForTests?.Invoke();
             Volatile.Write(ref _generation, null);
             ClearReflectionMemory();
             _diskCache = null;
@@ -431,7 +433,7 @@ public sealed class ResoniteLinkClientAdapter : IResoniteClient, IResoniteClient
 
         var results = new HashSet<string>(StringComparer.Ordinal);
         var visited = new HashSet<string>(StringComparer.Ordinal);
-        await CollectCategory(string.Empty, 0, results, visited, cancellationToken);
+        await CollectCategory(string.Empty, 0, results, visited, generation, cancellationToken);
         var collected = results.ToArray();
         // Do not remember an empty list: it is "unknown", and a later call may see the loaded world.
         if (collected.Length == 0) { EnsureGeneration(generation); return collected; }
@@ -440,7 +442,7 @@ public sealed class ResoniteLinkClientAdapter : IResoniteClient, IResoniteClient
 
     /// <summary>Any failure here leaves the list incomplete (unknown); the caller never receives partial results.</summary>
     private async Task CollectCategory(string category, int depth, HashSet<string> results, HashSet<string> visited,
-        CancellationToken cancellationToken)
+        string generation, CancellationToken cancellationToken)
     {
         if (visited.Contains(category)) return;
         if (depth > MaxTypeCategoryDepth)
@@ -452,10 +454,13 @@ public sealed class ResoniteLinkClientAdapter : IResoniteClient, IResoniteClient
         try { response = await Wait(_meta.GetComponentTypes(category), "component-types.get-category", cancellationToken); }
         catch (Exception ex) when (ex is not (OperationCanceledException or RLoopException))
         {
-            // A dropped connection stays a connection failure; any other SDK failure leaves the walk incomplete (unknown).
+            // Order: generation, then connection, then the kind of failure. An old connection's failure is never a type error.
+            EnsureGeneration(generation);
             EnsureConnected();
             throw CategoryWalkIncomplete(category, $"{ex.GetType().Name}: {ex.Message}", ex);
         }
+        // Same order for answers: an answer of an old connection (failure or success) is discarded before it is read.
+        EnsureGeneration(generation);
         if (!response.Success)
         {
             // A failure answer that arrives with a dropped connection is a connection failure (same as the exception path).
@@ -471,7 +476,7 @@ public sealed class ResoniteLinkClientAdapter : IResoniteClient, IResoniteClient
             if (string.IsNullOrWhiteSpace(child) || child.Contains('/') || child.Contains('\\'))
                 throw CategoryWalkIncomplete(category, $"the sub-category name '{child}' is empty or contains a path separator");
             var childPath = string.IsNullOrEmpty(category) ? child : category + "/" + child;
-            await CollectCategory(childPath, depth + 1, results, visited, cancellationToken);
+            await CollectCategory(childPath, depth + 1, results, visited, generation, cancellationToken);
         }
     }
 
@@ -783,7 +788,9 @@ public sealed class ResoniteLinkClientAdapter : IResoniteClient, IResoniteClient
         {
             EnsureGeneration(generation);
             AfterGenerationCheckForTests?.Invoke();
-            return commit();
+            var result = commit();
+            AfterCommitForTests?.Invoke();
+            return result;
         }
     }
 
