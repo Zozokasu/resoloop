@@ -1,7 +1,7 @@
 # Workbench読み取り対応表（W2-B）
 
 更新: 2026-09-30
-対象: ResoLoop W2-B の実装（このブランチ、HEAD `13ffabe`）、resonite-workbench `7d40c92`。
+対象: ResoLoop W2-B の実装（このブランチ、HEAD `<W2B-R1-HEAD>`）、resonite-workbench `7d40c92`。
 表記: 無印はResoLoop（このworktreeのルート）からの相対パス。`WB:`はresonite-workbench側の参照（このworktreeには同梱されていない）。行番号は1-based。
 根拠を確認できなかった項目には「未確認」と書く。
 
@@ -34,8 +34,8 @@ W2-A版（`agent/wb-w2a-mapping` 作成時、resonite-workbench `d549280` 前提
 | `Position` / `Rotation` / `Scale` | 完全（R1。未報告はnull） | `SlotRecord.transform` の `{position,rotation,scale}` はwire JSON文字列。`ParseFloat3`/`ParseFloatQ` で `Vector3Value`/`QuaternionValue` へ（`:150-161,:259-270`）。transformが無い・nullのときnullのまま |
 | `IsPersistent` | 完全（R1。未報告はnull） | `OptionalNullableBool`（`:147`） |
 | `Tag` | 完全（未報告はnull） | `OptionalNullableString`（`:146`） |
-| `IsReferenceOnly` | 完全（R1） | `SlotRecord.IsReferenceOnly`（`:148`）。加えて「読めなかった・深さや件数で切られた子」は `IsReferenceOnly: true` のstub（id・name・parentIdのみ、`:191-200`）。stub名は unexpanded/excludedエントリまたはdepth外のフルrecordから取る（`StubName`、`:217-231`） |
-| `Components`（`ComponentSummary[]`） | 一部 | `SlotRecord.Components` は `Id`+`ComponentType` のみ（`:163-173`）。member値は `includeComponentData` のとき `FillComponentMembersAsync`（`WorkbenchResoniteClient.Read.cs:228-260`）が `reflection.component`＋`member.read` で埋める（往復回数は3節）。stubには付かない |
+| `IsReferenceOnly` | 完全（R1） | `SlotRecord.IsReferenceOnly`（`:148`）。要求depthより下の子・`excluded` の子は `IsReferenceOnly: true` のstub（id・name・parentIdのみ、`:191-200`）。stub名は unexpanded/excludedエントリまたはdepth外のフルrecordから取る（`StubName`、`:217-231`）。**W2-B R1 で確定**: 要求depth内で読み取りに失敗した子（unexpandedの`ReadFailed`）はstub化せず `WORKBENCH_UNAVAILABLE` で失敗する（1.5節・4節） |
+| `Components`（`ComponentSummary[]`） | 一部 | `SlotRecord.Components` は `Id`+`ComponentType` のみ（`:163-173`）。member値は `includeComponentData` のとき `FillComponentMembersAsync`（`WorkbenchResoniteClient.Read.cs:249-281`）が `reflection.component`＋`member.read` で埋める（往復回数は3節）。stubには付かない |
 | `Children` | 完全（上限内） | `childIds` を再走査（`:175-201`）。要求depthより深い子はstub化 |
 | `Path` | 完全（ResoLoop側で計算） | `WorldService.AddPaths`（`src/RLoop.Core/WorldService.cs:1877`）。RPCに依存しない |
 | `Members`（slotレベル。`inspect --members` のslot部分） | **不可** | `Members: null` で固定（`:210`）。直結は `Link.Slot` のフィールドを `MemberValue` へ包む（`ResoniteLinkClientAdapter.cs:650-655`）。`OrderOffset` 相当のフィールドはWorkbench側に無い |
@@ -44,8 +44,8 @@ W2-A版（`agent/wb-w2a-mapping` 作成時、resonite-workbench `d549280` 前提
 
 | フィールド | 得られるか | 取り方 / 根拠 |
 | --- | --- | --- |
-| `Id` / `Type` | 完全 | 観測済みなら `_componentTypes` cache、未観測なら `member.read` の型probe（`__resoloop_type_probe__`）で `componentType` を得る（`WorkbenchResoniteClient.Read.cs:266-284`）。どちらでも得られなければ `COMPONENT_NOT_FOUND` |
-| `Members` | 取れるがN+1 | (a) `reflection.component(componentType)` で宣言member名一覧（`MemberNamesAsync`、型ごとにcache、`:287-296`）。(b) 各member名に `member.read`（`ReadComponentMembersAsync`、`:302-325`）。1つでも読めないmemberがあれば `WORKBENCH_UNAVAILABLE`（`:316-321`）。部分mapは返さない |
+| `Id` / `Type` | 完全 | 観測済みなら `_componentTypes` cache、未観測なら `member.read` の型probe（`__resoloop_type_probe__`）で `componentType` を得る（`WorkbenchResoniteClient.Read.cs:287-305`）。どちらでも得られなければ `COMPONENT_NOT_FOUND` |
+| `Members` | 取れるがN+1 | (a) `reflection.component(componentType)` で宣言member名一覧（`MemberNamesAsync`、型ごとにcache、`:308-317`）。(b) 各member名に `member.read`（`ReadComponentMembersAsync`、`:323-345`）。1つでも読めないmemberがあれば `WORKBENCH_UNAVAILABLE`（`:337-342`）。部分mapは返さない |
 | `MemberValue` 本体 | 一部 | `WorkbenchMemberMapper.MapMember`（`src/RLoop.Workbench/WorkbenchMemberMapper.cs:17-61`）。kind対応: `field`→`"field"`、`reference`→`"reference"`、`list`→`"list"`+`Elements`再帰、`syncObject`→`"syncObject"`+`Members`再帰。`opaque`はwireTypeが `"empty"`→`"empty"`、`"playback"`→`"SyncPlayback"`+`[FrooxEngine]FrooxEngine.SyncPlayback`、その他（array/dictionary等）→`"opaque"`+wireType（`:47-58`）。直結が返す `"dictionary"` の `Members` や `SyncPlayback` の `Value` 相当は得られない |
 | `MemberValue.Value` | 一部 | `ObservedField.valueJson`（wireのJSON文字列）を `JsonNode.Parse` して入れる（`:74-92`）。直結の `BoxedValue` serialize（`ResoniteLinkClientAdapter.cs:670-671`）と整形まで一致するかは**未確認**（live項目） |
 | `MemberValue.Type` | 一部 | 非enumのfieldは null（`:27-32`。Workbenchはwire名 `float`/`float3` を返し、直結のCLR型名 `System.Single` とは互換表が無いため推測しない）。`valueType:"enum"` のときだけ `enumType` を入れる。直結のenum fieldも同じく `EnumType` を入れる（`:666-669`） |
@@ -61,18 +61,18 @@ W2-A版（`agent/wb-w2a-mapping` 作成時、resonite-workbench `d549280` 前提
 | `IsWorldElement` | 導出（R5保留） | Workbenchは報告しない。`isComponent‖isSyncObject`→true、`isEnum‖isValueType`→false と決められる型だけ答える。それ以外（普通のclassなど）は `BACKEND_UNSUPPORTED`（`:85-91`） |
 | `GenericParameters` | 一部（R5保留） | open generic（`genericArguments` が全て `isGenericParameter`）ならパラメータ名を返せる（`:93-103`）。閉じたgenericは `BACKEND_UNSUPPORTED`（`:104-109`） |
 | `Interfaces` | 完全 | `TypeDefinitionInfo.Interfaces` を `Render`（`:76-79`） |
-| `EnumValues` / `IsFlags` | 完全（R3） | `reflection.type` が `isEnum` を報告したときだけ `reflection.enum` を呼ぶ（`WorkbenchResoniteClient.Read.cs:122-127`）。`status:"Found"` 以外は `WORKBENCH_UNAVAILABLE`（`:156-177`） |
+| `EnumValues` / `IsFlags` | 完全（R3） | `reflection.type` が `isEnum` を報告したときだけ `reflection.enum` を呼ぶ（`WorkbenchResoniteClient.Read.cs:122-128`）。`status:"Found"` 以外は `WORKBENCH_UNAVAILABLE`（`:156-177`） |
 
 ### 1.4 型検索（`SearchComponentTypesAsync`）
 
-**対応済み（R2）**。`reflection.search` で `[Assembly]Namespace.Name` 形の名前をサーバー上限500件取得し（`WorkbenchResoniteClient.Read.cs:58-66,:23`）、直結と同じ `SearchScore`（exact < `.Name` 末尾 < 最終segment prefix < substring）でre-rankする（`:70-74,:377-384`）。`truncated:true` のときもranked subsetを返す（signatureが報告できない、`:67-69`）。
+**対応済み（R2）**。`reflection.search` で `[Assembly]Namespace.Name` 形の名前をサーバー上限500件取得し（`WorkbenchResoniteClient.Read.cs:58-66,:23`）、直結と同じ `SearchScore`（exact < `.Name` 末尾 < 最終segment prefix < substring）でre-rankする（`:70-74,:398-405`）。`truncated:true` のときもranked subsetを返す（signatureが報告できない、`:67-69`）。
 
-短い型名の一意解決（`DescribeComponentTypeAsync`・`DescribeTypeAsync` の短い名前入力）は `ResolveComponentTypeAsync`（`:334-373`）: `reflection.search` の結果のうち、assemblyを除いた名前が入力に一致または `.{type}` で終わる候補が**ちょうど1件かつ非truncated**のときだけ受理する。0件・複数・truncatedは `COMPONENT_TYPE_NOT_FOUND`（直結はsessionのComponent型一覧を持つので、全件確定できる点が違う）。
+短い型名の一意解決（`DescribeComponentTypeAsync`・`DescribeTypeAsync` の短い名前入力）は `ResolveComponentTypeAsync`（`:355-394`）: `reflection.search` の結果のうち、assemblyを除いた名前が入力に一致または `.{type}` で終わる候補が**ちょうど1件かつ非truncated**のときだけ受理する。0件・複数・truncatedは `COMPONENT_TYPE_NOT_FOUND`（直結はsessionのComponent型一覧を持つので、全件確定できる点が違う）。
 
 ### 1.5 観測の上限と既定値
 
 - `world.observe` は `maxDepth` 1-32、`maxSlots` 1-8,192。ResoLoop側は要求depthを `WorkbenchLimits.RequireDepth` で検証し、0未満（`-1`=無制限）または33以上は**RPCを呼ばずに** `WORKBENCH_OBSERVE_LIMIT_EXCEEDED`（終了コード7、`WorkbenchErrors.cs:9-28`）。depth 0は `Math.Max(1, depth)` で1段観測し、level 1以下の子をstub化する（`WorkbenchSlotMapper.cs:39-45,:184-200`）。
-- 応答側の打切り: `truncation` の `SlotLimit` bitが立っていれば `WORKBENCH_OBSERVE_LIMIT_EXCEEDED`（`:97-102`）。`DepthLimit`/`ReadFailed` は拒否せずstub化だけ。
+- 応答側の打切り: `truncation` の `SlotLimit` bitが立っていれば `WORKBENCH_OBSERVE_LIMIT_EXCEEDED`（`:97-102`）。**W2-B R1 で確定**: `ReadFailed`（要求した深さの範囲内で読み取りに失敗した子）はstub化せず `WORKBENCH_UNAVAILABLE` で失敗する。stub化されるのは要求depthより下の子（`DepthLimit`の未展開やdepth外のフルrecord）と `excluded` の子だけで、stub名の取り方は1.1節のまま。
 - 既存コマンドの `--depth` 範囲（最大64）と既定値は変更していない: `hierarchy` 既定2（`src/RLoop.Cli/Program.cs:519`）、`find` 既定8（`:533`）、`inspect` 既定1（`:553,:563`）、`tool audit` 既定16（`:683`）、`uix audit` 既定6・上限32（`:637-638`）。既定値が32を超えるコマンドは無いため、「Workbench経由のときだけ既定を32にする」切り替えは入れていない。
 - 深さ64固定の内部処理は、Workbench経由では `WORKBENCH_OBSERVE_LIMIT_EXCEEDED` で失敗する: runtimeRelocatable Slotの再解決（`WorldService.cs:285`）、`item audit`（`:319`）、`diff`/`plan` の `PrepareAsync`（`:911,:931`）。
 
@@ -82,11 +82,11 @@ W2-A版（`agent/wb-w2a-mapping` 作成時、resonite-workbench `d549280` 前提
 
 「対応」は、Workbench経由でも直結（`--backend link`）と同じ形の結果を返せること（欠ける値はnullまたはスタブとして明示される）。「延期」は、同じ結果を保証できない値の欠落またはコストのため、このラウンドでは対応しないもの。
 
-ゲートの現状（確認した食い違い）: このブランチでは `BackendSupport.WorkbenchSupport`（`src/RLoop.Cli/BackendSupport.cs:24-50`）に `supported` レベルがまだ無く、`RequireSupported`（`:57-65`、`Program.cs:119` で全コマンドに効く）は表内の**全**コマンドを `BACKEND_UNSUPPORTED` で拒否する。つまり下表の「対応」は現commit時点でclient read path（`IResoniteClient`）が供給できるという意味であり、CLI経由で到達させるにはゲート側の対応表更新が別途要る。
+ゲートの現状: `BackendSupport.WorkbenchSupport`（`src/RLoop.Cli/BackendSupport.cs:26-52`）は下表と同じ区分を宣言し、`RequireSupported`（`:59-72`、`Program.cs:119` で全コマンドに効く）は `--backend workbench` のとき `supported` 以外を `BACKEND_UNSUPPORTED` で拒否する（理由は `DeferralReason`、`:75-90` がerror contextに出す）。「対応」の8コマンドはclient read pathに到達できる: `GetSessionInfoAsync`（W1）と `GetSlotAsync`/`GetComponentAsync`/`SearchComponentTypesAsync`/`DescribeComponentTypeAsync`/`DescribeTypeAsync` の5メソッドが配線済み。`doctor` は `planned-w2` の据え置き。`validate` は `supported` だが、member値の事前検査 `ValidateComponentMemberAsync`（`WorkbenchResoniteClient.Read.cs:136-140`、後述の表にも明記）だけは通過させず明示的に `BACKEND_UNSUPPORTED` で失敗する。
 
 | コマンド | 判定 | 根拠 / 残る差 |
 | --- | --- | --- |
-| `status` / `ping` | 対応 | `GetSessionInfoAsync`（W1実装、`WorkbenchResoniteClient.cs:82-162`。`session.status` を厳密に読む） |
+| `status` / `ping` | 対応 | `GetSessionInfoAsync`（W1実装、`WorkbenchResoniteClient.cs:82-164`。`session.status` を厳密に読む） |
 | `hierarchy` | 対応 | `world.observe`→`SlotInfo`（`Read.cs:31-46`）。`--include-components` はmember.readのN+1。`--depth` 33以上/`-1` は `WORKBENCH_OBSERVE_LIMIT_EXCEEDED` |
 | `find` | 対応 | `GetSlotAsync` のみ（`WorldService.cs:89-99`）。`IsReferenceOnly` はR1で取れるので `--exclude-reference-only` も機能する |
 | `observe` | 対応 | `GetSessionInfoAsync`＋stable reference解決＋`GetComponentAsync`（`Observation.cs:10-37`）。全て実装済みの読み取り経路 |
@@ -100,7 +100,7 @@ W2-A版（`agent/wb-w2a-mapping` 作成時、resonite-workbench `d549280` 前提
 | `tool audit` | 延期 | `Position`/`Rotation`/`Scale` が未報告のとき単位値へ黙ってフォールバック（`ToolAudit.cs:109-111`）。Workbenchでは誤った結果を返し得る |
 | `capture` | 延期 | `--frame` は祖先transform必須（`CanvasFraming.cs:44-45`）。live captureは専用camera Slot/Componentの作成を伴い、書き込み経路が要る |
 | `diff` / `plan` | W4 | 書き込み経路の前提ゲート。`PrepareAsync` は深さ64・transform・persistentを使う（`WorldService.cs:911,:931`） |
-| `slot` / `component` / `apply` / `test` / `flux` | W4 | 書き込み経路。Workbench clientの write系メソッドは全て `BACKEND_UNSUPPORTED`（`WorkbenchResoniteClient.cs:164-194`） |
+| `slot` / `component` / `apply` / `test` / `flux` | W4 | 書き込み経路。Workbench clientの write系メソッドは全て `BACKEND_UNSUPPORTED`（`WorkbenchResoniteClient.cs:166-196`） |
 | `scene` / `blender` / `logs` | link-only | Resonite接続を使わない処理（`scene summary` のoffline要約、Blenderローカル実行、ログfile tail） |
 
 ---
@@ -132,10 +132,10 @@ W2-A版（`agent/wb-w2a-mapping` 作成時、resonite-workbench `d549280` 前提
 - **Coreのモデル（`SlotInfo`/`ComponentInfo`/`TypeInfo`等）と `IResoniteClient` のsignatureは変更しない**。変更禁止領域（`src/RLoop.Core/**`、`src/RLoop.ResoniteLink/**`、`src/RLoop.Workbench/Protocol/**`）には触れていない。`RLoop.Workbench` は `RLoop.Core` だけを参照する。
 - **得られない値はnull**。0・空・既定値で埋めない。対象: 未報告のtransform・`isActive`/`isPersistent`/`tag`、slotレベル `members`、非enum fieldの `type`、opaque memberの `Value`/`Members`/`Elements`。`MemberValue.Id` も報告が無ければnull。
 - **決められない非nullable値は推測せず拒否**。`IsWorldElement`/`GenericParameters` が決められない型は `BACKEND_UNSUPPORTED`（`WorkbenchReflectionMapper.cs:85-109`）。
-- **上限は切り詰めずに拒否**。depth 0〜32・8,192 Slotを超える要求と `SlotLimit` truncationは `WORKBENCH_OBSERVE_LIMIT_EXCEEDED`（終了コード7）。`DepthLimit`/`ReadFailed` はstub化のみ。
+- **上限は切り詰めずに拒否**。depth 0〜32・8,192 Slotを超える要求と `SlotLimit` truncationは `WORKBENCH_OBSERVE_LIMIT_EXCEEDED`（終了コード7）。**W2-B R1 で確定**: `DepthLimit`・`excluded`・要求depthより下の未展開は引き続きstub化、要求depth内の `ReadFailed` は `WORKBENCH_UNAVAILABLE`。
 - **「Unknown」は不在の証明ではない**。`world.observe` の `completeness:"Unknown"` は `SLOT_NOT_FOUND` で返すが、messageに「Unknownは不在の証明ではない」と含める（`WorkbenchSlotMapper.cs:60-68`）。`COMPONENT_NOT_FOUND`/`COMPONENT_TYPE_NOT_FOUND`/`TYPE_NOT_FOUND` も同じ方針。
-- **stale・接続切り替わり・応答の形の不正・member読み取り失敗は `WORKBENCH_UNAVAILABLE`**。全RPCは `CallReadAsync`（`WorkbenchResoniteClient.Read.cs:138-183`）を通り、connectionIdの変化でcacheを破棄し `stale` を拒否し、1つの論理読み取り内のconnectionId一致は `ReadOperation` が検査する（`:392-417`）。
-- **コマンド対応の正本は `BackendSupport.WorkbenchSupport`**。現commitではCLIゲートが全コマンドを拒否する（2節の注）。`supported` を表に反映する作業はCLI側の別タスク。
+- **stale・接続切り替わり・応答の形の不正・member読み取り失敗は `WORKBENCH_UNAVAILABLE`**。全読み取りRPCは `CallReadAsync`（`WorkbenchResoniteClient.Read.cs:149-189`）を通り、`stale` を拒否し、1つの論理読み取り内のconnectionId一致は `ReadOperation` が検査する（`:417-437`）。応答のconnectionIdが直前の記録と変わったときは `_componentTypes`/`_memberNames` の両cacheを `InvalidateCachesIfConnectionChanged`（`:196-204`）で消す。`GetSessionInfoAsync`（session.status）の応答でも同じ条件で消す（`WorkbenchResoniteClient.cs:97-100`、W2-B R1で追加。`ConnectAsync` の無条件クリアは元から）。
+- **コマンド対応の正本は `BackendSupport.WorkbenchSupport`**。2節の表と同じ区分で `supported`/`planned-w2`/`planned-w4`/`link-only` を宣言し、CLIゲート（`RequireSupported`）が `supported` 以外を拒否する。
 
 ---
 

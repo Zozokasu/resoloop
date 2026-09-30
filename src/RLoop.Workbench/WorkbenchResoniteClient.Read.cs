@@ -174,12 +174,7 @@ public sealed partial class WorkbenchResoniteClient
         }
 
         // A reconnect invalidates everything learned from earlier responses.
-        if (Meta.ConnectionId is { } previous && response.Meta.ConnectionId is { } current
-            && !string.Equals(previous, current, StringComparison.Ordinal))
-        {
-            _componentTypes.Clear();
-            _memberNames.Clear();
-        }
+        InvalidateCachesIfConnectionChanged(Meta.ConnectionId, response.Meta.ConnectionId);
         Meta = new WorkbenchConnectionMeta(
             response.Meta.ConnectionId, response.Meta.SessionId, response.Meta.WorldRevision, Meta.ObservedScopeRootId);
 
@@ -191,6 +186,21 @@ public sealed partial class WorkbenchResoniteClient
 
         operation.Observe(response.Meta.ConnectionId, method);
         return response;
+    }
+
+    /// <summary>
+    /// Clears the learned component-type and member-name caches when a response comes from a
+    /// different connection than the last one recorded; entries learned from the previous
+    /// session would misidentify components on the new one.
+    /// </summary>
+    private void InvalidateCachesIfConnectionChanged(string? previous, string? current)
+    {
+        if (previous is not null && current is not null
+            && !string.Equals(previous, current, StringComparison.Ordinal))
+        {
+            _componentTypes.Clear();
+            _memberNames.Clear();
+        }
     }
 
     private WorkbenchRpcClient RequireClient() =>
