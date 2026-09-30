@@ -94,6 +94,8 @@ public sealed partial class WorkbenchResoniteClient : IResoniteClient
             throw WorkbenchErrors.Unavailable($"The Workbench session.status call failed: {ex.Message}", ex);
         }
 
+        // Same rule as CallReadAsync: a reconnect invalidates everything learned earlier.
+        InvalidateCachesIfConnectionChanged(Meta.ConnectionId, response.Meta.ConnectionId);
         Meta = new WorkbenchConnectionMeta(
             response.Meta.ConnectionId, response.Meta.SessionId, response.Meta.WorldRevision, null);
 
