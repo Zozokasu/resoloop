@@ -1304,13 +1304,15 @@ Connection and observation:
     [--member NAME] [--reference-to SLOT] [--direct-children] [--select slot.id,slot.path,component.type,member.NAME]
     [--limit 100] [--cursor TOKEN] [--max-depth 64] [--max-slots 10000] [--exclude-user-roots] [--json]
     --limit bounds returned rows; --max-slots bounds traversal. A cursor is bound to its query and re-validated against the
-    rows before it, so it fails with CURSOR_STALE after a reconnect or change instead of skipping or repeating rows.
+    rows before it (ids, paths, projected values), so it fails with CURSOR_STALE if those changed. Rows after the cursor cannot
+    be checked: a different world sharing the earlier rows is not detected. Cursors from older builds give CURSOR_INVALID.
     --exclude-user-roots leaves out Slots holding a UserRoot (off by default) and reports them as unobserved (complete=false).
   resoloop snapshot create --output FILE [--under SLOT --state FILE] [--member-scope references|selected|all]
     [--member NAME ...] [--max-depth 64] [--max-slots 10000] [--exclude-user-roots] [--json]
   resoloop snapshot diff BEFORE.json AFTER.json [--changes-only] [--group-by slot|component|member] [--json]
     Removals are reported only where the newer snapshot observed the parent, component list, and members;
-    anything else is listed under unobserved, not as a change.
+    anything else is listed under unobserved, not as a change. Raw ids never prove identity: references to targets
+    outside a snapshot and differing member scopes are unobserved (complete=false).
   resoloop find (--name TEXT [--exact] | --component TYPE) [--under SLOT] [--direct-children] [--depth 8] [--json]
   resoloop inspect SLOT|$slot:key [--state WORLD_STATE] [--depth 1] [--members] [--component TYPE] [--member NAME] [--components-only] [--json]
   resoloop scene summary FILE.json [--output summary.json]

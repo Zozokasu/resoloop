@@ -30,9 +30,11 @@ public sealed record ObservationEnvelope<T>(
 }
 
 /// <summary>Why an observation is not the whole requested subtree. <c>ExcludedUserRoots</c> counts Slots left out by the
-/// explicit --exclude-user-roots option; an excluded Slot is unobserved, never absent.</summary>
+/// explicit --exclude-user-roots option; an excluded Slot is unobserved, never absent. <c>ReferenceOnlySlots</c> counts Slots
+/// the transport returned without components or children: their children (and whether they hold a UserRoot) are unknown.</summary>
 public sealed record ObservationTruncation(string Reason, string? Continuation, int Observed,
-    int? ExcludedUserRoots = null, IReadOnlyList<string>? ExcludedPaths = null);
+    int? ExcludedUserRoots = null, IReadOnlyList<string>? ExcludedPaths = null,
+    int? ReferenceOnlySlots = null, IReadOnlyList<string>? ReferenceOnlyPaths = null);
 
 public sealed record HierarchyProfile(
     int TotalSlots,
@@ -91,7 +93,8 @@ public sealed record SnapshotDocument(
     ObservationTruncation? Truncation,
     string MemberScope,
     IReadOnlyList<string> ExcludedMembers,
-    IReadOnlyList<SnapshotSlot> Slots)
+    IReadOnlyList<SnapshotSlot> Slots,
+    IReadOnlyList<string>? SelectedMembers = null)
 {
     public const int CurrentSchemaVersion = 1;
 
@@ -107,18 +110,19 @@ public sealed record SnapshotSlot(
     bool ChildrenObserved,
     IReadOnlyList<SnapshotComponent> Components,
     IReadOnlyDictionary<string, JsonNode?> Members,
-    bool ComponentsObserved = true,
-    bool MembersObserved = true,
+    bool ComponentsObserved = false,
+    bool MembersObserved = false,
     IReadOnlyList<string>? UnreadableMembers = null);
 
 /// <summary>MembersObserved=false means member data was not returned, which is different from a component that has no members.
-/// UnreadableMembers lists names that were present but could not be read; neither is comparable in a diff.</summary>
+/// UnreadableMembers lists names that were present but could not be read; neither is comparable in a diff.
+/// The observed flags default to false so a snapshot written before they existed reads as unknown, never as observed.</summary>
 public sealed record SnapshotComponent(
     string Type,
     int Ordinal,
     string SessionId,
     IReadOnlyDictionary<string, JsonNode?> Members,
-    bool MembersObserved = true,
+    bool MembersObserved = false,
     IReadOnlyList<string>? UnreadableMembers = null);
 
 public sealed record SnapshotChange(
