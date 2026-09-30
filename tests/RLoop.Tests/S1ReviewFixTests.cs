@@ -114,6 +114,7 @@ public sealed class S1ReviewFixTests
     }
 
     // C5: a reconnect that starts right after the generation check cannot interleave with the cache update.
+    // Order is recorded by hooks inside the lock; no timing decides the result.
     [Fact]
     public async Task ReconnectBetweenGenerationCheckAndCacheWriteWaitsForTheCommit()
     {
@@ -121,26 +122,37 @@ public sealed class S1ReviewFixTests
         link.Definitions[Comp] = WidgetDefinition();
         await using var client = Adapter(link);
         await client.ConnectAsync(A, Timeout);
-        Task? reconnect = null;
-        var reconnectFinishedInsideCommit = true;
-        var reconnectAttempted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var events = new List<string>();
+        void Record(string name) { lock (events) events.Add(name); }
+        var reconnectDone = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var commits = 0;
+        client.AfterCommitForTests = () => { if (commits >= 2) Record("commit-done"); };
         client.AfterGenerationCheckForTests = () =>
         {
             if (++commits < 2) return; // the first commit creates the disk-cache handle; the second is the definition write
             client.AfterGenerationCheckForTests = null;
+            Record("commit-enter");
             link.Connected = false;
-            client.BeforeReconnectLockForTests = () => reconnectAttempted.TrySetResult();
-            reconnect = Task.Run(() => client.ConnectAsync(B, Timeout));
-            // Wait until the reconnect is about to take the cache lock (a signal, not a guess), then give it a bounded
-            // window to (wrongly) finish while this commit still holds the lock.
-            reconnectAttempted.Task.Wait(Timeout);
-            reconnectFinishedInsideCommit = reconnect.Wait(TimeSpan.FromMilliseconds(100));
+            client.InsideReconnectLockForTests = () => Record("reconnect-locked");
+            var thread = new Thread(() =>
+            {
+                try { client.ConnectAsync(B, Timeout).GetAwaiter().GetResult(); reconnectDone.SetResult(); }
+                catch (Exception ex) { reconnectDone.SetException(ex); }
+            }) { IsBackground = true };
+            thread.Start();
+            // Wait until the reconnect is either blocked on the cache lock (which this commit holds) or already inside it.
+            var deadline = DateTime.UtcNow + Timeout;
+            while (DateTime.UtcNow < deadline)
+            {
+                lock (events) if (events.Contains("reconnect-locked")) break;
+                if ((thread.ThreadState & System.Threading.ThreadState.WaitSleepJoin) != 0) break;
+                Thread.Yield();
+            }
         };
 
         Assert.Equal(Comp, (await client.DescribeComponentTypeAsync(Comp)).FullTypeName);
-        await reconnect!.WaitAsync(Timeout);
-        Assert.False(reconnectFinishedInsideCommit);
+        await reconnectDone.Task.WaitAsync(Timeout);
+        lock (events) Assert.Equal(["commit-enter", "commit-done", "reconnect-locked"], events);
 
         // The commit landed first and the reconnect cleared it: the new connection reads live again.
         var before = link.DefinitionCalls;
@@ -269,5 +281,40 @@ public sealed class S1ReviewFixTests
         var ex = await Assert.ThrowsAsync<RLoopException>(() => client.SearchComponentTypesAsync("X", 10));
         Assert.Equal("TYPE_SEARCH_INCOMPLETE", ex.Code);
         Assert.Equal(ExitCodes.OperationFailed, ex.ExitCode);
+    }
+
+    // C4 for the category walk: an old connection's category answer aborts the whole query, failure or success.
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task CategoryAnswerAfterGenerationChangeAbortsTheQueryAndIsNotCached(bool successAnswer)
+    {
+        var link = new ScriptedMetadataLink { Connected = false };
+        var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        link.CategoryFaults[""] = async () =>
+        {
+            started.TrySetResult();
+            await gate.Task;
+            return successAnswer ? ScriptedMetadataLink.Level([Comp], []) : new LinkTypeList(false, "old connection failed", null, null);
+        };
+        await using var client = Adapter(link);
+        await client.ConnectAsync(A, Timeout);
+        var query = ReflectionQuery.RunAsync(client, new ReflectionRequest([new("Missing1", ["Intensity"]), new("Missing2", ["Intensity"])]));
+        await started.Task.WaitAsync(Timeout);
+        link.Connected = false;
+        await client.ConnectAsync(B, Timeout);
+        gate.SetResult();
+
+        var ex = await Assert.ThrowsAsync<RLoopException>(() => query);
+        Assert.Equal("CONNECTION_GENERATION_CHANGED", ex.Code);
+        Assert.Equal([""], link.RequestedCategories); // did not go on to a second type or another category
+        Assert.Equal(1, link.GetAllCalls);
+
+        // Nothing of the old answer was cached: the new connection walks the categories again.
+        link.CategoryFaults.Clear();
+        link.Categories[""] = ScriptedMetadataLink.Level([Comp], []);
+        Assert.Contains(Comp, await client.SearchComponentTypesAsync("Widget", 10));
+        Assert.Equal(2, link.GetAllCalls);
     }
 }
