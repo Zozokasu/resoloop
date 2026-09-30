@@ -33,7 +33,7 @@ const context = `[ResoLoop role structure for /ccg:go — docs/dev/agent-workflo
 - One editor per file at a time; one building agent per working tree; contracts are settled before parallel work; only one live run at a time, only under a ResoLoop_Test* Slot, cleaned up by exact ID. Skipped live tests are reported as unverified, never as passed.
 - When CLI behavior changes, README examples and skills/codex/*/SKILL.md (shipped product files) must be synced; assign them a single owner.
 - Execution-mode selection (ccg strategies' "choose Agent Teams / Codex / Claude" gate): in this project the user has standing-approved the mode "Sonnet single owner (Devin optional), Codex for high-impact review". Announce it instead of asking; ask the user only if they requested a different mode or the task changes goals/requirements. All other HARD STOP gates stay as the strategy defines them.
-- Keep ccg's own task lifecycle (.ccg/tasks/<task>/task.json phases, resume, completion). Never edit plan/ or ccg-managed files unless the user asks; feedback/ holds proposals and never replaces plan/. No push or release without a request.`;
+- Keep ccg's own task lifecycle (.ccg/tasks/<task>/task.json phases, resume, completion). Never edit plan/ or ccg-managed files unless the user asks; feedback/ holds proposals and never replaces plan/. Assignees commit only on agent/* branches; merging to main (--no-ff) needs the user's approval. No push or release without a request.`;
 
 process.stdout.write(
   JSON.stringify({
