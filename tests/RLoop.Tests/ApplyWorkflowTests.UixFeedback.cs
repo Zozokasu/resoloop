@@ -138,7 +138,7 @@ public sealed partial class ApplyWorkflowTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task ReplacementDriverReconcilesAfterPruneAndRejectsAnUnreleasedOwner(bool prune)
+    public async Task ReplacementDriverPrunesOrStopsResumeWhenReferenceEvidenceClaimsBothOwners(bool prune)
     {
         var initial = Document("driver-swap", """
             [{"key":"target","type":"Test.Target","fields":{"Enabled":true}},
@@ -157,6 +157,14 @@ public sealed partial class ApplyWorkflowTests
         {
             var error = await Assert.ThrowsAsync<RLoopException>(() => service.ApplyAsync(desired, options));
             Assert.Equal("APPLY_REFERENCE_NOT_RETAINED", error.Code);
+            // The interrupted write saved the replacement key, but only the old driver retained the reference.
+            // Reference evidence alone now maps both keys to the old driver; IDs cannot repair that correspondence.
+            client.ResetWriteCounts();
+            var resume = await Assert.ThrowsAsync<RLoopException>(() => service.ApplyAsync(desired,
+                options with { Prune = true, ConfirmDeletes = true }));
+            Assert.Equal("APPLY_COMPONENT_OWNERSHIP_CONFLICT", resume.Code);
+            Assert.Equal(0, client.Writes);
+            return;
         }
         await service.ApplyAsync(desired, options with { Prune = true, ConfirmDeletes = true });
         var replacement = await service.ResolveComponentSelectorAsync("$component:replacement", options.StateFile);

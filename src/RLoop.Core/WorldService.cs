@@ -254,8 +254,7 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
                 // The owning Slot is resolved first and only its own Component list is searched, so a stored ID
                 // can never pull in a Component of another Slot. componentIndex is not ownership evidence.
                 var resolution = ResolveComponentOnSlot(slot.Components, stableComponent.Type, stableComponent.Id,
-                    stableComponent.MemberNames, stableComponent.IdentityValues, referenceTargets,
-                    () => StoredSiblingComponents(stateFile, stableComponent));
+                    stableComponent.MemberNames, stableComponent.IdentityValues, referenceTargets);
                 var matching = resolution.Match is null ? resolution.Candidates.ToArray() : [resolution.Match];
                 if (matching.Length == 0)
                     throw new RLoopException("FLUX_BINDING_COMPONENT_NOT_FOUND",
@@ -298,9 +297,14 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
         var segments = stable.PathSegments ?? SlotPaths.LegacySegments(stable.Path);
         SlotInfo slot;
         try { slot = await client.GetSlotAsync(stable.Id, 0, stable.RuntimeRelocatable, cancellationToken); }
-        catch (RLoopException ex) when (ex.Code is "SLOT_NOT_FOUND" or "RESONITE_OPERATION_FAILED")
+        catch (RLoopException ex) when (ex.Code == "SLOT_NOT_FOUND")
         {
             return new StoredSlotCheck(null, false);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+        {
+            throw StoredIdUnverified(stable.Key, stable.Id, stable.Path,
+                new StoredSlotCheck(null, false, "storedIdReadFailed"), ex);
         }
         if (slot.IsReferenceOnly)
             return new StoredSlotCheck(null, true, "the stored ID answered with a reference-only placeholder, which proves nothing about ownership");
@@ -337,8 +341,8 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
     private static RLoopException StoredIdUnverified(string key, string storedId, string recordedPath,
         StoredSlotCheck check, Exception? inner = null) =>
         new("APPLY_STORED_ID_UNVERIFIED",
-            $"The stored ID '{storedId}' of managed Slot '{key}' is alive in the world but cannot be proven to be the owned Slot, " +
-            $"and no unique path or evidence match exists. Nothing was changed. Reason: {check.Reason}.",
+            $"The stored ID '{storedId}' of managed Slot '{key}' cannot be verified. " +
+            $"Nothing was changed. Reason: {check.Reason}.",
             ExitCodes.ValidationFailed, new Dictionary<string, object?>
             {
                 ["key"] = key, ["storedId"] = storedId, ["recordedPath"] = recordedPath,
@@ -989,7 +993,10 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
         var parentSegments = await ObserveAbsoluteSegmentsAsync(parent, cancellationToken);
         var snapshots = new List<(SlotInfo Slot, string Path)> { (parent, parentPath) };
         var rootKey = document.Slot!.Key!;
-        if (state.Slots.TryGetValue(rootKey, out var rootState) && !ContainsSlot(parent, rootState.Id))
+        if (state.Slots.TryGetValue(rootKey, out var rootState) &&
+            (!ContainsSlot(parent, rootState.Id) ||
+             !(rootState.PathSegments ?? SlotPaths.LegacySegments(rootState.Path)).SkipLast(1)
+                 .SequenceEqual(parentSegments, StringComparer.Ordinal)))
         {
             if (rootState.RuntimeRelocatable)
             {
@@ -1016,8 +1023,13 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
                 var oldRootId = await ResolveSlotIdAsync(SlotPaths.Selector(rootState.Path, rootState.PathSegments), cancellationToken);
                 snapshots.Add((await client.GetSlotAsync(oldRootId, Math.Clamp(stateDepth, 0, 64), true, cancellationToken), rootState.Path));
             }
-            catch (RLoopException ex) when (ex.Code is "SLOT_NOT_FOUND" or "SLOT_PATH_NOT_FOUND" or "RESONITE_OPERATION_FAILED")
+            catch (RLoopException ex) when (ex.Code is "SLOT_NOT_FOUND" or "SLOT_PATH_NOT_FOUND")
             {
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+            {
+                throw StoredIdUnverified(rootKey, rootState.Id, rootState.Path,
+                    new StoredSlotCheck(null, false, "recordedPathReadFailed"), ex);
             }
         }
         var prepared = new PreparedApply(document, options, state, statePath, session, parentId, snapshots,
@@ -1046,7 +1058,20 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
         var stableKey = spec.Slot.Key ?? "$path:" + path;
         prepared.State.Slots.TryGetValue(stableKey, out var stateSlot);
         var newManagedSlot = stateSlot is null && parentRuntime is not null && prepared.State.Slots.ContainsKey(parentRuntime.StableKey);
-        var existing = newManagedSlot ? null : MatchSlot(prepared, parentSnapshot, spec.Slot.Name, stableKey, stateSlot, path);
+        var parentChanged = stateSlot is not null &&
+            !(stateSlot.PathSegments ?? SlotPaths.LegacySegments(stateSlot.Path)).SkipLast(1)
+                .SequenceEqual(parentRuntime?.PathSegments ?? prepared.ParentSegments, StringComparer.Ordinal);
+        var existing = parentChanged ? FindManagedSlot(prepared, stateSlot) : null;
+        var destination = newManagedSlot ? null : MatchSlot(prepared, parentSnapshot, spec.Slot.Name, stableKey, stateSlot, path);
+        if (parentChanged && destination is not null && destination.Id != existing?.Id)
+            throw new RLoopException("APPLY_TARGET_AMBIGUOUS",
+                $"Relocation destination '{path}' is occupied by another Slot; the recorded owner was not adopted from the destination.",
+                ExitCodes.ValidationFailed, new Dictionary<string, object?>
+                {
+                    ["key"] = stableKey, ["recordedPath"] = stateSlot!.Path, ["path"] = path,
+                    ["sourceId"] = existing?.Id, ["ids"] = new[] { destination.Id }, ["reason"] = "relocationDestinationOccupied"
+                });
+        existing ??= parentChanged ? null : destination;
         existing ??= FindManagedSlot(prepared, stateSlot);
         if (isRoot && existing is not null && stateSlot is null && !prepared.Options.Adopt)
             throw new RLoopException("APPLY_OWNERSHIP_UNVERIFIED",
@@ -1633,7 +1658,37 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
                     inSnapshot.Name, inSnapshot.Path));
             SlotInfo probe;
             try { probe = await client.GetSlotAsync(stateSlot.Id, 0, false, cancellationToken); }
-            catch (RLoopException ex) when (ex.Code is "SLOT_NOT_FOUND" or "RESONITE_OPERATION_FAILED") { continue; }
+            catch (RLoopException ex) when (ex.Code == "SLOT_NOT_FOUND")
+            {
+                // A failed ID lookup alone does not prove that the recorded path is absent (IDs may have changed).
+                string oldId;
+                try { oldId = await ResolveSlotIdAsync(SlotPaths.Selector(stateSlot.Path, stateSlot.PathSegments), cancellationToken); }
+                catch (RLoopException pathError) when (pathError.Code is "SLOT_NOT_FOUND" or "SLOT_PATH_NOT_FOUND") { continue; }
+                catch (Exception pathError) when (pathError is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+                {
+                    throw StoredIdUnverified(node.StableKey, stateSlot.Id, stateSlot.Path,
+                        new StoredSlotCheck(null, false, "recordedPathReadFailed"), pathError);
+                }
+                if (stateSlot.RuntimeRelocatable)
+                {
+                    SlotInfo oldSlot;
+                    try { oldSlot = await client.GetSlotAsync(oldId, 0, true, cancellationToken); }
+                    catch (Exception pathError) when (pathError is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+                    {
+                        throw StoredIdUnverified(node.StableKey, stateSlot.Id, stateSlot.Path,
+                            new StoredSlotCheck(null, false, "recordedPathReadFailed"), pathError);
+                    }
+                    var evidence = prepared.State.Components.Values.Where(component => component.SlotKey == node.StableKey).ToArray();
+                    if (!oldSlot.IsReferenceOnly && !RelocatableEvidenceMatches(oldSlot.Components, evidence)) continue;
+                }
+                throw StoredIdUnverified(node.StableKey, stateSlot.Id, stateSlot.Path,
+                    new StoredSlotCheck(null, true, "recordedPathStillPresent", ObservedPath: stateSlot.Path));
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+            {
+                throw StoredIdUnverified(node.StableKey, stateSlot.Id, stateSlot.Path,
+                    new StoredSlotCheck(null, false, "storedIdReadFailed"), ex);
+            }
             string? observedPath = null;
             try { observedPath = probe.IsReferenceOnly ? null : await ObserveAbsolutePathAsync(probe, cancellationToken); }
             catch (RLoopException ex) when (ex.Code is "SLOT_PATH_UNRESOLVED" or "SLOT_NOT_FOUND" or "RESONITE_OPERATION_FAILED") { }
@@ -1685,9 +1740,9 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
         if (state is not null)
         {
             // components is the Component list of the already proven owner Slot, so a stored ID cannot reach another
-            // Slot. Several equal candidates are ambiguous unless the recorded set on this Slot is proven complete.
+            // Slot. Several equal candidates require individual identity or verified reference evidence.
             var resolution = ResolveComponentOnSlot(components, state.Type, state.Id, state.MemberNames, state.IdentityValues,
-                referenceTargets, () => RecordedSiblingComponents(prepared, state.SlotKey));
+                referenceTargets);
             if (resolution.Match is not null) return resolution.Match;
             if (resolution.Candidates.Count > 1)
                 throw new RLoopException("STABLE_COMPONENT_AMBIGUOUS",
@@ -1738,7 +1793,7 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
         if (slot is null) return null;
         var referenceTargets = ResolveStateTopologyTargets(prepared, componentState, resolving);
         var match = ResolveComponentOnSlot(slot.Components, componentState.Type, componentState.Id, componentState.MemberNames,
-            componentState.IdentityValues, referenceTargets, () => RecordedSiblingComponents(prepared, componentState.SlotKey)).Match;
+            componentState.IdentityValues, referenceTargets).Match;
         if (match is null) return null;
         if (syntax.Kind == "component") return match.Id;
         return match.Members?.FirstOrDefault(member =>
@@ -1765,40 +1820,32 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
     private sealed record ComponentResolution(ComponentSummary? Match, IReadOnlyList<ComponentSummary> Candidates);
 
     // Resolves one recorded Component among the Components of its already proven owner Slot.
-    // Type, member names, identity values and reference targets are the evidence; componentIndex is not. A stored ID
-    // is honored only when the recorded same-type Components of this Slot are all still present on it (same count,
-    // no duplicate IDs, every stored ID in the live list): the set is then proven complete and each stored ID names
-    // its own member, even when several live Components look alike. Otherwise several equal candidates are ambiguous
-    // and the caller must stop.
+    // Type, member names, identity values and verified reference targets are the evidence. Neither componentIndex
+    // nor a complete set of stored IDs proves the correspondence of keys to Components across worlds.
     private static ComponentResolution ResolveComponentOnSlot(IReadOnlyList<ComponentSummary> live, string type, string? storedId,
         IReadOnlyList<string>? memberNames, IReadOnlyDictionary<string, string>? identityValues,
-        IReadOnlyDictionary<string, string>? referenceTargets, Func<IReadOnlyList<(string Id, string Type)>> recordedOnSlot)
+        IReadOnlyDictionary<string, string>? referenceTargets)
     {
         var candidates = StableComponentCandidates(live, type, memberNames, identityValues, referenceTargets);
-        if (!string.IsNullOrWhiteSpace(storedId))
+        var stored = live.FirstOrDefault(component => component.Id == storedId);
+        if (stored is not null)
         {
-            var recorded = recordedOnSlot().Where(item => TypeNamesEquivalent(item.Type, type)).ToArray();
-            var liveOfType = live.Where(component => TypeNamesEquivalent(component.Type, type)).ToArray();
-            var ids = recorded.Select(item => item.Id).ToArray();
-            if (recorded.Length == liveOfType.Length && ids.Contains(storedId, StringComparer.Ordinal) &&
-                ids.All(id => !string.IsNullOrWhiteSpace(id) && liveOfType.Any(component => component.Id == id)) &&
-                ids.Distinct(StringComparer.Ordinal).Count() == ids.Length)
-            {
-                var stored = liveOfType.First(component => component.Id == storedId);
-                if (StableComponentCandidates([stored], type, memberNames, identityValues).Length == 1)
-                    return new ComponentResolution(stored, candidates);
-            }
+            var required = (memberNames ?? []).Concat(identityValues?.Keys ?? [])
+                .Concat(referenceTargets?.Keys ?? []).Distinct(StringComparer.Ordinal);
+            var unread = TypeNamesEquivalent(stored.Type, type) &&
+                (stored.Members is null || required.Any(name => !stored.Members.ContainsKey(name)));
+            var identityMismatch = StableComponentCandidates([stored], type, memberNames, identityValues).Length == 0;
+            if (unread || identityMismatch || candidates.Length == 0)
+                throw new RLoopException("APPLY_STORED_ID_UNVERIFIED",
+                    $"Stored Component '{storedId}' is alive on the verified owner Slot but its evidence cannot be verified.",
+                    ExitCodes.ValidationFailed, new Dictionary<string, object?>
+                    {
+                        ["storedId"] = storedId, ["type"] = type,
+                        ["reason"] = unread ? "componentEvidenceUnread" : "componentEvidenceMismatch"
+                    }, ["Inspect the stored Component and preserve the checkpoint. Restore the recorded evidence or explicitly repair state after verifying ownership."]);
         }
         return new ComponentResolution(candidates.Length == 1 ? candidates[0] : null, candidates);
     }
-
-    private static IReadOnlyList<(string Id, string Type)> StoredSiblingComponents(string stateFile, StableComponentReference component) =>
-        ApplyStateStore.Load(Path.GetFullPath(stateFile), component.OwnershipKey).Components.Values
-            .Where(candidate => candidate.SlotKey == component.SlotKey).Select(candidate => (candidate.Id, candidate.Type)).ToArray();
-
-    private static IReadOnlyList<(string Id, string Type)> RecordedSiblingComponents(PreparedApply prepared, string slotKey) =>
-        prepared.State.Components.Values.Where(candidate => candidate.SlotKey == slotKey)
-            .Select(candidate => (candidate.Id, candidate.Type)).ToArray();
 
     // A runtime-relocatable Slot is identified by its Components alone: every recorded Component must resolve to
     // exactly one live Component and no two records may resolve to the same one. Empty evidence proves nothing.
@@ -1809,7 +1856,12 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
         foreach (var component in evidence)
         {
             var resolution = ResolveComponentOnSlot(live, component.Type, component.Id, component.MemberNames,
-                component.IdentityValues, null, () => evidence.Select(item => (item.Id, item.Type)).ToArray());
+                component.IdentityValues, null);
+            if (resolution.Candidates.Count > 1)
+                throw new RLoopException("STABLE_COMPONENT_AMBIGUOUS",
+                    "Runtime-relocatable Slot evidence matches multiple Components; stored IDs cannot distinguish them.",
+                    ExitCodes.ValidationFailed, new Dictionary<string, object?>
+                    { ["candidateIds"] = resolution.Candidates.Select(candidate => candidate.Id).ToArray(), ["type"] = component.Type });
             if (resolution.Match is null || !matched.Add(resolution.Match.Id)) return false;
         }
         return true;

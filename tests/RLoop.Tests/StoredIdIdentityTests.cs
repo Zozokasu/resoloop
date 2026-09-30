@@ -136,7 +136,7 @@ public sealed partial class ApplyWorkflowTests
     }
 
     [Fact]
-    public async Task UnprovableSameTypeLookAlikeStopsApplyAndResolveWhileTheCompleteRecordedSetIsAccepted()
+    public async Task SameTypeLookAlikesStopApplyAndResolveEvenWithCompleteRecordedIds()
     {
         var document = ComponentsDocument("same-type", """
             [{"key":"t1","type":"Test.Target","fields":{"Enabled":true}},
@@ -147,16 +147,15 @@ public sealed partial class ApplyWorkflowTests
         var service = new WorldService(client);
         await service.ApplyAsync(document, new ApplyOptions(state));
         var root = Assert.Single(client.Root.Children);
-        var (c1, c2) = (root.Components[0].Id, root.Components[1].Id);
         root.Components.Reverse(); // order is not evidence
         client.SessionId = "session-2";
         client.ResetWriteCounts();
 
-        // Complete recorded set: every stored id is on the owner Slot, counts match, so each key keeps its own Component.
-        var again = await service.ApplyAsync(document, new ApplyOptions(state));
-        Assert.Equal(c1, (await service.ResolveStableReferenceAsync(state, "$component:t1", "session-2")).Id);
-        Assert.Equal(c2, (await service.ResolveStableReferenceAsync(state, "$component:t2", "session-2")).Id);
-        Assert.Equal(2, again.ComponentsUnchanged);
+        // Even the complete recorded ID set cannot prove individual identities across worlds.
+        var completeApply = await Assert.ThrowsAsync<RLoopException>(() => service.ApplyAsync(document, new ApplyOptions(state)));
+        var completeResolve = await Assert.ThrowsAsync<RLoopException>(() => service.ResolveStableReferenceAsync(state, "$component:t1", "session-2"));
+        Assert.Equal("STABLE_COMPONENT_AMBIGUOUS", completeApply.Code);
+        Assert.Equal("STABLE_COMPONENT_AMBIGUOUS", completeResolve.Code);
         Assert.Equal(0, client.Writes);
 
         // A third look-alike makes the set unprovable: stored ids and index must not pick between equals.
@@ -326,8 +325,10 @@ public sealed partial class ApplyWorkflowTests
         var withoutGone = ComponentsDocument("prune-component", "[]");
         newWorld.ResetWriteCounts();
 
-        await new WorldService(newWorld).ApplyAsync(withoutGone, new ApplyOptions(state, Prune: true, ConfirmDeletes: true));
+        var error = await Assert.ThrowsAsync<RLoopException>(() => new WorldService(newWorld).ApplyAsync(withoutGone,
+            new ApplyOptions(state, Prune: true, ConfirmDeletes: true)));
 
+        Assert.Equal("APPLY_STORED_ID_UNVERIFIED", error.Code);
         Assert.Equal(0, newWorld.Writes);
         Assert.Equal(bystander.Id, Assert.Single(Assert.Single(newWorld.Root.Children).Components).Id);
     }
