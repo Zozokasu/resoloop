@@ -602,7 +602,7 @@ public sealed class ObservationServiceTests
     }
 
     [Fact]
-    public async Task SnapshotWithoutObservedFlagsReadsAsUnknownNotObserved()
+    public async Task LegacySnapshotWithChildrenObservedReadsAsUnknownNotObserved()
     {
         using var workspace = new Workspace();
         var before = Slot("root", "Root", [Slot("a", "Alpha", components: [Component("c1", "[FrooxEngine]FrooxEngine.Grabbable")]), Slot("b", "Beta")]);
@@ -610,12 +610,12 @@ public sealed class ObservationServiceTests
         await new ObservationService(new TreeClient(before)).CreateSnapshotAsync("Root", "root", workspace.File("before.json"));
         await new ObservationService(new TreeClient(after)).CreateSnapshotAsync("Root", "root", workspace.File("after.json"));
 
-        // Rewrite the newer file the way an older build wrote it: no observed flags at all.
+        // The real legacy format had childrenObserved, but lacked component/member observation flags.
         var node = JsonNode.Parse(File.ReadAllText(workspace.File("after.json")))!.AsObject();
         Assert.True(node["complete"]!.GetValue<bool>());
         foreach (var slot in node["slots"]!.AsArray().Select(item => item!.AsObject()))
         {
-            slot.Remove("childrenObserved");
+            Assert.True(slot["childrenObserved"]!.GetValue<bool>());
             slot.Remove("componentsObserved");
             slot.Remove("membersObserved");
             foreach (var component in slot["components"]!.AsArray().Select(item => item!.AsObject()))
@@ -633,6 +633,55 @@ public sealed class ObservationServiceTests
         Assert.Contains(diff.Unobserved!, item => item.Path == "Root/Beta" && item.Reason == "slot-presence-unobserved");
         Assert.Contains(diff.Unobserved!, item => item.Path == "Root/Alpha" && item.Reason == "components-not-observed");
         Assert.False(diff.Complete);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task LegacySnapshotWithUntrustedChildCoverageNeverInfersSlotAbsence(bool referenceOnly)
+    {
+        using var workspace = new Workspace();
+        var full = Slot("root", "Root", [Slot("a", "Alpha", [Slot("hidden", "Hidden")])]);
+        var partial = Slot("root", "Root", [Slot("a", "Alpha", referenceOnly: referenceOnly)]);
+        await new ObservationService(new TreeClient(full)).CreateSnapshotAsync("Root", "root", workspace.File("new.json"));
+        await new ObservationService(new TreeClient(partial)).CreateSnapshotAsync("Root", "root", workspace.File("partial.json"));
+        var legacy = JsonNode.Parse(File.ReadAllText(workspace.File("partial.json")))!.AsObject();
+        legacy["complete"] = true; // Old builds claimed child coverage even at reference-only boundaries.
+        foreach (var slot in legacy["slots"]!.AsArray().Select(item => item!.AsObject()))
+        {
+            slot["childrenObserved"] = true;
+            slot.Remove("componentsObserved");
+            slot.Remove("membersObserved");
+        }
+        File.WriteAllText(workspace.File("legacy.json"), legacy.ToJsonString());
+
+        var removed = ObservationService.Diff(workspace.File("new.json"), workspace.File("legacy.json"));
+        var created = ObservationService.Diff(workspace.File("legacy.json"), workspace.File("new.json"));
+        foreach (var diff in new[] { removed, created })
+        {
+            Assert.DoesNotContain(diff.Groups.SelectMany(group => group.Changes), change => change.Kind is "slot.removed" or "slot.created");
+            Assert.Contains(diff.Unobserved!, item => item.Path == "Root/Alpha/Hidden" && item.Reason == "slot-presence-unobserved");
+            Assert.Contains(diff.Issues, issue => issue.Code == "SNAPSHOT_LEGACY_OBSERVATION_FLAGS");
+            Assert.False(diff.Complete);
+        }
+    }
+
+    [Fact]
+    public async Task ReferenceOnlyParentNeverProvesAbsenceEvenWithCompleteAndChildrenObservedTrue()
+    {
+        using var workspace = new Workspace();
+        var full = Slot("root", "Root", [Slot("a", "Alpha", [Slot("hidden", "Hidden")])]);
+        var partial = Slot("root", "Root", [Slot("a", "Alpha", referenceOnly: true)]);
+        await new ObservationService(new TreeClient(full)).CreateSnapshotAsync("Root", "root", workspace.File("before.json"));
+        await new ObservationService(new TreeClient(partial)).CreateSnapshotAsync("Root", "root", workspace.File("after.json"));
+        var node = JsonNode.Parse(File.ReadAllText(workspace.File("after.json")))!.AsObject();
+        node["complete"] = true;
+        node["slots"]!.AsArray().Single(item => item!["path"]!.GetValue<string>() == "Root/Alpha")!["childrenObserved"] = true;
+        File.WriteAllText(workspace.File("after.json"), node.ToJsonString());
+
+        var diff = ObservationService.Diff(workspace.File("before.json"), workspace.File("after.json"));
+        Assert.DoesNotContain(diff.Groups.SelectMany(group => group.Changes), change => change.Kind == "slot.removed");
+        Assert.Contains(diff.Unobserved!, item => item.Path == "Root/Alpha/Hidden" && item.Reason == "slot-presence-unobserved");
     }
 
     [Fact]

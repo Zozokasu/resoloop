@@ -294,9 +294,8 @@ public sealed class ObservationService(IResoniteClient client)
 
     private static bool Observed(IReadOnlyDictionary<string, SnapshotSlot> slots, SnapshotDocument document, string? parentPath)
     {
-        if (document.Complete) return true;
         if (parentPath is null) return true;
-        return slots.TryGetValue(parentPath, out var parent) && parent.ChildrenObserved;
+        return slots.TryGetValue(parentPath, out var parent) && !parent.IsReferenceOnly && parent.ChildrenObserved;
     }
 
     private sealed record DiffContext(TargetIndex BeforeTargets, TargetIndex AfterTargets,
@@ -637,8 +636,8 @@ public sealed class ObservationService(IResoniteClient client)
         (left is null && right is null) || (left is not null && right is not null &&
             left.ToJsonString(SnapshotJson) == right.ToJsonString(SnapshotJson));
 
-    /// <summary>Returns the document and whether it predates the observed flags. Such a snapshot cannot say what it
-    /// observed, so it is returned as incomplete with every unknown flag false.</summary>
+    /// <summary>Legacy childrenObserved flags (including true on reference-only Slots) cannot prove child coverage.
+    /// Return legacy snapshots as incomplete and clear their observation flags.</summary>
     private static (SnapshotDocument Document, bool Legacy) LoadSnapshot(string path)
     {
         if (!File.Exists(path))
@@ -663,7 +662,19 @@ public sealed class ObservationService(IResoniteClient client)
             throw new RLoopException("SNAPSHOT_SCHEMA_UNSUPPORTED",
                 $"Snapshot '{path}' uses schema {document.SchemaVersion}; this build reads schema {SnapshotDocument.CurrentSchemaVersion}.",
                 ExitCodes.ValidationFailed, suggestions: ["Recreate the snapshot with resoloop snapshot create."]);
-        return (legacy ? document with { Complete = false } : document, legacy);
+        if (legacy)
+            document = document with
+            {
+                Complete = false,
+                Slots = document.Slots.Select(slot => slot with
+                {
+                    ChildrenObserved = false,
+                    ComponentsObserved = false,
+                    MembersObserved = false,
+                    Components = slot.Components.Select(component => component with { MembersObserved = false }).ToArray()
+                }).ToArray()
+            };
+        return (document, legacy);
     }
 
     private static Projection ParseSelect(IReadOnlyList<string> select)
