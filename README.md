@@ -68,6 +68,10 @@ The setup is complete when `ready` appears at the end.
 
 For existing content, preserve its checkpoint and use `diff/plan/apply --state STATE --require-state`. TSX can export `ownership` independently of the root key; build metadata fixes the project base regardless of JSON output location. Rebuild after moving the project. See [authoring and migration details](README-DETAILS.md).
 
+For TSX build handoffs, create a fresh request ID before each build: `resoloop-jsx build content/main.tsx --bundle --catalog catalog.json --build-id R -o build/R/bundle.json`. Only after exit 0, pass that same externally generated R to `resoloop validate|diff|plan|apply build/R/bundle.json --build-id R`. Each build needs a new output directory; failed builds publish no bundle. The CLI checks the embedded IR/map/catalog, used types and recorded source/catalog bytes before connecting and checks inputs again before the first write. Connected commands require a verified non-synthetic catalog matching session/client versions; offline validate can use explicitly synthetic fixtures. `APPLY_BUILD_BUNDLE_INVALID` is exit 6 with a reason; bundle/ordinary JSON argument mismatches use existing exit 2 errors. Workbench refuses bundles. Handwritten and directly generated JSON remain supported without Node or warnings.
+
+The input guarantee covers TypeScript's source/import graph and catalog: dynamic import/require, Node builtins and external packages (except the `resoloop-jsx` runtime) stop publication. Environment variables, time and other implicit inputs cannot be detected and are outside the guarantee. All current map positions are `unknown`; request IDs/completion trust the build producer, and changes after the final input check remain outside this guarantee. See the [bundle format and workflow](tools/resoloop-jsx/README.md).
+
 ### 3. Ask the AI to work on your project
 
 Open the project you created in an AI agent. If you have continued using the same AI session since creating the project, reopen the session once so that the agent can discover the generated Skill.

@@ -121,6 +121,10 @@ Reflectionは `type query --request FILE.json --json` で必要なmemberとenum�
 
 既存制作物の再適用・移行ではcheckpointを保持し、`diff/plan/apply --state STATE --require-state` を使います。TSXのnamed exportでownershipをroot keyから独立指定でき、build metadataは生成JSONの出力先に依存せずproject基準を保ちます。project全体の移動後は再buildしてください。[制作・移行の詳細](README-DETAILS.md)を参照してください。
 
+TSX の受け渡しでは build 前に毎回新しい要求 ID R を生成し、`resoloop-jsx build content/main.tsx --bundle --catalog catalog.json --build-id R -o build/R/bundle.json` を実行します。exit 0 のときだけ、同じ R を `resoloop validate|diff|plan|apply build/R/bundle.json --build-id R` に渡します。出力 directory の再利用は拒否し、失敗した build は今回の bundle を公開しません。CLI は内包 IR/map/catalog・使用型・記録した source/catalog の内容を接続前に検査し、最初の実機書込み直前にも入力を再確認します。接続ありのコマンドは合成 catalog を拒否し、接続先と client の version を照合します。offline validate の合成 fixture は実機証拠にはなりません。bundle 不正は `APPLY_BUILD_BUNDLE_INVALID`（exit 6、reason 付き）、要求 ID の引数不整合は既存 exit 2、Workbench は既存 unsupported で停止します。手書き JSON と従来生成 JSON の直接利用は Node 不要のまま、警告も追加しません。
+
+入力の保証範囲は TypeScript の source/import graph と catalog です。動的 import/require、Node 組込み、`resoloop-jsx` runtime 以外の外部 package があれば公開を停止します。文や呼出し先は解析せず、環境変数・時刻等の暗黙入力は検出できないため保証対象外です。現在の map 位置はすべて `unknown`。R と確定印は producer との契約であり、偽造・ID 再利用や最終確認後の競合は保証しません。[bundle 形式と手順](tools/resoloop-jsx/README.md)を参照してください。
+
 ## catalog を使う offline 検証
 
 `resoloop validate content/panel.json --catalog catalog.json --json` は接続・Node なしで展開済み IR を検証します。catalog は明示したファイルだけを読み、自動検索・live 取得はしません。取得 identity と mapper version、内容 hash を確認し、Single の変換失敗・非有限・表現範囲外を `VALUE_CONVERSION_FAILED`、確認済み型閉包から証明できた参照不適合を `APPLY_REFERENCE_TYPE_MISMATCH` で拒否します。通常の丸め・精度損失は許容し、member 固有の 0〜1 等の範囲は推測しません。欠落・未確認・識別不一致・閉包不足・外部 ID／asset／Slot member 等の型不明は `APPLY_CATALOG_UNAVAILABLE` で停止し、既存 issues に型・member・JSON path を返します。終了コードは既存の検証失敗と同じ 6 です。
