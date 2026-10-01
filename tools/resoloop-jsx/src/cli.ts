@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// resoloop-jsx build <entry.tsx> -o <out.json> [--draft]
+// resoloop-jsx build <entry.tsx> -o <out.json> [--draft] [--project-root PATH]
 //
 // Type-checks a JSX-authored slot/component tree with the TypeScript
 // compiler API, transpiles and evaluates it in-process, then emits a
@@ -20,6 +20,7 @@ import type { ApplyDocument } from "./evaluate.js";
 export interface BuildOptions {
   draft?: boolean;
   output?: string;
+  projectRoot?: string;
 }
 
 export interface BuildResult {
@@ -75,6 +76,19 @@ export async function buildFile(
       errors: [`entry file not found: ${entryPath}`],
       warnings,
     };
+
+  if (opts.projectRoot !== undefined && opts.projectRoot.trim().length === 0)
+    return { exitCode: 1, errors: ["--project-root requires a non-empty path"], warnings };
+  let projectRoot = opts.projectRoot === undefined ? path.dirname(entryAbs) : path.resolve(opts.projectRoot);
+  if (opts.projectRoot === undefined) {
+    let current = path.dirname(entryAbs);
+    while (true) {
+      if (fs.existsSync(path.join(current, ".resoloop.json"))) { projectRoot = current; break; }
+      const parent = path.dirname(current);
+      if (parent === current) break;
+      current = parent;
+    }
+  }
 
   // The compiled output must live under the entry's own directory so that
   // `import "resoloop-jsx"` in the emitted JS resolves — for entries inside
@@ -142,7 +156,13 @@ export async function buildFile(
 
     const { document, warnings: draftWarnings } = evaluate(mod?.default, {
       draft: opts.draft === true,
+      ...(Object.prototype.hasOwnProperty.call(mod, "ownership") ? { ownership: mod.ownership } : {}),
     });
+    document.authoring = {
+      projectRoot,
+      source: path.relative(projectRoot, entryAbs).split(path.sep).join("/"),
+      ownershipSource: Object.prototype.hasOwnProperty.call(mod, "ownership") ? "entry-export" : "root-key",
+    };
     warnings.push(...draftWarnings);
 
     if (opts.output !== undefined) {
@@ -173,10 +193,11 @@ export async function buildFile(
 
 function usage(): string {
   return [
-    "usage: resoloop-jsx build <entry.tsx> -o <out.json> [--draft]",
+    "usage: resoloop-jsx build <entry.tsx> -o <out.json> [--draft] [--project-root PATH]",
     "",
     "  build <entry.tsx>   JSX entry module; must `export default` a single <Slot>",
     "  -o, --output PATH   schema-v1 ApplyDocument output JSON path (required)",
+    "  --project-root PATH explicit project base (otherwise nearest source config)",
     "  --draft             allow missing keys; deterministic keys are generated",
     "                      and a warning is printed per generated key",
   ].join("\n");
@@ -185,6 +206,7 @@ function usage(): string {
 export interface ParsedArgs {
   entry?: string;
   output?: string;
+  projectRoot?: string;
   draft: boolean;
 }
 
@@ -197,6 +219,13 @@ export function parseArgs(argv: string[]): { args?: ParsedArgs; error?: string }
     const arg = rest[i];
     if (arg === "--draft") {
       parsed.draft = true;
+    } else if (arg === "--project-root") {
+      const value = rest[++i];
+      if (!value || value.startsWith("-")) return { error: "--project-root requires a path argument" };
+      parsed.projectRoot = value;
+    } else if (arg.startsWith("--project-root=")) {
+      parsed.projectRoot = arg.slice("--project-root=".length);
+      if (!parsed.projectRoot.trim()) return { error: "--project-root requires a path argument" };
     } else if (arg === "-o" || arg === "--output") {
       const value = rest[++i];
       if (value === undefined) return { error: `${arg} requires a path argument` };
@@ -229,6 +258,7 @@ export async function main(argv: string[]): Promise<number> {
   const result = await buildFile(args.entry!, {
     draft: args.draft,
     output: args.output,
+    projectRoot: args.projectRoot,
   });
   for (const warning of result.warnings) process.stderr.write(`${warning}\n`);
   for (const message of result.errors) process.stderr.write(`${message}\n`);

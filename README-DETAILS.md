@@ -258,6 +258,16 @@ resoloop apply examples/house-world.json --json
 
 schema v1では、top-levelに `schemaVersion: "1"`、`ownership.key`、root `slot.key`が必要です。ownershipごとのstateは既定でproject内の `.resoloop/state/<ownership>.json` に保存され、途中経過もcheckpointされます。このdirectoryは `resoloop init` が生成するignore設定によりversion controlから除外されます。
 
+TSX builder は入口の named export `export const ownership = { key: "house-world" }` を使い、未指定ならroot Slotのkeyをownershipにします。空文字・不正形状はbuildエラーです。既存制作物ではownershipと全Slot/Component keyを保ち、draftの自動keyで置き換えないでください。
+
+生成JSONの任意top-level `authoring` は `{"projectRoot":"C:/projects/house","source":"content/main.tsx","ownershipSource":"entry-export"}` の形です。build時に一度だけ、明示 `--project-root` > 作者TSXの最寄り `.resoloop.json` のdirectory > TSXのdirectory、の順でprojectRootを決めます。projectRootは絶対パス、sourceはproject相対、ownershipSourceは診断情報（未指定exportでは `root-key`）です。生成JSONの出力先・コピー先はstate基準を変えません。project全体を移動したら再buildしてください。新しいmetadataを読むには対応CLIが必要です。
+
+Coreはcontextを検証して保持し、stateパスをwriter lock・Prepare・結果・captureのselectorで共有します。authoring不正時は生成JSONの場所へfallbackしません。authoringのない手書きJSONはJSONのdirectoryから最寄りconfigを探し、無ければそのdirectoryを使う従来経路（Node不要）です。明示 `--state` は常に最優先でcwd相対です。authoring付きdocumentのlocal asset検証・取り込み、mesh bounds、camera bookmarkの相対出力は作者sourceのdirectory基準です。明示出力はcwd基準、手書きJSONの相対資源は従来基準、JSON includeは各JSON基準、Flux各パスはmanifest基準、接続設定の探索はcwd起点を維持します。
+
+既存制作物の `diff/plan/apply --require-state` は、選んだstateが無ければ `APPLY_STATE_NOT_FOUND`（終了コード5）で停止し、stateを作りません。指定なしの初回作成は従来どおりです。state v1/v2読込・v2保存、flat key、filenameのSanitize（禁止文字と空白を `_` に置換し端の `_` を除去）、ownershipKeyの完全一致検証は変わりません。Sanitizeで同じfilenameになってもownership不一致は拒否します。ownershipやsessionIdの一致だけでlive IDを再利用せず、現在worldの所有証拠を引き続き検証します。
+
+JSON→TSX移行（現在JSXで表せるSlot/Component subsetのみ）: ①旧diffのstateパス・ownership・全keyを記録しstateをbackup、②同じ値でTSXを作成し、旧JSONのkey省略箇所はstateの実効keyを明示（Component既定keyは `slotKey/component:normalizedType:ordinal`）、③build後に `resoloop diff OUTPUT.json --state OLD_STATE.json --require-state --json` で差分0を確認、④ `resoloop apply OUTPUT.json --state OLD_STATE.json --require-state --json` 後にIDと再diffを確認します。既定パスが異なる場合はbuilderの `--project-root` で旧基準を固定するか、検証済みcheckpointを明示的にコピーします。stateの自動探索・移動やownership書換えは行いません。
+
 `children` でSlot階層を宣言できます。SlotとComponentの明示的 `key` はrename、親変更、セッション変更後の再解決に使われます。stable Slotの親変更はIDを維持する`relocate`、stable Componentの親Slot変更は作成・参照再解決・旧Component削除としてplan/applyされます。同じSlotに同型Componentを複数宣言する場合は、それぞれにkeyが必要です。`identityFields`へ不変な管理memberを指定でき、managed reference topologyもstateへ保存されるため、同型Componentの挿入後も再接続時に誤接続せず再解決できます。`fields`は毎回収束させる値、`initialFields`はComponent新規作成時だけ設定してruntime dataを上書きしない値です。`managedFields`はresoloopが収束させるposition/rotation/scaleを限定し、`preserveWorldTransform`は既存Slotの現在のlocal transform値を保持します。親変更時は`relocationTransform: "local"`が既定で、`"world"`なら旧world transformから新しいlocal transformを計算して以後保持します。装備などでruntime親が変わるitem rootには管理Component証拠と`runtimeRelocatable: true`を宣言できます。保存path消失時は一意な証拠でのみ再解決し、移動中のplan/applyはmutation前に停止します。planのrelocate理由にも選択したpolicyが表示されます。key変更時は`migrateFrom`でworld objectを作り直さずstateを移行できます。fieldから `$slot:key`、`$component:key`、`$member:key.MemberName`、`$asset:key` を参照でき、forward referenceも利用できます。旧 `$ref:key` も互換です。vector、quaternion、colorはJSON array/objectがcanonicalで、従来のcomma stringも互換入力として受理されます。
 
 `inspect`、`slot`、`component`、`item audit`でもstable selectorを使用できます。例: `resoloop component inspect '$component:controller' --state .resoloop/state/item.json --json`。raw IDは接続単位、stable selectorはstateのpath、型、identity、reference topologyから現在のIDへ再解決されます。
@@ -414,6 +424,8 @@ $env:RESONITE_LOG_PATH="C:\path\to\Resonite\Logs"
 resoloop logs --tail 200 --json
 ~~~
 
+- APPLY_PROJECT_CONTEXT_INVALID（終了コード6）: authoringの形状・絶対projectRoot・project相対sourceが不正です。生成JSONの場所へのfallbackは行いません。作者projectを確認して再buildしてください
+- APPLY_STATE_NOT_FOUND（終了コード5）: `--require-state` またはstable selectorに必要なcheckpointがありません。選んだstateパスとbackupを確認し、既存制作物で空stateを作って再試行しないでください
 - APPLY_TARGET_AMBIGUOUS（終了コード6）: 同名候補が複数ある、またはstateに記録された元Slotの移動先を別の同名Slotが占有しています。移動先は採用せず変更前に停止します。所有を確定して移動先の衝突を解消してください
 - CONNECTION_FAILED: ResoniteLinkがworldで有効か、画面上のportとURLが同じか確認
 - 直結経路のGetSlotで `Success=false` のとき、`SLOT_NOT_FOUND`（終了コード5）は要求IDへのResoniteLinkの明確な不在応答 `Slot with ID '<要求ID>' not found.` と完全一致する場合だけで、それ以外の失敗応答は `RESONITE_OPERATION_FAILED`（終了コード7）になります。

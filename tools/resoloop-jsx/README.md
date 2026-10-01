@@ -22,9 +22,9 @@ npm run contract     # additionally validates every fixture against the
 ## Usage
 
 ```sh
-resoloop-jsx build <entry.tsx> -o <out.json> [--draft]
+resoloop-jsx build <entry.tsx> -o <out.json> [--draft] [--project-root PATH]
 # or without installing:
-node dist/src/cli.js build <entry.tsx> -o <out.json> [--draft]
+node dist/src/cli.js build <entry.tsx> -o <out.json> [--draft] [--project-root PATH]
 ```
 
 The entry file must `export default` a single `<Slot>` element:
@@ -45,6 +45,32 @@ export default (
   </Slot>
 );
 ```
+
+Use a named export when ownership differs from the root key:
+
+```tsx
+export const ownership = { key: "house-world" };
+export default <Slot key="root" name="House" />;
+```
+
+Without the export, ownership remains the root Slot key. An exported empty key,
+undefined value, or object with an invalid shape fails as an input/build error
+(exit 1). Ownership never prefixes or changes Slot/Component keys.
+
+The builder resolves the project base once: explicit `--project-root PATH`
+(cwd-relative) > nearest `.resoloop.json` ancestor of the author TSX > TSX directory.
+It adds optional top-level `authoring` metadata with absolute `projectRoot`,
+project-relative `source`, and diagnostic `ownershipSource` (`entry-export` or
+`root-key`). Output location and copying the generated JSON do not change the
+state path. Rebuild after moving the whole project. These generated documents
+require a CLI that supports `authoring`; handwritten JSON still works without Node.
+
+For an existing JSON project, back up the original state and preserve ownership
+and every effective key from it, including keys omitted in the old JSON. Build
+without draft key generation, then use `resoloop diff OUTPUT.json --state OLD_STATE.json
+--require-state --json` before applying with the same state and flag. Confirm zero
+diff, preserved IDs, and zero diff after apply. The flag stops on a missing
+checkpoint instead of creating an empty state. See [migration details](../../README-DETAILS.md).
 
 Every `<Slot>` and `<Component>` carries an explicit stable `key` prop. With
 the normal entry point (`import { Slot, Component } from "resoloop-jsx"`)
@@ -85,7 +111,7 @@ found (the .NET CLI was not built — the contract test did not run).
 ## Supported schema-v1 subset
 
 Emitted documents contain only `schemaVersion` (`"1"`), `ownership`, `slot`,
-`components`, and `children`. `ApplySlotSpec` fields supported as props:
+`components`, `children`, and build `authoring` metadata. `ApplySlotSpec` fields supported as props:
 `name` (required), `key`, `parent` (root only), `position`, `rotation`,
 `scale`, `managedFields`, `preserveWorldTransform`, `migrateFrom`,
 `relocationTransform`, `runtimeRelocatable`. `ApplyComponentSpec` fields:

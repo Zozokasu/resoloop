@@ -12,7 +12,7 @@ public static class AuthoringSchema
 {
     private static readonly IReadOnlyDictionary<string, Type> Topics = new Dictionary<string, Type>
     {
-        ["document"] = typeof(ApplyDocument), ["slot"] = typeof(ApplySlotSpec),
+        ["authoring"] = typeof(ApplyAuthoringSpec), ["document"] = typeof(ApplyDocument), ["slot"] = typeof(ApplySlotSpec),
         ["node"] = typeof(ApplyNodeSpec), ["component"] = typeof(ApplyComponentSpec),
         ["camera"] = typeof(ApplyCameraSpec), ["test"] = typeof(ApplyTestSpec),
         ["assertion"] = typeof(ApplyAssertionSpec), ["probe"] = typeof(ApplyProbeSpec),
@@ -61,6 +61,7 @@ public static class AuthoringSchema
             p.HasDefaultValue ? p.DefaultValue : null)).ToArray();
         object example = topic switch
         {
+            "authoring" => new ApplyAuthoringSpec(Path.GetFullPath("."), "content/main.tsx", "entry-export"),
             "document" => Scaffold(), "slot" => Scaffold().Slot!,
             "node" => Provider("resource", "CALLER_REFLECTED_TYPE"),
             "component" => Provider("resource", "CALLER_REFLECTED_TYPE").Components![0],
@@ -72,7 +73,9 @@ public static class AuthoringSchema
                 new Dictionary<string, ReflectionExpectation> { ["Sidedness"] = new(Kind: "field") })]),
             _ => throw new InvalidOperationException()
         };
-        var note = topic == "reflection"
+        var note = topic == "authoring"
+            ? "Optional build context. projectRoot must be absolute; source is project-relative. ownershipSource is diagnostic (entry-export or root-key). Rebuild after moving the project. State uses projectRoot; local resources and bookmark outputs use the source directory. Invalid metadata stops with APPLY_PROJECT_CONTEXT_INVALID."
+            : topic == "reflection"
             ? "Save example as the --request JSON for type query/check. Select explicit members; enums requests enum candidates only for selected fields. Optional expect maps member names to kind/valueType/targetType/enumValues (required name/value subset). Up to 64 selections and 256 members total. Version-matched disk metadata is trusted by query/check/diff/apply; --refresh or --cache off requests fresh definitions."
             : topic == "camera"
             ? "Place under cameras as an object keyed by bookmark name. position/target are finite 3-number vectors in Root space; they must differ. fieldOfView is vertical degrees (5..170); width/height are 64..8192. Use target, not rotation/lookAt."

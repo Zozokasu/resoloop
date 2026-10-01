@@ -15,6 +15,17 @@ function buildError(code: string) {
 }
 
 describe("key rules", () => {
+  test("ownership export preserves a distinct boundary and flat keys", () => {
+    const { document } = evaluate(slot({ key: "root", name: "House" }), { ownership: { key: "house-world" } });
+    equal(document.ownership.key, "house-world");
+    equal(document.slot.key, "root");
+  });
+
+  test("invalid or explicitly undefined ownership exports fail", () => {
+    for (const ownership of [undefined, null, "key", [], {}, { key: "" }, { key: " " }, { key: 1 }, { key: "x", extra: true }])
+      throws(() => evaluate(slot({ key: "root", name: "House" }), { ownership }), /ownership export/);
+  });
+
   test("explicit keys are used as-is", () => {
     const { document } = evaluate(
       slot({ name: "Root", key: "my-root", children: [slot({ name: "Kid", key: "kid-1" })] })

@@ -66,6 +66,8 @@ resoloop doctor
 
 The setup is complete when `ready` appears at the end.
 
+For existing content, preserve its checkpoint and use `diff/plan/apply --state STATE --require-state`. TSX can export `ownership` independently of the root key; build metadata fixes the project base regardless of JSON output location. Rebuild after moving the project. See [authoring and migration details](README-DETAILS.md).
+
 ### 3. Ask the AI to work on your project
 
 Open the project you created in an AI agent. If you have continued using the same AI session since creating the project, reopen the session once so that the agent can discover the generated Skill.

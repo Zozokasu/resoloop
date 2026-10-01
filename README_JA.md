@@ -118,3 +118,5 @@ Reflectionは `type query --request FILE.json --json` で必要なmemberとenum�
 ## ライセンス
 
 [AGPL-3.0-or-later](LICENSE)
+
+既存制作物の再適用・移行ではcheckpointを保持し、`diff/plan/apply --state STATE --require-state` を使います。TSXのnamed exportでownershipをroot keyから独立指定でき、build metadataは生成JSONの出力先に依存せずproject基準を保ちます。project全体の移動後は再buildしてください。[制作・移行の詳細](README-DETAILS.md)を参照してください。
