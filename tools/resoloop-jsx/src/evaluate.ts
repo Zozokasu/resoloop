@@ -5,6 +5,7 @@
 import type { ApplyDocument, ApplyOwnershipSpec, ApplySlotSpec, ApplyComponentSpec, ApplyNodeSpec } from "./generated/apply-types.js";
 import { copyComponent, copySlot } from "./generated/apply-copy.js";
 export type { ApplyDocument, ApplyOwnershipSpec, ApplySlotSpec, ApplyComponentSpec, ApplyNodeSpec } from "./generated/apply-types.js";
+import { copyOrigin, bindIr, markBuildError } from "./source-map.js";
 import { scopeKey, scopeValue } from "./scope.js";
 
 /** Tagged build error; `code` is printed by the CLI as `code: message`
@@ -57,14 +58,21 @@ function flattenChildren(value: any, path: string, out: RawElement[], scope = ""
       return;
     }
     if (value.kind === "scope") {
-      const nested = scopeKey(scope, value.props?.instanceKey, `${path}.instanceKey`);
-      if (scopes.has(nested)) throw new BuildError("DUPLICATE_KEY", `Instance scope '${nested}' is repeated at ${path}`);
+      let nested: string;
+      try { nested = scopeKey(scope, value.props?.instanceKey, `${path}.instanceKey`); }
+      catch (error) { if (error instanceof Error) markBuildError(error, value, "instanceKey"); throw error; }
+      if (scopes.has(nested)) {
+        const error = new BuildError("DUPLICATE_KEY", `Instance scope '${nested}' is repeated at ${path}`);
+        markBuildError(error, value, "instanceKey"); throw error;
+      }
       scopes.add(nested);
       flattenChildren(value.props?.children, path, out, nested, scopes);
       return;
     }
     if (value.kind === "slot" || value.kind === "component") {
-      out.push({ ...value, scope });
+      const copy = { ...value, scope };
+      copyOrigin(value, copy);
+      out.push(copy);
       return;
     }
     throw new BuildError(
@@ -194,7 +202,9 @@ export function evaluate(
       );
     const key = resolveKey("component", props, type, parentKey, siblingIndex, path, el.scope ?? "");
     registerKey(componentKeys, key, "component", path);
-    return copyComponent(props, key, path, el.scope ?? "", false, { assertFiniteNumbers, scopeValue });
+    const spec = copyComponent(props, key, path, el.scope ?? "", false, { assertFiniteNumbers, scopeValue });
+    bindIr(el, spec);
+    return spec;
   }
 
   function convertSlot(
@@ -239,6 +249,7 @@ export function evaluate(
 
     const spec = copySlot(props, key, path, el.scope ?? "", isRoot, { assertFiniteNumbers, scopeValue });
 
+    bindIr(el, spec);
     const components: ApplyComponentSpec[] = [];
     const children: ApplyNodeSpec[] = [];
     let componentRank = 0;

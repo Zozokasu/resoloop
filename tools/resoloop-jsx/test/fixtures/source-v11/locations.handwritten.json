@@ -1,0 +1,16 @@
+[
+  { "key":"forward", "member":"Typo", "path":"$.components[2].fields[\"Typo\"]", "code":"COMPONENT_MEMBER_NOT_FOUND", "severity":"error", "file":"main.tsx", "start":[4,5], "end":[4,9] },
+  { "key":"forward", "member":"Target", "path":"$.components[2].fields[\"Target\"]", "code":"APPLY_REFERENCE_NOT_FOUND", "severity":"error", "file":"main.tsx", "start":[14,20], "end":[14,44], "value":true },
+  { "key":"mismatch", "member":"Target", "path":"$.components[3].fields[\"Target\"]", "code":"APPLY_REFERENCE_TYPE_MISMATCH", "severity":"error", "file":"main.tsx", "start":[16,13], "end":[16,35], "value":true },
+  { "key":"member", "member":"Target", "path":"$.components[4].fields[\"Target\"]", "code":"APPLY_MEMBER_REFERENCE_NOT_FOUND", "severity":"error", "file":"main.tsx", "start":[19,13], "end":[19,41], "value":true },
+  { "key":"same", "member":"SameTypo", "path":"$.components[5].fields[\"SameTypo\"]", "code":"COMPONENT_MEMBER_NOT_FOUND", "severity":"error", "file":"main.tsx", "start":[22,15], "end":[22,23] },
+  { "key":"same", "member":"SameTypo", "path":"$.components[5].initialFields[\"SameTypo\"]", "code":"COMPONENT_MEMBER_NOT_FOUND", "severity":"error", "file":"main.tsx", "start":[22,47], "end":[22,55] },
+  { "key":"nested", "member":"Values", "path":"$.components[6].fields[\"Values\"][0][0]", "code":"APPLY_REFERENCE_NOT_FOUND", "severity":"error", "file":"main.tsx", "start":[24,15], "end":[24,46], "value":true },
+  { "key":"instance::scoped", "member":"ScopedTypo", "path":"$.components[7].fields[\"ScopedTypo\"]", "code":"COMPONENT_MEMBER_NOT_FOUND", "severity":"error", "file":"main.tsx", "start":[27,63], "end":[27,73] },
+  { "key":"instance::a", "member":"MapTypo", "path":"$.components[8].fields[\"MapTypo\"]", "code":"COMPONENT_MEMBER_NOT_FOUND", "severity":"error", "file":"main.tsx", "start":[28,83], "end":[28,90] },
+  { "key":"instance::b", "member":"MapTypo", "path":"$.components[9].fields[\"MapTypo\"]", "code":"COMPONENT_MEMBER_NOT_FOUND", "severity":"error", "file":"main.tsx", "start":[28,83], "end":[28,90] },
+  { "key":"instance::yes", "member":"ConditionalTypo", "path":"$.components[10].fields[\"ConditionalTypo\"]", "code":"COMPONENT_MEMBER_NOT_FOUND", "severity":"error", "file":"main.tsx", "start":[29,68], "end":[29,83] },
+  { "key":"spread", "member":"SpreadTypo", "path":"$.components[11].fields[\"SpreadTypo\"]", "code":"COMPONENT_MEMBER_NOT_FOUND", "severity":"error", "source":"unknown", "related":[[31,59,31,72]] },
+  { "key":"dynamic", "member":"DynamicTypo", "path":"$.components[12].fields[\"DynamicTypo\"]", "code":"COMPONENT_MEMBER_NOT_FOUND", "severity":"error", "source":"unknown", "related":[[32,60,32,76]] },
+  { "key":"transfer", "member":"Target", "path":"$.components[13].fields[\"Target\"]", "code":"APPLY_REFERENCE_NOT_FOUND", "severity":"error", "source":"unknown", "value":true, "related":[[33,71,33,82],[33,61,33,84]] }
+]

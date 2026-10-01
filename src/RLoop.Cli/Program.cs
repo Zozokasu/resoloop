@@ -37,6 +37,10 @@ public static class Program
             }
 
             var applyCommand = parsed.Positionals[0].ToLowerInvariant() is "validate" or "diff" or "plan" or "apply";
+            if (parsed.Has("diagnostics") && !applyCommand)
+                throw new RLoopException("INVALID_OPTION", "--diagnostics is supported only by validate/diff/plan/apply.", ExitCodes.InvalidArguments);
+            if (applyCommand) output.ConfigureDiagnostics(parsed.Has("diagnostics") ? parsed.RequireOption("diagnostics") : null,
+                parsed.Positionals[0].ToLowerInvariant(), parsed.Option("build-id"));
             if (parsed.Has("build-id") && !applyCommand)
                 throw new RLoopException("INVALID_OPTION", "--build-id is supported only by validate/diff/plan/apply.", ExitCodes.InvalidArguments);
 
@@ -177,6 +181,7 @@ public static class Program
                 var validation = parsed.Has("catalog")
                     ? await ApplyCatalogValidator.ValidateFileAsync(document, parsed.RequireOption("catalog"), commandToken)
                     : await ApplyDocumentValidator.ValidateAsync(document, cancellationToken: commandToken, catalog: document.GetBundleCatalog());
+                output.SetDiagnostics(ApplyDiagnostics.ForResult(validation).Diagnostics);
                 ApplyDocumentValidator.ThrowIfInvalid(validation);
                 if (!parsed.Has("strict"))
                 {
@@ -317,6 +322,7 @@ public static class Program
         }
         finally
         {
+            output.WriteDiagnostics();
             commandCancellation?.Dispose();
         }
     }
@@ -630,6 +636,8 @@ public static class Program
             {
                 var result = await world.PlanApplyAsync(applyInput ?? ApplyDocument.Load(args.Positional(1, "Apply file")),
                     ApplyOptionsFrom(args, output), cancellationToken);
+                output.SetDiagnostics(result.Warnings.Select(issue => ApplyDiagnostics.Unknown(issue.Code, issue.Message,
+                    args.Positionals[0].ToLowerInvariant(), issue.Severity, args.Option("build-id")) with { JsonPath = issue.Path }).ToArray());
                 var filters = new[] { "changes-only", "creates-only", "deletes-only", "summary" }.Where(args.Has).ToArray();
                 if (filters.Length > 1)
                     throw new RLoopException("PLAN_FILTER_CONFLICT", "Use only one plan output filter at a time.", ExitCodes.InvalidArguments,
@@ -1387,6 +1395,7 @@ Editing:
   resoloop plan|diff FILE [--build-id R] [--state FILE] [--require-state] [--adopt] [--changes-only|--creates-only|--deletes-only|--summary]
   resoloop apply FILE [--build-id R] [--state FILE] [--require-state] [--adopt] [--profile] [--ndjson-progress] [--prune --yes]
   Bundle input requires --build-id R and its embedded catalog; ordinary JSON omits --build-id.
+  --diagnostics FILE writes versioned detailed diagnostics to a new file for validate/diff/plan/apply.
   resoloop test FILE.json [--state FILE] [--probe --yes]
   resoloop uix audit SLOT|$slot:key [--state FILE] [--depth 6] [--max-slots 256] [--strict]
   resoloop uix recipe list

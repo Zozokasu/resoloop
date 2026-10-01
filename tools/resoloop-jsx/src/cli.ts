@@ -16,6 +16,8 @@ import { pathToFileURL } from "node:url";
 import * as ts from "typescript";
 import { evaluate, BuildError } from "./evaluate.js";
 import type { ApplyDocument } from "./evaluate.js";
+import { sourceTransformer } from "./source-transform.js";
+import { buildErrorLocation } from "./source-map.js";
 import { snapshotInputs } from "./input-snapshot.js";
 import { reserveBundleOutput, publishBundle } from "./bundle.js";
 
@@ -131,7 +133,7 @@ export async function buildFile(
         warnings,
       };
 
-    const emitResult = program.emit();
+    const emitResult = program.emit(undefined, undefined, undefined, false, opts.bundle ? sourceTransformer(program, inputs!) : undefined);
     if (emitResult.diagnostics.length > 0)
       return {
         exitCode: 2,
@@ -188,7 +190,7 @@ export async function buildFile(
     return { exitCode: 0, errors, warnings, document };
   } catch (err: any) {
     if (err instanceof BuildError)
-      return { exitCode: 1, errors: [`${err.code}: ${err.message}`], warnings };
+      return { exitCode: 1, errors: [`${err.code}: ${err.message}${opts.bundle ? `; TSX ${buildErrorLocation(err)}` : ""}`], warnings };
     return {
       exitCode: 1,
       errors: [`${err?.message ?? String(err)}`],

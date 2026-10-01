@@ -50,7 +50,39 @@ The map has `version`, `buildId`, `irSha256`, `sources` (path/hash) and `entries
 
 `validate|diff|plan|apply BUNDLE --build-id R` consume this single snapshot without Node. Detection uses `kind`/`bundleVersion`, not the extension; damaged/unsupported bundles never fall back to ordinary JSON. Bundle input requires the external request ID, while ordinary JSON rejects `--build-id`. Checks run before connection and inputs are checked again after preparation and immediately before the first mutation. `APPLY_BUILD_BUNDLE_INVALID` uses exit 6 and `context.reason` (`requestMismatch`, `uncommitted`, `mixed`, `inputChanged`, `inputUnknown`). Missing/invalid arguments use existing exit 2 codes. Only the embedded catalog is used; omit CLI `--catalog`. Unavailable catalog evidence retains `APPLY_CATALOG_UNAVAILABLE`. Connected commands (`diff`, `plan`, `apply`, `validate --strict`) reject synthetic catalogs and require session/client version matching. Workbench rejects bundles with `BACKEND_UNSUPPORTED`.
 
-Ordinary handwritten/generated JSON still works without bundles, Node, extra warnings or a freshness guarantee. Bundle IR retains schema `"1"`, authoring project/state resolution and explicit `--state`/`--require-state`. Request IDs and completion trust the producer; reused IDs or forged bundles are not authenticated. The gap after the final check, changes after writing starts, world preconditions, locks and response loss remain outside S2-4. Detailed diagnostics and TSX locations are deferred.
+For source diagnosis, add `--diagnostics NEW_FILE.json` to `validate|diff|plan|apply`. This separate JSON has `diagnosticVersion: "1"` and structured key/member/IR path, known/unknown source, expected/observed evidence and completeness; a known null is distinct from unknown. Bundle map v1 stores original TS/TSX UTF-16 AST offsets and one-based, end-exclusive line/column ranges bound to source hashes. Fix TSX using that location, then create a fresh bundle/request; generated JSON lines are not an authoring location. Function props forwarded directly preserve caller expressions; Scope, fragments, map callbacks and selected conditional children retain original ranges. Spread/computed members and untracked value transfers have unknown primary locations with real expressions/calls as related evidence. Handwritten and legacy generated JSON also accept diagnostics, with unknown source. Legacy stdout/stderr JSON, context.issues and reports are unchanged. Diagnostics require a new file in an existing writable directory; writing failure is reported on stderr without changing validation/apply judgement or exit code. Catalog evidence never completes runtime verification.
+
+The bundle and map versions remain "1". Each map entry carries `jsonPath`,
+`pathSegments` (string property names / integer array indices), `entityKind`,
+final scoped `key`, optional `member`, `source` (property-name range),
+`valueSource` (reference-producing expression) and `related` ranges. Fragment
+nodes have no IR entry. Repeated map iterations use the same callback range.
+Metadata stays in private WeakMaps through element copying and IR creation.
+The consumer checks every known source/related/value range's file, input hash,
+offset bounds, ordering and matching line/column; an ambiguous match is unknown.
+Old map entries containing only unknown source remain valid.
+
+For example, after a successful bundle build:
+
+```sh
+resoloop validate NEW_DIRECTORY/bundle.json --build-id R --diagnostics diagnostics-R.json --json
+```
+
+The diagnostics file is `{ "diagnosticVersion": "1", "diagnostics": [...] }`.
+Each diagnostic carries `diagnosticVersion`, `code`, `severity`, `message`,
+`phase` (validate/diff/plan/apply), `buildId`, `entityKind`, `key`, `member`,
+`jsonPath`, `pathSegments`, `source`, `related`, `expected`, `observed`, and
+`completeness`. Known source is `{status:"known",file,sha256,range:{start,end}}`;
+points have `offset`, `line`, `column`. Unknown source is `{status:"unknown"}`.
+Expected/observed are `{status:"known"|"unknown",value}`, with `value:null`
+retained for both known null and unknown. Completeness contains
+`location/type/member/reference/inputs/runtime`, each complete/partial/unknown.
+Runtime remains unknown for schema/catalog checks. Exceptions lacking structured
+information have unknown source; legacy issue paths are not parsed for origins.
+TypeScript build errors precede semantic validation and retain TypeScript's
+original-source diagnostics and exit 2; a failed build publishes no bundle.
+
+Ordinary handwritten/generated JSON still works without bundles, Node, extra warnings or a freshness guarantee. Bundle IR retains schema `"1"`, authoring project/state resolution and explicit `--state`/`--require-state`. Request IDs and completion trust the producer; reused IDs or forged bundles are not authenticated. The gap after the final check, changes after writing starts, world preconditions, locks and response loss remain outside S2-4.
 
 ## Entry documents
 
@@ -226,4 +258,4 @@ not a generator target. Expected JSON changes require deliberate review.
 
 After building an IR file, run `resoloop validate FILE.json --catalog CATALOG.json --json`. This is a C# Core check and runs without Node or a Resonite connection. No separate TypeScript member validator is introduced. Catalogs must carry acquisition identity, provenance and an intact content hash; missing/unconfirmed evidence and unknown reference closure fail with `APPLY_CATALOG_UNAVAILABLE`. Proven incompatible references use `APPLY_REFERENCE_TYPE_MISMATCH`; invalid/non-finite/out-of-range Single values use `VALUE_CONVERSION_FAILED`, including nullable non-null values and tuple elements. Rounding is allowed; member-specific ranges are not guessed. Both catalog error codes retain validation exit 6 and the existing issue format. Success keeps `strict: false`; adding `--strict` also requests the existing live validation after catalog preflight and session version comparison.
 
-`test/fixtures/catalog-v11/catalog.synthetic.json` is a fixed **synthetic** original with identity and content hash. `oracle.handwritten.json` independently fixes expected member types, case inputs and diagnostic codes/paths; do not derive or regenerate its expectations from the catalog or generated Apply types. `npm run contract` runs these cases and request-bound bundle handoffs through the actual offline CLI alongside the unchanged existing fixtures. This does not establish real Component/runtime verification. [CatalogExport](../RLoop.CatalogExport/README.md) provides developer-only export/import; legacy reflection caches without acquisition identity are not catalogs. TSX positions and detailed diagnostics remain deferred.
+`test/fixtures/catalog-v11/catalog.synthetic.json` is a fixed **synthetic** original with identity and content hash. `oracle.handwritten.json` independently fixes expected member types, case inputs and diagnostic codes/paths; do not derive or regenerate its expectations from the catalog or generated Apply types. `npm run contract` runs these cases and request-bound bundle handoffs through the actual offline CLI alongside the unchanged existing fixtures. This does not establish real Component/runtime verification. [CatalogExport](../RLoop.CatalogExport/README.md) provides developer-only export/import; legacy reflection caches without acquisition identity are not catalogs. Source locations are covered by the independent source-v11 oracle.

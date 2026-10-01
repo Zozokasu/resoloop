@@ -229,6 +229,7 @@ public static class ApplyDocumentValidator
     {
         if (document.Authoring is not null) _ = document.ProjectContext;
         var issues = new List<ApplyValidationIssue>();
+        var detailPaths = new Dictionary<ApplyComponentSpec, ApplyIssuePath>();
         var strict = client is not null;
         var slots = 0;
         var components = 0;
@@ -363,7 +364,7 @@ public static class ApplyDocumentValidator
         }
 
         void Visit(ApplySlotSpec slot, IReadOnlyList<ApplyComponentSpec>? nodeComponents,
-            IReadOnlyList<ApplyNodeSpec>? children, string path)
+            IReadOnlyList<ApplyNodeSpec>? children, string path, ApplyIssuePath detailPath)
         {
             slots++;
             foreach (var duplicate in (children ?? []).GroupBy(child => child.Slot.Name, StringComparer.Ordinal).Where(group => group.Count() > 1))
@@ -402,6 +403,7 @@ public static class ApplyDocumentValidator
                 var componentPath = $"{path}.components[{i}]";
                 components++;
                 componentPaths.Add((component, componentPath));
+                detailPaths[component] = detailPath.Property("components").Index(i);
                 var normalizedType = StableEffectiveKeys.NormalizeType(component.Type ?? "");
                 var ordinal = typeOrdinals.GetValueOrDefault(normalizedType);
                 typeOrdinals[normalizedType] = ordinal + 1;
@@ -444,7 +446,7 @@ public static class ApplyDocumentValidator
                         Issue("APPLY_IDENTITY_FIELD_UNMANAGED",
                             $"Identity field '{identityField}' must also be declared in fields or initialFields.", componentPath + ".identityFields");
                 }
-                foreach (var field in EnumerateComponentFields(component))
+                foreach (var (field, section) in EnumerateDetailedFields(component))
                 {
                     if (string.IsNullOrWhiteSpace(field.Key)) Issue("APPLY_MEMBER_NAME_MISSING", "Field names cannot be empty.", componentPath + ".fields");
                     ScanValue(field.Value, componentPath + ".fields." + field.Key);
@@ -461,11 +463,11 @@ public static class ApplyDocumentValidator
             {
                 var child = children![i];
                 if (child?.Slot is null) Issue("APPLY_CHILD_SLOT_MISSING", "Every child requires slot.", $"{path}.children[{i}].slot");
-                else Visit(child.Slot, child.Components, child.Children, $"{path}.children[{i}]");
+                else Visit(child.Slot, child.Components, child.Children, $"{path}.children[{i}]", detailPath.Property("children").Index(i));
             }
         }
 
-        if (document.Slot is not null) Visit(document.Slot, document.Components, document.Children, "$");
+        if (document.Slot is not null) Visit(document.Slot, document.Components, document.Children, "$", ApplyIssuePath.Root);
 
         foreach (var key in slotKeys.Where(key => key.Contains("::", StringComparison.Ordinal) && componentKeys.ContainsKey(key)))
             Issue("APPLY_KEY_DUPLICATE", $"Scoped stable key '{key}' is used by both a Slot and a Component.", componentKeys[key].Path + ".key");
@@ -479,10 +481,10 @@ public static class ApplyDocumentValidator
 
         foreach (var (component, componentPath) in componentPaths)
         {
-            foreach (var field in EnumerateComponentFields(component))
+            foreach (var (field, section) in EnumerateDetailedFields(component))
             {
                 ValidateReferences(field.Value, componentKeys, slotKeys, document.Assets?.Keys.ToHashSet(StringComparer.Ordinal) ?? [],
-                    issues, componentPath + ".fields." + field.Key);
+                    issues, componentPath + ".fields." + field.Key, detailPaths[component].Property(section).Property(field.Key), component.Key, field.Key);
             }
         }
 
@@ -505,17 +507,23 @@ public static class ApplyDocumentValidator
             {
                 if (!definitions.TryGetValue(component.Type, out var definition)) continue;
                 var members = definition.Members.ToDictionary(x => x.Name, StringComparer.Ordinal);
-                foreach (var field in EnumerateComponentFields(component))
+                foreach (var (field, section) in EnumerateDetailedFields(component))
                 {
                     if (!members.TryGetValue(field.Key, out var member))
-                        Issue("COMPONENT_MEMBER_NOT_FOUND", $"Member '{field.Key}' does not exist on '{component.Type}'.", componentPath + ".fields." + field.Key);
+                        ApplyDiagnostics.Add(issues, "COMPONENT_MEMBER_NOT_FOUND", $"Member '{field.Key}' does not exist on '{component.Type}'.",
+                            new(detailPaths[component].Property(section).Property(field.Key).Segments, componentPath + ".fields." + field.Key), component.Key, field.Key, definition.Members.Select(m => m.Name).ToArray(), true, field.Value.Clone(), true);
                     else if (member.Kind == "field" && MemberValueSyntax.IsStructuredTuple(member.ValueType, out _))
                     {
                         var raw = field.Value.ValueKind == JsonValueKind.String ? field.Value.GetString() ?? string.Empty : field.Value.GetRawText();
                         if (!raw.StartsWith('$'))
                         {
                             try { _ = MemberValueSyntax.ParseTuple(member.ValueType, raw); }
-                            catch (RLoopException ex) { issues.Add(new ApplyValidationIssue(ex.Code, ex.Message, componentPath + ".fields." + field.Key)); }
+                            catch (RLoopException ex)
+                            {
+                                ApplyDiagnostics.Add(issues, ex.Code, ex.Message,
+                                    new(detailPaths[component].Property(section).Property(field.Key).Segments, componentPath + ".fields." + field.Key),
+                                    component.Key, field.Key, member, true, field.Value.Clone(), true);
+                            }
                         }
                     }
                     if (member is not null)
@@ -527,22 +535,27 @@ public static class ApplyDocumentValidator
                                 ? text : preflight?.ToJsonString() ?? "null";
                             await client.ValidateComponentMemberAsync(definition.FullTypeName, field.Key, raw, cancellationToken);
                         }
-                        catch (RLoopException ex) { Issue(ex.Code, ex.Message, componentPath + ".fields." + field.Key); }
+                        catch (RLoopException ex)
+                        {
+                            ApplyDiagnostics.Add(issues, ex.Code, ex.Message,
+                                new(detailPaths[component].Property(section).Property(field.Key).Segments, componentPath + ".fields." + field.Key),
+                                component.Key, field.Key, member, true, field.Value.Clone(), true);
+                        }
                     }
                 }
             }
 
             foreach (var (component, componentPath) in componentPaths)
             {
-                foreach (var field in EnumerateComponentFields(component))
+                foreach (var (field, section) in EnumerateDetailedFields(component))
                     await ValidateMemberReferencesStrict(field.Value, definitions, componentKeys, issues,
-                        componentPath + ".fields." + field.Key, cancellationToken);
+                        componentPath + ".fields." + field.Key, cancellationToken, detailPaths[component].Property(section).Property(field.Key), component.Key, field.Key);
             }
         }
 
         var valid = issues.Count == 0;
         if (valid) issues.AddRange(ComponentIdentityDiagnostics.Analyze(document, resolvedTypes));
-        return new ApplyValidationResult(valid, document.SchemaVersion, slots, components, references, strict, issues);
+        return ApplyDiagnostics.Complete(document, new ApplyValidationResult(valid, document.SchemaVersion, slots, components, references, strict, issues));
     }
 
     private static System.Text.Json.Nodes.JsonNode? PreflightValue(JsonElement value)
@@ -562,21 +575,27 @@ public static class ApplyDocumentValidator
         return System.Text.Json.Nodes.JsonNode.Parse(value.GetRawText());
     }
 
+    private static IEnumerable<(KeyValuePair<string, JsonElement> Field, string Section)> EnumerateDetailedFields(ApplyComponentSpec component) =>
+        (component.Fields ?? new Dictionary<string, JsonElement>()).Select(f => (f, "fields"))
+            .Concat((component.InitialFields ?? new Dictionary<string, JsonElement>()).Select(f => (f, "initialFields")));
+
     private static IEnumerable<KeyValuePair<string, JsonElement>> EnumerateComponentFields(ApplyComponentSpec component) =>
         (component.Fields ?? new Dictionary<string, JsonElement>()).Concat(component.InitialFields ?? new Dictionary<string, JsonElement>());
 
     public static void ThrowIfInvalid(ApplyValidationResult result)
     {
         if (result.Valid) return;
-        throw new RLoopException("APPLY_VALIDATION_FAILED", $"Apply document has {result.Issues.Count} validation error(s).",
+        var error = new RLoopException("APPLY_VALIDATION_FAILED", $"Apply document has {result.Issues.Count} validation error(s).",
             ExitCodes.ValidationFailed, new Dictionary<string, object?> { ["issues"] = result.Issues });
+        ApplyDiagnostics.Attach(error, result);
+        throw error;
     }
 
     private static void ValidateReferences(JsonElement value,
         IReadOnlyDictionary<string, (ApplyComponentSpec Spec, string Path)> keys,
         IReadOnlySet<string> slotKeys,
         IReadOnlySet<string> assetKeys,
-        List<ApplyValidationIssue> issues, string path)
+        List<ApplyValidationIssue> issues, string path, ApplyIssuePath detailPath, string? ownerKey, string member)
     {
         if (value.ValueKind == JsonValueKind.String)
         {
@@ -585,34 +604,34 @@ public static class ApplyDocumentValidator
                 text.StartsWith("$component:", StringComparison.Ordinal) ? text[11..] :
                 text.StartsWith("$member:", StringComparison.Ordinal) ? MemberKey(text[8..]) : null;
             if (key is not null && !keys.ContainsKey(key))
-                issues.Add(new ApplyValidationIssue("APPLY_REFERENCE_NOT_FOUND", $"Symbolic reference '{text}' has no declared component key.", path));
+                ApplyDiagnostics.Add(issues, "APPLY_REFERENCE_NOT_FOUND", $"Symbolic reference '{text}' has no declared component key.", new(detailPath.Segments, path), ownerKey, member, observed: value.Clone(), observedKnown: true);
             if (text.StartsWith("$slot-member:", StringComparison.Ordinal) && StableSelectorSyntax.TryParse(text, out var slotMember))
             {
                 if (!slotKeys.Contains(slotMember!.Key))
-                    issues.Add(new ApplyValidationIssue("APPLY_REFERENCE_NOT_FOUND", $"Symbolic reference '{text}' has no declared slot key.", path));
+                    ApplyDiagnostics.Add(issues, "APPLY_REFERENCE_NOT_FOUND", $"Symbolic reference '{text}' has no declared slot key.", new(detailPath.Segments, path), ownerKey, member, observed: value.Clone(), observedKnown: true);
                 // Public Slot fields exposed by the pinned adapter; runtime IDs are always observed.
                 if (!new[] { "Parent", "Position", "Rotation", "Scale", "Name", "Tag", "IsActive", "IsPersistent", "OrderOffset" }.Contains(slotMember!.MemberName))
-                    issues.Add(new ApplyValidationIssue("APPLY_MEMBER_REFERENCE_NOT_FOUND", $"Slot member reference '{text}' is not an exposed Slot field.", path));
+                    ApplyDiagnostics.Add(issues, "APPLY_MEMBER_REFERENCE_NOT_FOUND", $"Slot member reference '{text}' is not an exposed Slot field.", new(detailPath.Segments, path), ownerKey, member, observed: value.Clone(), observedKnown: true);
             }
             if (text.StartsWith("$slot:", StringComparison.Ordinal) && !slotKeys.Contains(text[6..]))
-                issues.Add(new ApplyValidationIssue("APPLY_REFERENCE_NOT_FOUND", $"Symbolic reference '{text}' has no declared slot key.", path));
+                ApplyDiagnostics.Add(issues, "APPLY_REFERENCE_NOT_FOUND", $"Symbolic reference '{text}' has no declared slot key.", new(detailPath.Segments, path), ownerKey, member, observed: value.Clone(), observedKnown: true);
             if (text.StartsWith("$asset:", StringComparison.Ordinal) && !assetKeys.Contains(text[7..]))
-                issues.Add(new ApplyValidationIssue("APPLY_REFERENCE_NOT_FOUND", $"Symbolic reference '{text}' has no declared asset key.", path));
+                ApplyDiagnostics.Add(issues, "APPLY_REFERENCE_NOT_FOUND", $"Symbolic reference '{text}' has no declared asset key.", new(detailPath.Segments, path), ownerKey, member, observed: value.Clone(), observedKnown: true);
             return;
         }
         if (value.ValueKind == JsonValueKind.Array)
         {
             var index = 0;
-            foreach (var item in value.EnumerateArray()) ValidateReferences(item, keys, slotKeys, assetKeys, issues, $"{path}[{index++}]");
+            foreach (var item in value.EnumerateArray()) ValidateReferences(item, keys, slotKeys, assetKeys, issues, $"{path}[{index}]", detailPath.Index(index++), ownerKey, member);
         }
         else if (value.ValueKind == JsonValueKind.Object)
-            foreach (var property in value.EnumerateObject()) ValidateReferences(property.Value, keys, slotKeys, assetKeys, issues, path + "." + property.Name);
+            foreach (var property in value.EnumerateObject()) ValidateReferences(property.Value, keys, slotKeys, assetKeys, issues, path + "." + property.Name, detailPath.Property(property.Name), ownerKey, member);
     }
 
     private static Task ValidateMemberReferencesStrict(JsonElement value,
         IReadOnlyDictionary<string, ComponentTypeInfo> definitions,
         IReadOnlyDictionary<string, (ApplyComponentSpec Spec, string Path)> keys,
-        List<ApplyValidationIssue> issues, string path, CancellationToken cancellationToken)
+        List<ApplyValidationIssue> issues, string path, CancellationToken cancellationToken, ApplyIssuePath detailPath, string? ownerKey, string member)
     {
         cancellationToken.ThrowIfCancellationRequested();
         if (value.ValueKind == JsonValueKind.String && (value.GetString() ?? string.Empty).StartsWith("$member:", StringComparison.Ordinal))
@@ -622,17 +641,17 @@ public static class ApplyDocumentValidator
             if (separator > 0 && keys.TryGetValue(selector[..separator], out var keyed) &&
                 definitions.TryGetValue(keyed.Spec.Type, out var definition) &&
                 !definition.Members.Any(x => x.Name == selector[(separator + 1)..]))
-                issues.Add(new ApplyValidationIssue("APPLY_MEMBER_REFERENCE_NOT_FOUND", $"Member reference '{value.GetString()}' was not found.", path));
+                ApplyDiagnostics.Add(issues, "APPLY_MEMBER_REFERENCE_NOT_FOUND", $"Member reference '{value.GetString()}' was not found.", new(detailPath.Segments, path), ownerKey, member, observed: value.Clone(), observedKnown: true);
         }
         else if (value.ValueKind == JsonValueKind.Array)
         {
             var index = 0;
             foreach (var item in value.EnumerateArray())
-                ValidateMemberReferencesStrict(item, definitions, keys, issues, $"{path}[{index++}]", cancellationToken).GetAwaiter().GetResult();
+                ValidateMemberReferencesStrict(item, definitions, keys, issues, $"{path}[{index}]", cancellationToken, detailPath.Index(index++), ownerKey, member).GetAwaiter().GetResult();
         }
         else if (value.ValueKind == JsonValueKind.Object)
             foreach (var property in value.EnumerateObject())
-                ValidateMemberReferencesStrict(property.Value, definitions, keys, issues, path + "." + property.Name, cancellationToken).GetAwaiter().GetResult();
+                ValidateMemberReferencesStrict(property.Value, definitions, keys, issues, path + "." + property.Name, cancellationToken, detailPath.Property(property.Name), ownerKey, member).GetAwaiter().GetResult();
         return Task.CompletedTask;
     }
 

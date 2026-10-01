@@ -1,0 +1,4 @@
+[
+  {"code":"COMPONENT_MEMBER_NOT_FOUND","key":"holder","member":"Typooo","path":"$.components[1].fields[\"Typooo\"]","start":[7,5],"end":[7,11]},
+  {"code":"APPLY_REFERENCE_NOT_FOUND","key":"holder","member":"Target","path":"$.components[1].fields[\"Target\"]","start":[8,13],"end":[8,37]}
+]

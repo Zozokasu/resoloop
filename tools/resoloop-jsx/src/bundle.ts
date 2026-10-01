@@ -3,6 +3,7 @@ import * as path from "node:path";
 import { randomUUID } from "node:crypto";
 import type { ApplyDocument } from "./evaluate.js";
 import { hashText, verifyInputs, type InputFile } from "./input-snapshot.js";
+import { originOfIr, unknown, type Origin, type Source } from "./source-map.js";
 
 export function reserveBundleOutput(output: string): string {
   const final = path.resolve(output);
@@ -16,23 +17,40 @@ export function reserveBundleOutput(output: string): string {
 export function publishBundle(document: ApplyDocument, inputs: InputFile[], catalogText: string, buildId: string, output: string): void {
   const catalog = JSON.parse(catalogText);
   const types = new Set<string>();
-  const entries: { jsonPath: string; source: { status: "unknown" } }[] = [];
-  const unknown = (jsonPath: string): void => { entries.push({ jsonPath, source: { status: "unknown" } }); };
-  const walk = (node: any, jsonPath: string): void => {
-    unknown(jsonPath + ".slot");
-    for (const property of Object.keys(node.slot ?? {}).sort()) unknown(jsonPath + ".slot[" + JSON.stringify(property) + "]");
+  const entries: any[] = [];
+  const add = (jsonPath: string, pathSegments: (string | number)[], entityKind: string, key: string,
+    member: string | undefined, origin: Origin | undefined, related: Source[] = []): void => {
+    entries.push({ jsonPath, pathSegments, entityKind, key, ...(member === undefined ? {} : { member }),
+      source: origin?.source ?? unknown, valueSource: origin?.valueSource ?? unknown,
+      related: [...new Map([...(origin?.related ?? []), ...related].filter(s => s.status === "known").map(s => [JSON.stringify(s), s])).values()] });
+  };
+  const values = (value: any, p: string, segments: (string | number)[], key: string, member: string,
+    origin: Origin | undefined, related: Source[]): void => {
+    add(p, segments, "component", key, member, origin, related);
+    if (Array.isArray(value)) value.forEach((v, i) => values(v, `${p}[${i}]`, [...segments, i], key, member, origin?.children?.[String(i)], related));
+    else if (value !== null && typeof value === "object") for (const [name, v] of Object.entries(value))
+      values(v, p + "[" + JSON.stringify(name) + "]", [...segments, name], key, member, origin?.children?.[name], related);
+  };
+  const walk = (node: any, jsonPath: string, segments: (string | number)[]): void => {
+    const slot = originOfIr(node.slot);
+    add(jsonPath + ".slot", [...segments, "slot"], "slot", node.slot.key, undefined, slot && { source: slot.source });
+    for (const property of Object.keys(node.slot ?? {}).sort()) add(jsonPath + ".slot[" + JSON.stringify(property) + "]", [...segments, "slot", property], "slot", node.slot.key, property, slot?.attributes[property], slot?.related);
     for (const [index, component] of (node.components ?? []).entries()) {
       const p = `${jsonPath}.components[${index}]`;
       const full = catalog.content?.aliases?.[component.type] ?? component.type;
       // Identification only. Core is the sole semantic/evidence validator.
       types.add(catalog.content?.types?.find((t: any) => t.fullName === full && t.confirmed)?.fullName ?? component.type);
-      unknown(p); unknown(p + ".type");
+      const origin = originOfIr(component);
+      const s = [...segments, "components", index];
+      add(p, s, "component", component.key, undefined, origin && { source: origin.source }, origin?.related);
+      add(p + ".type", [...s, "type"], "component", component.key, undefined, origin?.attributes.type, origin?.related);
       for (const section of ["fields", "initialFields"])
-        for (const field of Object.keys(component[section] ?? {}).sort()) unknown(p + "." + section + "[" + JSON.stringify(field) + "]");
+        for (const field of Object.keys(component[section] ?? {}).sort()) values(component[section][field], p + "." + section + "[" + JSON.stringify(field) + "]", [...s, section, field], component.key, field,
+          origin?.attributes[section]?.children?.[field], [...(origin?.attributes[section]?.related ?? []), ...(origin?.related ?? [])]);
     }
-    for (const [index, child] of (node.children ?? []).entries()) walk(child, `${jsonPath}.children[${index}]`);
+    for (const [index, child] of (node.children ?? []).entries()) walk(child, `${jsonPath}.children[${index}]`, [...segments, "children", index]);
   };
-  walk(document, "$");
+  walk(document, "$", []);
   const irText = JSON.stringify(document, null, 2) + "\n";
   const payload = (text: string) => ({ text, sha256: hashText(text) });
   const mapText = JSON.stringify({ version: "1", buildId, irSha256: hashText(irText),

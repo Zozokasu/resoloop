@@ -36,13 +36,13 @@ test("bundle publishes committed payloads only after success, with handwritten I
     equal(bundle.catalog.text, fs.readFileSync(w.catalog, { encoding: "utf8" }));
     const map = JSON.parse(bundle.map.text);
     equal(map.version, "1"); equal(map.buildId, "R1"); equal(map.irSha256, bundle.ir.sha256);
-    deepEqual(map.entries, [
-      { jsonPath: "$.slot", source: { status: "unknown" } },
-      { jsonPath: '$.slot["key"]', source: { status: "unknown" } },
-      { jsonPath: '$.slot["name"]', source: { status: "unknown" } },
-      { jsonPath: "$.components[0]", source: { status: "unknown" } },
-      { jsonPath: "$.components[0].type", source: { status: "unknown" } },
-      { jsonPath: '$.components[0].fields["Amount"]', source: { status: "unknown" } },
+    deepEqual(map.entries.map((entry: any) => ({ jsonPath: entry.jsonPath })), [
+      { jsonPath: "$.slot" },
+      { jsonPath: '$.slot["key"]' },
+      { jsonPath: '$.slot["name"]' },
+      { jsonPath: "$.components[0]" },
+      { jsonPath: "$.components[0].type" },
+      { jsonPath: '$.components[0].fields["Amount"]' },
     ]);
     equal(bundle.inputs.status, "complete");
     for (const file of [w.entry, w.imported, w.catalog]) {
