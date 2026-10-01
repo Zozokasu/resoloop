@@ -1,0 +1,20 @@
+{
+  "schemaVersion": "1", "ownership": { "key": "root" },
+  "slot": { "key": "root", "name": "SyntheticOracle" }, "children": [],
+  "components": [
+    { "key": "base", "type": "Synthetic.Base" },
+    { "key": "other", "type": "Synthetic.Other" },
+    { "key": "forward", "type": "Synthetic.Holder", "fields": { "Typo": 1, "Target": "$component:missing" } },
+    { "key": "mismatch", "type": "Synthetic.Holder", "fields": { "Target": "$component:other" } },
+    { "key": "member", "type": "Synthetic.Holder", "fields": { "Target": "$member:base.Absent" } },
+    { "key": "same", "type": "Synthetic.Holder", "fields": { "SameTypo": 1 }, "initialFields": { "SameTypo": 2 } },
+    { "key": "nested", "type": "Synthetic.Holder", "fields": { "Values": [["$component:missing-nested"]] } },
+    { "key": "instance::scoped", "type": "Synthetic.Holder", "fields": { "ScopedTypo": 1 } },
+    { "key": "instance::a", "type": "Synthetic.Holder", "fields": { "MapTypo": 1 } },
+    { "key": "instance::b", "type": "Synthetic.Holder", "fields": { "MapTypo": 1 } },
+    { "key": "instance::yes", "type": "Synthetic.Holder", "fields": { "ConditionalTypo": 1 } },
+    { "key": "spread", "type": "Synthetic.Holder", "fields": { "SpreadTypo": 1 } },
+    { "key": "dynamic", "type": "Synthetic.Holder", "fields": { "DynamicTypo": 1 } },
+    { "key": "transfer", "type": "Synthetic.Holder", "fields": { "Target": "$component:missing-transfer" } }
+  ]
+}

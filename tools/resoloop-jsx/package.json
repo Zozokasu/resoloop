@@ -19,6 +19,10 @@
     "./draft": {
       "types": "./dist/src/draft.d.ts",
       "default": "./dist/src/draft.js"
+    },
+    "./source-runtime": {
+      "types": "./dist/src/source-map.d.ts",
+      "default": "./dist/src/source-map.js"
     }
   },
   "engines": {

@@ -8,6 +8,7 @@
 // removed from the props object. createElement merges it back into props so
 // the evaluator can uniformly read element.props.key.
 
+import { captureElement, callComponent } from "./source-map.js";
 import { Slot, Component, Scope } from "./elements.js";
 import type { JsxChild, JsxNode, JsxElement } from "./elements.js";
 
@@ -32,12 +33,13 @@ function createElement(type: unknown, props: any, key?: string): JsxNode {
     key === undefined ? props ?? {} : { ...(props ?? {}), key };
   // Marker check must come before the generic function-component branch:
   // Slot/Component/Fragment are functions but must never be invoked.
-  if (type === Slot) return { kind: "slot", props: merged };
-  if (type === Component) return { kind: "component", props: merged };
-  if (type === Fragment) return { kind: "fragment", props: merged };
-  if (type === Scope) return { kind: "scope", props: merged };
+  function marker(kind: string): JsxNode { const element = { kind, props: merged } as JsxNode; captureElement(element as object); return element; }
+  if (type === Slot) return marker("slot");
+  if (type === Component) return marker("component");
+  if (type === Fragment) return marker("fragment");
+  if (type === Scope) return marker("scope");
   // User-defined function component: resolved eagerly at evaluation time.
-  if (typeof type === "function") return type(merged);
+  if (typeof type === "function") return callComponent(type as (props: any) => any, merged);
   throw new Error(
     `resoloop-jsx: unsupported JSX element type ${String(type)}`
   );

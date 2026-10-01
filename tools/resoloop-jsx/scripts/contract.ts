@@ -12,6 +12,8 @@ import * as path from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { buildFile } from "../src/cli.js";
+import { checkSourceOracle } from "../test/source-oracle.js";
+import { deepEqual, equal, ok } from "node:assert/strict";
 
 const here = path.dirname(fileURLToPath(import.meta.url)); // dist/scripts
 const packageRoot = path.resolve(here, "..", ".."); // tools/resoloop-jsx
@@ -201,6 +203,37 @@ async function main(): Promise<number> {
     if (failedBuild.exitCode === 1 && !fs.existsSync(failedFile) && fs.readFileSync(bundleFile, { encoding: "utf8" }) === bundleOriginal) {
       passed++; process.stdout.write("contract: PASS bundle/failed-R2-never-published\n");
     } else { failed++; process.stderr.write("contract: FAIL bundle/failed-R2-never-published\n"); }
+
+    // Independent V11 source oracle crosses the real producer/consumer boundary.
+    const sourceBundle = path.join(tmpDir, "source-v11", "bundle.json");
+    const sourceBuild = await buildFile(path.join(fixturesDir, "source-v11/main.tsx"), {
+      bundle: true, catalog: path.join(catalogDir, "catalog.synthetic.json"), buildId: "V11", output: sourceBundle });
+    equal(sourceBuild.exitCode, 0, sourceBuild.errors.join("\n"));
+    const sourceOriginal = JSON.parse(fs.readFileSync(sourceBundle));
+    const sourceOracle = checkSourceOracle(packageRoot, sourceOriginal);
+    for (const command of ["validate", "diff", "plan", "apply"]) {
+      checked++;
+      const diagnosticFile = path.join(tmpDir, command + ".diagnostics.json");
+      const run = spawnSync("dotnet", [dll, command, sourceBundle, "--build-id", "V11", "--diagnostics", diagnosticFile, "--json"], { cwd: repoRoot, encoding: "utf8" });
+      try {
+        equal(run.status, 6, run.stdout + run.stderr);
+        const report = JSON.parse(fs.readFileSync(diagnosticFile)); equal(report.diagnosticVersion, "1");
+        for (const row of sourceOracle) {
+          const diagnostic = report.diagnostics.find((d: any) => d.code === row.code && d.jsonPath === row.path);
+          ok(diagnostic, row.code + " " + row.path); equal(diagnostic.severity, row.severity);
+          equal(diagnostic.key, row.key); equal(diagnostic.member, row.member); equal(diagnostic.phase, command); equal(diagnostic.buildId, "V11");
+          deepEqual(diagnostic.source, row.expectedSource);
+          if (row.related) deepEqual(diagnostic.related, row.expectedRelated);
+          equal(diagnostic.completeness.runtime, "unknown");
+        }
+        const mismatch = report.diagnostics.find((d: any) => d.code === "APPLY_REFERENCE_TYPE_MISMATCH");
+        deepEqual(mismatch.expected, { status: "known", value: "Synthetic.Base" });
+        deepEqual(mismatch.observed, { status: "known", value: "Synthetic.Other" });
+        const legacy = spawnSync("dotnet", [dll, command, sourceBundle, "--build-id", "V11", "--json"], { cwd: repoRoot, encoding: "utf8" });
+        equal(run.stdout, legacy.stdout); equal(run.stderr, legacy.stderr);
+        passed++; process.stdout.write(`contract: PASS source-v11/${command}\n`);
+      } catch (error: any) { failed++; process.stderr.write(`contract: FAIL source-v11/${command}: ${error.message}\n${run.stderr}\n`); }
+    }
 
     // Negative check: schemaVersion as a JSON number must be rejected.
     checked++;
