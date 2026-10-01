@@ -6,70 +6,14 @@
 // They exist as real function values only so TypeScript can type-check
 // JSX attributes against SlotProps / ComponentProps.
 
-/** JSON-serializable value. Mirrors the C# side's JsonElement usage in
- *  ApplyComponentSpec.Fields / InitialFields. */
-export type JsonValue =
-  | string
-  | number
-  | boolean
-  | null
-  | JsonValue[]
-  | { [key: string]: JsonValue };
+import type { SlotScalarProps, ComponentScalarProps } from "./generated/apply-types.js";
+export type { JsonValue, ManagedField, RelocationTransform } from "./generated/apply-types.js";
 
-/** Mirrors C# ApplySlotSpec.ManagedFields (position | rotation | scale). */
-export type ManagedField = "position" | "rotation" | "scale";
-
-/** Mirrors C# ApplySlotSpec.RelocationTransform (local | world). */
-export type RelocationTransform = "local" | "world";
-
-/** Props of <Slot>. Scalar fields mirror C# ApplySlotSpec; `key` is the
- *  ResoLoop stable key (ApplySlotSpec.Key) and is required at the type level.
- *  Use the "resoloop-jsx/draft" entry point to omit it while prototyping. */
-export interface SlotProps {
-  /** ApplySlotSpec.Name (required) */
-  name: string;
-  /** ApplySlotSpec.Key (required) */
-  key: string;
-  /** ApplySlotSpec.Parent — only meaningful on the root <Slot> */
-  parent?: string;
-  /** ApplySlotSpec.Position — exactly 3 numbers */
-  position?: [number, number, number];
-  /** ApplySlotSpec.Rotation — exactly 4 numbers (quaternion) */
-  rotation?: [number, number, number, number];
-  /** ApplySlotSpec.Scale — exactly 3 numbers */
-  scale?: [number, number, number];
-  /** ApplySlotSpec.ManagedFields */
-  managedFields?: ManagedField[];
-  /** ApplySlotSpec.PreserveWorldTransform */
-  preserveWorldTransform?: boolean;
-  /** ApplySlotSpec.MigrateFrom */
-  migrateFrom?: string;
-  /** ApplySlotSpec.RelocationTransform ("local" default) */
-  relocationTransform?: RelocationTransform;
-  /** ApplySlotSpec.RuntimeRelocatable */
-  runtimeRelocatable?: boolean;
-  /** JSX children: nested <Slot>/<Component> elements, arrays, fragments,
-   *  or falsy values to skip. */
+/** Generated scalar props plus JSX children, which are classified by the evaluator. */
+export interface SlotProps extends SlotScalarProps {
   children?: JsxChild;
 }
-
-/** Props of <Component>. Mirrors C# ApplyComponentSpec; `key` is required at
- *  the type level (use "resoloop-jsx/draft" to omit it). <Component> never
- *  takes children. */
-export interface ComponentProps {
-  /** ApplyComponentSpec.Type — fully-qualified Resonite Component type name */
-  type: string;
-  /** ApplyComponentSpec.Key (required) */
-  key: string;
-  /** ApplyComponentSpec.Fields */
-  fields?: Record<string, JsonValue>;
-  /** ApplyComponentSpec.MigrateFrom */
-  migrateFrom?: string;
-  /** ApplyComponentSpec.InitialFields */
-  initialFields?: Record<string, JsonValue>;
-  /** ApplyComponentSpec.IdentityFields */
-  identityFields?: string[];
-}
+export interface ComponentProps extends ComponentScalarProps {}
 
 /** Internal element object produced by the JSX runtime for <Slot>. */
 export interface SlotElement {

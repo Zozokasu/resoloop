@@ -1,0 +1,43 @@
+{
+  "schemaVersion": "1",
+  "ownership": { "key": "oracle" },
+  "slot": {
+    "name": "Shape Oracle",
+    "key": "oracle",
+    "parent": "Root",
+    "position": [2, -3, 4],
+    "rotation": [0, 0, 0, 1],
+    "scale": [1, 2, 3],
+    "managedFields": ["position", "rotation", "scale"],
+    "preserveWorldTransform": false,
+    "migrateFrom": "old-oracle",
+    "relocationTransform": "world",
+    "runtimeRelocatable": false
+  },
+  "components": [{
+    "type": "Oracle.Root",
+    "key": "root-component",
+    "fields": { "Enabled": false, "Empty": null, "Target": "$slot:oracle" },
+    "migrateFrom": "old-component",
+    "initialFields": { "Seed": 17 },
+    "identityFields": ["Seed"]
+  }],
+  "children": [{
+    "slot": {
+      "name": "Scoped", "key": "unit::child", "preserveWorldTransform": false,
+      "migrateFrom": "unit::previous", "runtimeRelocatable": false
+    },
+    "components": [{
+      "type": "Oracle.Child",
+      "key": "unit::receiver",
+      "fields": { "Target": "$slot:unit::child", "Other": "$component:unit::receiver", "Member": "$member:unit::receiver.Value", "Empty": null },
+      "migrateFrom": "unit::old-receiver",
+      "initialFields": { "BootTarget": "$slot:unit::child", "Enabled": false },
+      "identityFields": ["BootTarget"]
+    }, {
+      "type": "Oracle.Empty", "key": "unit::empty", "fields": null, "migrateFrom": null, "initialFields": null
+    }]
+  }, {
+    "slot": { "name": "Omitted", "key": "omitted" }
+  }]
+}
