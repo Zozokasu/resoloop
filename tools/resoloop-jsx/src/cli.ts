@@ -16,11 +16,16 @@ import { pathToFileURL } from "node:url";
 import * as ts from "typescript";
 import { evaluate, BuildError } from "./evaluate.js";
 import type { ApplyDocument } from "./evaluate.js";
+import { snapshotInputs } from "./input-snapshot.js";
+import { reserveBundleOutput, publishBundle } from "./bundle.js";
 
 export interface BuildOptions {
   draft?: boolean;
   output?: string;
   projectRoot?: string;
+  bundle?: boolean;
+  catalog?: string;
+  buildId?: string;
 }
 
 export interface BuildResult {
@@ -69,6 +74,8 @@ export async function buildFile(
 ): Promise<BuildResult> {
   const errors: string[] = [];
   const warnings: string[] = [];
+  if (opts.bundle ? !opts.output || !opts.catalog?.trim() || !opts.buildId?.trim() : opts.catalog !== undefined || opts.buildId !== undefined)
+    return { exitCode: 1, errors: ["--bundle requires output, --catalog FILE and --build-id R; catalog/build-id require --bundle"], warnings };
   const entryAbs = path.resolve(entryPath);
   if (!fs.existsSync(entryAbs))
     return {
@@ -96,6 +103,7 @@ export async function buildFile(
   // node_modules lookup. Deleted in `finally`.
   const outDir = fs.mkdtempSync(path.join(path.dirname(entryAbs), ".resoloop-jsx-"));
   try {
+    const bundleOutput = opts.bundle ? reserveBundleOutput(opts.output!) : undefined;
     // rootDir is required for self-referencing package resolution (TS2209);
     // constraining it to the entry's directory also keeps emit predictable.
     const rootDir = path.dirname(entryAbs);
@@ -113,6 +121,8 @@ export async function buildFile(
       declaration: false,
     });
 
+    const inputs = opts.bundle ? snapshotInputs(program, projectRoot, opts.catalog!) : undefined;
+    const catalogText = opts.bundle ? fs.readFileSync(path.resolve(opts.catalog!), { encoding: "utf8" }) : undefined;
     const preEmit = ts.getPreEmitDiagnostics(program);
     if (preEmit.length > 0)
       return {
@@ -165,7 +175,9 @@ export async function buildFile(
     };
     warnings.push(...draftWarnings);
 
-    if (opts.output !== undefined) {
+    if (bundleOutput !== undefined) {
+      publishBundle(document, inputs!, catalogText!, opts.buildId!, bundleOutput);
+    } else if (opts.output !== undefined) {
       const outAbs = path.resolve(opts.output);
       const parent = path.dirname(outAbs);
       if (!fs.existsSync(parent)) fs.mkdirSync(parent, { recursive: true });
@@ -200,6 +212,8 @@ function usage(): string {
     "  --project-root PATH explicit project base (otherwise nearest source config)",
     "  --draft             allow missing keys; deterministic keys are generated",
     "                      and a warning is printed per generated key",
+    "  --bundle --catalog FILE --build-id R   commit a request-bound build bundle",
+    "                      output must be inside a new directory",
   ].join("\n");
 }
 
@@ -208,6 +222,9 @@ export interface ParsedArgs {
   output?: string;
   projectRoot?: string;
   draft: boolean;
+  bundle?: boolean;
+  catalog?: string;
+  buildId?: string;
 }
 
 export function parseArgs(argv: string[]): { args?: ParsedArgs; error?: string } {
@@ -217,7 +234,14 @@ export function parseArgs(argv: string[]): { args?: ParsedArgs; error?: string }
   const rest = argv.slice(1);
   for (let i = 0; i < rest.length; i++) {
     const arg = rest[i];
-    if (arg === "--draft") {
+    if (arg === "--bundle") {
+      parsed.bundle = true;
+    } else if (arg === "--catalog" || arg === "--build-id" || arg.startsWith("--catalog=") || arg.startsWith("--build-id=")) {
+      const name = arg.split("=")[0];
+      const value = arg.includes("=") ? arg.slice(arg.indexOf("=") + 1) : rest[++i];
+      if (!value?.trim() || value.startsWith("-")) return { error: `${name} requires a value` };
+      if (name === "--catalog") parsed.catalog = value; else parsed.buildId = value;
+    } else if (arg === "--draft") {
       parsed.draft = true;
     } else if (arg === "--project-root") {
       const value = rest[++i];
@@ -246,6 +270,8 @@ export function parseArgs(argv: string[]): { args?: ParsedArgs; error?: string }
     return { error: `missing <entry.tsx>\n${usage()}` };
   if (parsed.output === undefined)
     return { error: `missing -o/--output <out.json>\n${usage()}` };
+  if (parsed.bundle ? !parsed.catalog || !parsed.buildId : parsed.catalog !== undefined || parsed.buildId !== undefined)
+    return { error: "--bundle requires --catalog FILE and --build-id R; catalog/build-id require --bundle" };
   return { args: parsed };
 }
 
@@ -259,6 +285,7 @@ export async function main(argv: string[]): Promise<number> {
     draft: args.draft,
     output: args.output,
     projectRoot: args.projectRoot,
+    bundle: args.bundle, catalog: args.catalog, buildId: args.buildId,
   });
   for (const warning of result.warnings) process.stderr.write(`${warning}\n`);
   for (const message of result.errors) process.stderr.write(`${message}\n`);

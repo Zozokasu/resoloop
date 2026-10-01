@@ -27,6 +27,33 @@ resoloop-jsx build <entry.tsx> -o <out.json> [--draft] [--project-root PATH]
 node dist/src/cli.js build <entry.tsx> -o <out.json> [--draft] [--project-root PATH]
 ```
 
+## Request-bound build bundles (V12)
+
+For a request-bound handoff, generate a fresh ID **before** each build and use a new output directory:
+
+```powershell
+$requestId = [guid]::NewGuid().ToString("N")
+$bundleFile = "build/$requestId/bundle.json"
+node dist/src/cli.js build content/main.tsx --bundle --catalog catalog.json --build-id $requestId -o $bundleFile
+if ($LASTEXITCODE -ne 0) { throw "Build failed; do not consume an earlier bundle" }
+resoloop validate $bundleFile --build-id $requestId --json
+# Run diff/apply only for an authorized live task with a verified, non-synthetic catalog.
+resoloop diff $bundleFile --build-id $requestId --state VERIFIED_STATE --require-state --json
+resoloop apply $bundleFile --build-id $requestId --state VERIFIED_STATE --require-state --json
+```
+
+`--bundle` requires `--catalog FILE` and `--build-id R`; these options are rejected without bundle mode. Existing output files **and directories** are refused. The producer writes one complete JSON envelope to a temporary file in the new output directory, closes it, rechecks inputs and renames it to the final path. Only successful publication returns exit 0. A failed typecheck, emit, evaluation, input check or publication leaves no final bundle for that request; no earlier output is searched or reused. Ordinary builds retain their JSON, exit 0/1/2 and BuildError contracts and require no dotnet.
+
+The envelope fields are `kind: "resoloop-build-bundle"`, `bundleVersion: "1"`, `buildId`, `completion: "committed"`, `buildStages` (`typecheck`, `emit`, `evaluate`, `inputs`), `inputs`, `ir`, `map`, `usedTypes`, `catalog`. Each payload stores its original `text` and the SHA-256 of its UTF-8 bytes. `inputs.status` is `complete`; each file records absolute `path`, raw-byte `sha256`, and `role` (`source` or `catalog`). Every TypeScript Program source file is recorded, including declarations/default libraries, plus the explicit catalog. Static local imports must stay inside the project, except the authoring runtime. Dynamic import/require, Node builtins (`fs`, `node:*`) and external packages other than `resoloop-jsx` runtime stop bundle publication. This is import-graph inspection, **not statement or call-target analysis**: environment variables, time and other implicit inputs cannot be detected and are outside this guarantee.
+
+The map has `version`, `buildId`, `irSha256`, `sources` (path/hash) and `entries` (IR `jsonPath` and `source`). All current locations are explicitly `{ "status": "unknown" }`; no TSX location is inferred. Core validates every payload, completion stages, request, input snapshot, shared IR/catalog semantics and the ordinal sorted set of resolved Component full names. Node identifies types without duplicating the semantic validator.
+
+`validate|diff|plan|apply BUNDLE --build-id R` consume this single snapshot without Node. Detection uses `kind`/`bundleVersion`, not the extension; damaged/unsupported bundles never fall back to ordinary JSON. Bundle input requires the external request ID, while ordinary JSON rejects `--build-id`. Checks run before connection and inputs are checked again after preparation and immediately before the first mutation. `APPLY_BUILD_BUNDLE_INVALID` uses exit 6 and `context.reason` (`requestMismatch`, `uncommitted`, `mixed`, `inputChanged`, `inputUnknown`). Missing/invalid arguments use existing exit 2 codes. Only the embedded catalog is used; omit CLI `--catalog`. Unavailable catalog evidence retains `APPLY_CATALOG_UNAVAILABLE`. Connected commands (`diff`, `plan`, `apply`, `validate --strict`) reject synthetic catalogs and require session/client version matching. Workbench rejects bundles with `BACKEND_UNSUPPORTED`.
+
+Ordinary handwritten/generated JSON still works without bundles, Node, extra warnings or a freshness guarantee. Bundle IR retains schema `"1"`, authoring project/state resolution and explicit `--state`/`--require-state`. Request IDs and completion trust the producer; reused IDs or forged bundles are not authenticated. The gap after the final check, changes after writing starts, world preconditions, locks and response loss remain outside S2-4. Detailed diagnostics and TSX locations are deferred.
+
+## Entry documents
+
 The entry file must `export default` a single `<Slot>` element:
 
 ```tsx
@@ -199,4 +226,4 @@ not a generator target. Expected JSON changes require deliberate review.
 
 After building an IR file, run `resoloop validate FILE.json --catalog CATALOG.json --json`. This is a C# Core check and runs without Node or a Resonite connection. No separate TypeScript member validator is introduced. Catalogs must carry acquisition identity, provenance and an intact content hash; missing/unconfirmed evidence and unknown reference closure fail with `APPLY_CATALOG_UNAVAILABLE`. Proven incompatible references use `APPLY_REFERENCE_TYPE_MISMATCH`; invalid/non-finite/out-of-range Single values use `VALUE_CONVERSION_FAILED`, including nullable non-null values and tuple elements. Rounding is allowed; member-specific ranges are not guessed. Both catalog error codes retain validation exit 6 and the existing issue format. Success keeps `strict: false`; adding `--strict` also requests the existing live validation after catalog preflight and session version comparison.
 
-`test/fixtures/catalog-v11/catalog.synthetic.json` is a fixed **synthetic** original with identity and content hash. `oracle.handwritten.json` independently fixes expected member types, case inputs and diagnostic codes/paths; do not derive or regenerate its expectations from the catalog or generated Apply types. `npm run contract` runs these cases through the actual offline CLI alongside the unchanged existing fixtures. This does not establish real Component/runtime verification. [CatalogExport](../RLoop.CatalogExport/README.md) provides developer-only export/import; legacy reflection caches without acquisition identity are not catalogs. S2-4 may consume only the IR validator entry point, catalog hash and full names of used types; build/catalog delivery, maps and TSX diagnostic locations remain out of scope.
+`test/fixtures/catalog-v11/catalog.synthetic.json` is a fixed **synthetic** original with identity and content hash. `oracle.handwritten.json` independently fixes expected member types, case inputs and diagnostic codes/paths; do not derive or regenerate its expectations from the catalog or generated Apply types. `npm run contract` runs these cases and request-bound bundle handoffs through the actual offline CLI alongside the unchanged existing fixtures. This does not establish real Component/runtime verification. [CatalogExport](../RLoop.CatalogExport/README.md) provides developer-only export/import; legacy reflection caches without acquisition identity are not catalogs. TSX positions and detailed diagnostics remain deferred.

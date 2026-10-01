@@ -25,6 +25,13 @@ public sealed record ApplyDocument(
 
     internal ApplyProjectContext? ResolvedProjectContext { get; init; }
 
+    internal ApplyBuildBundle? BuildBundle { get; init; }
+
+    public ApplyCatalog? GetBundleCatalog() => BuildBundle?.Catalog;
+
+    public void VerifyBundleSession(SessionInfo session, string clientPackageVersion) =>
+        BuildBundle?.VerifySession(session, clientPackageVersion);
+
     internal ApplyProjectContext ProjectContext => ResolvedProjectContext is { } context &&
         context.Authoring == Authoring && context.SourcePath == SourcePath ? context : ApplyProjectContext.Resolve(this);
     internal string ResourceDirectory => Authoring is null
@@ -33,27 +40,42 @@ public sealed record ApplyDocument(
 
     public string ResolveStatePath(string? explicitPath = null) => ApplyStateStore.ResolvePath(this, explicitPath);
 
-    public static ApplyDocument Load(string path)
+    public static ApplyDocument Load(string path, string? buildId = null) => LoadInput(path, buildId, false)!;
+
+    public static ApplyDocument? LoadBundleIfPresent(string path, string? buildId = null) => LoadInput(path, buildId, true);
+
+    private static ApplyDocument? LoadInput(string path, string? buildId, bool bundleOnly)
     {
+        if (bundleOnly && buildId is null && !File.Exists(path)) return null;
         if (!File.Exists(path))
+        {
+            if (buildId is not null) ApplyBuildBundle.Fail("uncommitted", $"No committed bundle exists at '{path}'.");
             throw new RLoopException("APPLY_FILE_NOT_FOUND", $"Apply file '{path}' does not exist.", ExitCodes.NotFound);
-        if (!Path.GetExtension(path).Equals(".json", StringComparison.OrdinalIgnoreCase))
-            throw new RLoopException("APPLY_FORMAT_UNSUPPORTED", "Apply documents must use JSON.", ExitCodes.ValidationFailed);
+        }
+        ApplyBuildBundle? bundle = null;
         try
         {
             var fullPath = Path.GetFullPath(path);
-            var expanded = ApplyDocumentCompiler.Compile(fullPath);
+            bundle = ApplyBuildBundle.Read(fullPath, buildId);
+            if (bundleOnly && bundle is null) return null;
+            if (bundle is null && !Path.GetExtension(path).Equals(".json", StringComparison.OrdinalIgnoreCase))
+                throw new RLoopException("APPLY_FORMAT_UNSUPPORTED", "Apply documents must use JSON.", ExitCodes.ValidationFailed);
+            var expanded = bundle is null ? ApplyDocumentCompiler.Compile(fullPath) : ApplyDocumentCompiler.CompileBundleIr(bundle.Ir);
             ApplyProjectContext.ValidateJson(expanded.Json);
             var document = (JsonSerializer.Deserialize<ApplyDocument>(expanded.Json, JsonOptions)
                     ?? throw new JsonException("Document was empty.")) with
             {
                 SourcePath = fullPath,
-                Compilation = expanded.Summary
+                Compilation = expanded.Summary,
+                BuildBundle = bundle
             };
-            return document.Authoring is null ? document : document with { ResolvedProjectContext = ApplyProjectContext.Resolve(document) };
+            document = document.Authoring is null ? document : document with { ResolvedProjectContext = ApplyProjectContext.Resolve(document) };
+            bundle?.ValidateDocument(document);
+            return document;
         }
         catch (JsonException ex)
         {
+            if (bundle is not null) ApplyBuildBundle.Fail("mixed", "Invalid embedded IR: " + ex.Message);
             var unknown = Regex.Match(ex.Message, @"property '([^']+)'", RegexOptions.IgnoreCase).Groups[1].Value;
             var suggestions = AuthoringSchema.ErrorHints(ex.Path, unknown) ?? UnknownPropertySuggestions(unknown, ex.Path);
             throw new RLoopException("APPLY_DOCUMENT_INVALID", $"Invalid apply document: {ex.Message}",

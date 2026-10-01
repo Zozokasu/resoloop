@@ -77,6 +77,9 @@ public sealed class ParsedArguments
             var name = equals >= 0 ? body[..equals] : body;
             string value;
             if (equals >= 0) value = body[(equals + 1)..];
+            else if (name.Equals("build-id", StringComparison.OrdinalIgnoreCase) &&
+                     (i + 1 >= args.Count || args[i + 1].StartsWith("--", StringComparison.Ordinal)))
+                value = "";
             else if (!BooleanOptions.Contains(name) && i + 1 < args.Count && !args[i + 1].StartsWith("--", StringComparison.Ordinal)) value = args[++i];
             else value = "true";
             if (!options.TryGetValue(name, out var values)) options[name] = values = [];
