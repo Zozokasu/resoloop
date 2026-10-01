@@ -166,6 +166,11 @@ export async function buildFile(
       };
     }
 
+    if (mod?.default && typeof mod.default === "object" &&
+        Object.prototype.hasOwnProperty.call(mod.default, "default") &&
+        Object.prototype.hasOwnProperty.call(mod.default, "ownership"))
+      throw new BuildError("ROOT_MUST_BE_SINGLE_SLOT", 'The default export is wrapped in a module object; project の package.json に "type": "module" が必要');
+
     const { document, warnings: draftWarnings } = evaluate(mod?.default, {
       draft: opts.draft === true,
       ...(Object.prototype.hasOwnProperty.call(mod, "ownership") ? { ownership: mod.ownership } : {}),
