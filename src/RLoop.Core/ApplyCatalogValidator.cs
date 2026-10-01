@@ -7,13 +7,21 @@ public static class ApplyCatalogValidator
 {
     public static async Task<ApplyValidationResult> ValidateFileAsync(ApplyDocument document, string catalogFile,
         CancellationToken cancellationToken = default)
+        => (await ValidateFileSnapshotAsync(document, catalogFile, cancellationToken)).Result;
+
+    internal static async Task<(ApplyValidationResult Result, ApplyCatalog? Catalog)> ValidateFileSnapshotAsync(
+        ApplyDocument document, string catalogFile, CancellationToken cancellationToken)
     {
-        try { return await ApplyDocumentValidator.ValidateAsync(document, cancellationToken: cancellationToken, catalog: ApplyCatalog.Load(catalogFile)); }
+        try
+        {
+            var catalog = ApplyCatalog.Load(catalogFile);
+            return (await ApplyDocumentValidator.ValidateAsync(document, cancellationToken: cancellationToken, catalog: catalog), catalog);
+        }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException or NotSupportedException or ArgumentException)
         {
             var baseline = await ApplyDocumentValidator.ValidateAsync(document, cancellationToken: cancellationToken);
-            return ApplyDiagnostics.Complete(document, baseline with { Valid = false, Issues = baseline.Issues.Concat(UnavailableIssues(document,
-                $"Cannot read catalog '{catalogFile}': {ex.Message}")).ToArray() });
+            return (ApplyDiagnostics.Complete(document, baseline with { Valid = false, Issues = baseline.Issues.Concat(UnavailableIssues(document,
+                $"Cannot read catalog '{catalogFile}': {ex.Message}")).ToArray() }), null);
         }
     }
 

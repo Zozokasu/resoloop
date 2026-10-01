@@ -7,6 +7,52 @@ import { buildFile } from "../src/cli.js";
 import { checkSourceOracle } from "./source-oracle.js";
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 
+for (const mutation of ["scalar", "nested", "none"]) test(`forwarded props snapshot: ${mutation}`, async () => {
+  const root = fs.mkdtempSync(path.join(packageRoot, ".s2-fix-forward-"));
+  try {
+    const entry = path.join(root, "main.tsx"), output = path.join(root, "R1/bundle.json");
+    const change = mutation === "scalar" ? 'props.target = ref.component("missing");'
+      : mutation === "nested" ? 'props.fields.Target = ref.component("missing"); props.fields.Embedded.Amount = 2;' : "";
+    const text = `import { Slot, Component, ref } from "resoloop-jsx";
+function Pass(props: { target: string; fields: { Target: string; Embedded: { Amount: number } } }) {
+  ${change}
+  return <>
+    <Component key="scalar" type="Synthetic.Holder" fields={{ Target: props.target }} />
+    <Component key="nested" type="Synthetic.Holder" fields={props.fields} />
+  </>;
+}
+export default <Slot key="root" name="Forward">
+  <Pass
+    target={ref.component("base")}
+    fields={{ Target: ref.component("base"), Embedded: { Amount: 1 } }}
+  />
+</Slot>;
+`;
+    fs.writeFileSync(entry, text);
+    const result = await buildFile(entry, { bundle: true, catalog: path.join(packageRoot, "test/fixtures/catalog-v11/catalog.synthetic.json"), buildId: "R1", output });
+    equal(result.exitCode, 0, result.errors.join("\n"));
+    const entries = JSON.parse(JSON.parse(fs.readFileSync(output)).map.text).entries;
+    const scalar = entries.find((e: any) => e.jsonPath === '$.components[0].fields["Target"]');
+    const nested = entries.find((e: any) => e.jsonPath === '$.components[1].fields["Target"]');
+    const amount = entries.find((e: any) => e.jsonPath === '$.components[1].fields["Embedded"]["Amount"]');
+    equal(scalar.valueSource.status, mutation === "scalar" ? "unknown" : "known");
+    equal(nested.valueSource.status, mutation === "nested" ? "unknown" : "known");
+    equal(amount.valueSource.status, mutation === "nested" ? "unknown" : "known");
+    if (mutation === "scalar") deepEqual(scalar.valueSource, { status: "unknown" });
+    if (mutation === "nested") {
+      deepEqual(nested.valueSource, { status: "unknown" }); deepEqual(amount.valueSource, { status: "unknown" });
+    }
+    if (mutation === "none") {
+      // Handwritten original-source expectations, independent of map output.
+      const point = (line: number, column: number) => ({ line, column,
+        offset: text.split("\n").slice(0, line - 1).reduce((n, s) => n + s.length + 1, 0) + column - 1 });
+      deepEqual(scalar.valueSource.range, { start: point(11, 13), end: point(11, 34) });
+      deepEqual(nested.valueSource.range, { start: point(12, 23), end: point(12, 44) });
+      deepEqual(amount.valueSource.range, { start: point(12, 66), end: point(12, 67) });
+    }
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
 test("V11_SourceOracle: function props scope fragment map conditional fields and initialFields", async () => {
   const root = fs.mkdtempSync(path.join(packageRoot, ".s2-5-map-"));
   try {
