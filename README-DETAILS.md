@@ -491,3 +491,11 @@ strict validationはadapterの書込み変換を実行し、Nullable enumを含�
 ## License and upstream notes
 
 ResoniteLinkはMIT、Flux-SDK programmatic integrationはAGPL-3.0-or-laterです。この構成はFlux-SDKへリンクするため、resoloopの配布条件もAGPL-3.0-or-laterとしています。公開インターフェースを中心に実装し、非公開Resoniteソースやデコンパイル結果を同梱していません。
+
+## 識別情報付き catalog と共通 IR 検証
+
+`resoloop validate FILE.json --catalog CATALOG.json --json` は Core の `ApplyDocumentValidator.ValidateAsync(..., catalog: ...)`／`ApplyCatalogValidator.ValidateFileAsync` に接続します。SDK 型は adapter の取得 snapshot／mapper 内に留まり、Apply JSON と `schema describe` には metadata を追加しません。catalog format/mapper は `1`。identity は Resonite version、server ResoniteLink version、client package version、mapper version、取得日時で、取得時の `evidenceIdentity` と一致が必要です。内容は canonical JSON の SHA-256 `contentHash` で照合します。出典は `live`、照合済み `version-cache`、失敗になる `unverified`。合成資料には `synthetic: true` を明示します。hash は取得の証明ではなく改変検出です。offline は保存済み identity の整合だけを確認し、現在の runtime version は確認しません。
+
+Component/member の取得範囲、完全名と確認済み alias、base/interface 閉包、generic の確認状態、nullable／tuple の要素、list／array／dictionary と SyncObject の入れ子を保持します。取得範囲外 member は不存在にしません。型名が違うだけでは参照不適合と判定せず、未取得の基底型・interface、未確認 generic、外部参照・asset・Slot member の型不明は `APPLY_CATALOG_UNAVAILABLE`。確認済み閉包で証明できた不適合だけが `APPLY_REFERENCE_TYPE_MISMATCH` です。Single は nullable の非 null 値と tuple 各要素を含め `VALUE_CONVERSION_FAILED` で変換失敗・NaN／Infinity・表現範囲外を拒否します。丸めや精度損失は許容し、member 固有範囲は推測しません。既存 issues／`ApplyValidationResult`／終了コード 6 を使います。
+
+catalog 成功だけでは `Strict=true` にしません。`--catalog --strict` は先に offline catalog preflight、次に既存 live strict と session/client version 照合を行います。Workbench backend の対応は追加しません。通常 CLI に生成コマンドは追加せず、[開発用 tool](tools/RLoop.CatalogExport/README.md) で snapshot の export と catalog import を行います。旧 cache は取得 identity がなく受け入れません。catalog 未指定の既存経路は維持します。V11 の fixture は合成で、実 catalog・live capture の検証は別途必要です。

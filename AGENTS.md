@@ -48,3 +48,5 @@ dotnet test tests/RLoop.IntegrationTests/RLoop.IntegrationTests.csproj --filter 
 Maintain offline tests for argument parsing, configuration precedence, model mapping, serialization, value conversion, and error codes. Any live test must be opt-in and sandboxed.
 
 When CLI behavior changes, update README examples and affected skills/codex/*/SKILL.md. Skills are workflows, not command mirrors: preserve Reflection-first behavior, bounded observation, exact-target destructive safety, and post-change inspection.
+
+Apply shape declarations are the source for generated TypeScript types, scalar lists, copy functions, and C# property candidates. When adding a copied field, update the record and any exceptional shape attributes, an independent handwritten output fixture, README guidance, and affected workflow skills; regenerate once with `dotnet run --project tools/RLoop.ContractGen -- tools/resoloop-jsx/src/generated`. Do not edit generated files or generate expected fixtures. Behavior-changing fields also require C# execution changes and behavior tests. Ordinary npm tests/builds must continue to work without dotnet.

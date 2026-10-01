@@ -1,0 +1,299 @@
+{
+  "formatVersion": "1",
+  "identity": {
+    "resoniteVersion": "SYNTHETIC-engine-1",
+    "resoniteLinkVersion": "SYNTHETIC-server-1",
+    "clientPackageVersion": "0.13.1",
+    "mapperVersion": "1",
+    "retrievedAt": "2026-10-01T00:00:00+00:00"
+  },
+  "evidenceIdentity": {
+    "resoniteVersion": "SYNTHETIC-engine-1",
+    "resoniteLinkVersion": "SYNTHETIC-server-1",
+    "clientPackageVersion": "0.13.1",
+    "mapperVersion": "1",
+    "retrievedAt": "2026-10-01T00:00:00+00:00"
+  },
+  "source": "live",
+  "synthetic": true,
+  "contentHash": "60eca209e09e4eb9707232b7966d0812d4c9c079133bdb11ffcfa2e8cb7b6446",
+  "content": {
+    "types": [
+      {
+        "fullName": "System.Single",
+        "confirmed": true,
+        "closureComplete": true,
+        "baseType": null,
+        "interfaces": [],
+        "isGeneric": false,
+        "members": null,
+        "membersComplete": false,
+        "representation": "single",
+        "elementType": null,
+        "tupleSize": 0,
+        "enumValues": null,
+        "isFlags": null
+      },
+      {
+        "fullName": "System.String",
+        "confirmed": true,
+        "closureComplete": true,
+        "baseType": null,
+        "interfaces": [],
+        "isGeneric": false,
+        "members": null,
+        "membersComplete": false,
+        "representation": "other",
+        "elementType": null,
+        "tupleSize": 0,
+        "enumValues": null,
+        "isFlags": null
+      },
+      {
+        "fullName": "Synthetic.OptionalSingle",
+        "confirmed": true,
+        "closureComplete": true,
+        "baseType": null,
+        "interfaces": [],
+        "isGeneric": false,
+        "members": null,
+        "membersComplete": false,
+        "representation": "nullable",
+        "elementType": "System.Single",
+        "tupleSize": 0,
+        "enumValues": null,
+        "isFlags": null
+      },
+      {
+        "fullName": "Synthetic.Float3",
+        "confirmed": true,
+        "closureComplete": true,
+        "baseType": null,
+        "interfaces": [],
+        "isGeneric": false,
+        "members": null,
+        "membersComplete": false,
+        "representation": "tuple",
+        "elementType": "System.Single",
+        "tupleSize": 3,
+        "enumValues": null,
+        "isFlags": null
+      },
+      {
+        "fullName": "Synthetic.Base",
+        "confirmed": true,
+        "closureComplete": true,
+        "baseType": null,
+        "interfaces": [],
+        "isGeneric": false,
+        "members": {},
+        "membersComplete": true,
+        "representation": "other",
+        "elementType": null,
+        "tupleSize": 0,
+        "enumValues": null,
+        "isFlags": null
+      },
+      {
+        "fullName": "Synthetic.Derived",
+        "confirmed": true,
+        "closureComplete": true,
+        "baseType": "Synthetic.Base",
+        "interfaces": [],
+        "isGeneric": false,
+        "members": {},
+        "membersComplete": true,
+        "representation": "other",
+        "elementType": null,
+        "tupleSize": 0,
+        "enumValues": null,
+        "isFlags": null
+      },
+      {
+        "fullName": "Synthetic.Other",
+        "confirmed": true,
+        "closureComplete": true,
+        "baseType": null,
+        "interfaces": [],
+        "isGeneric": false,
+        "members": {},
+        "membersComplete": true,
+        "representation": "other",
+        "elementType": null,
+        "tupleSize": 0,
+        "enumValues": null,
+        "isFlags": null
+      },
+      {
+        "fullName": "Synthetic.Broken",
+        "confirmed": true,
+        "closureComplete": true,
+        "baseType": "Synthetic.Unacquired",
+        "interfaces": [],
+        "isGeneric": false,
+        "members": {},
+        "membersComplete": true,
+        "representation": "other",
+        "elementType": null,
+        "tupleSize": 0,
+        "enumValues": null,
+        "isFlags": null
+      },
+      {
+        "fullName": "Synthetic.Generic",
+        "confirmed": true,
+        "closureComplete": true,
+        "baseType": null,
+        "interfaces": [],
+        "isGeneric": true,
+        "members": {},
+        "membersComplete": true,
+        "representation": "other",
+        "elementType": null,
+        "tupleSize": 0,
+        "enumValues": null,
+        "isFlags": null
+      },
+      {
+        "fullName": "Synthetic.Embedded",
+        "confirmed": true,
+        "closureComplete": true,
+        "baseType": null,
+        "interfaces": [],
+        "isGeneric": false,
+        "members": {
+          "Amount": {
+            "kind": "field",
+            "memberType": null,
+            "valueType": "System.Single",
+            "targetType": null,
+            "element": null,
+            "keyType": null,
+            "confirmed": true
+          }
+        },
+        "membersComplete": true,
+        "representation": "other",
+        "elementType": null,
+        "tupleSize": 0,
+        "enumValues": null,
+        "isFlags": null
+      },
+      {
+        "fullName": "Synthetic.Holder",
+        "confirmed": true,
+        "closureComplete": true,
+        "baseType": null,
+        "interfaces": [],
+        "isGeneric": false,
+        "members": {
+          "Amount": {
+            "kind": "field",
+            "memberType": null,
+            "valueType": "System.Single",
+            "targetType": null,
+            "element": null,
+            "keyType": null,
+            "confirmed": true
+          },
+          "Optional": {
+            "kind": "field",
+            "memberType": null,
+            "valueType": "Synthetic.OptionalSingle",
+            "targetType": null,
+            "element": null,
+            "keyType": null,
+            "confirmed": true
+          },
+          "Vector": {
+            "kind": "field",
+            "memberType": null,
+            "valueType": "Synthetic.Float3",
+            "targetType": null,
+            "element": null,
+            "keyType": null,
+            "confirmed": true
+          },
+          "Target": {
+            "kind": "reference",
+            "memberType": null,
+            "valueType": null,
+            "targetType": "Synthetic.Base",
+            "element": null,
+            "keyType": null,
+            "confirmed": true
+          },
+          "Values": {
+            "kind": "list",
+            "memberType": null,
+            "valueType": null,
+            "targetType": null,
+            "element": {
+              "kind": "field",
+              "memberType": null,
+              "valueType": "System.Single",
+              "targetType": null,
+              "element": null,
+              "keyType": null,
+              "confirmed": true
+            },
+            "keyType": null,
+            "confirmed": true
+          },
+          "Array": {
+            "kind": "array",
+            "memberType": null,
+            "valueType": null,
+            "targetType": null,
+            "element": {
+              "kind": "field",
+              "memberType": null,
+              "valueType": "System.Single",
+              "targetType": null,
+              "element": null,
+              "keyType": null,
+              "confirmed": true
+            },
+            "keyType": null,
+            "confirmed": true
+          },
+          "Targets": {
+            "kind": "dictionary",
+            "memberType": null,
+            "valueType": null,
+            "targetType": null,
+            "element": {
+              "kind": "reference",
+              "memberType": null,
+              "valueType": null,
+              "targetType": "Synthetic.Base",
+              "element": null,
+              "keyType": null,
+              "confirmed": true
+            },
+            "keyType": "System.String",
+            "confirmed": true
+          },
+          "Embedded": {
+            "kind": "syncObject",
+            "memberType": "Synthetic.Embedded",
+            "valueType": null,
+            "targetType": null,
+            "element": null,
+            "keyType": null,
+            "confirmed": true
+          }
+        },
+        "membersComplete": true,
+        "representation": "other",
+        "elementType": null,
+        "tupleSize": 0,
+        "enumValues": null,
+        "isFlags": null
+      }
+    ],
+    "aliases": {
+      "confirmed-holder": "Synthetic.Holder"
+    }
+  }
+}
