@@ -16,11 +16,15 @@ public sealed record CatalogType(string FullName, bool Confirmed, bool ClosureCo
     string Representation = "other", string? ElementType = null, int TupleSize = 0,
     IReadOnlyDictionary<string, long>? EnumValues = null, bool? IsFlags = null);
 public sealed record CatalogContent(IReadOnlyList<CatalogType> Types,
-    IReadOnlyDictionary<string, string> Aliases);
+    IReadOnlyDictionary<string, string> Aliases,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    IReadOnlyList<CatalogAcquisitionFailure>? AcquisitionFailures = null);
+public sealed record CatalogAcquisitionFailure(string Type, string Request, string Reason);
 public sealed record ApplyCatalog(string FormatVersion, CatalogIdentity? Identity,
     CatalogIdentity? EvidenceIdentity, string Source, bool Synthetic, string ContentHash, CatalogContent Content)
 {
-    public const string CurrentMapperVersion = "1";
+    public const string CurrentMapperVersion = "2";
+    public const string CurrentFormatVersion = "2";
     public static readonly JsonSerializerOptions Json = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
@@ -53,7 +57,9 @@ public sealed record ApplyCatalog(string FormatVersion, CatalogIdentity? Identit
 
     public string? UnavailableReason(CatalogIdentity? expectedIdentity = null)
     {
-        if (FormatVersion != "1" || Identity is null || EvidenceIdentity is null)
+        // Format 1 remains readable for existing mapper-2 fixtures without acquisition diagnostics.
+        if (FormatVersion is not ("1" or CurrentFormatVersion) ||
+            FormatVersion == "1" && Content?.AcquisitionFailures is not null || Identity is null || EvidenceIdentity is null)
             return "Catalog format or acquisition identity is missing/unsupported.";
         if (new[] { Identity.ResoniteVersion, Identity.ResoniteLinkVersion, Identity.ClientPackageVersion,
             Identity.MapperVersion }.Any(string.IsNullOrWhiteSpace) || Identity.RetrievedAt == default)
@@ -67,6 +73,9 @@ public sealed record ApplyCatalog(string FormatVersion, CatalogIdentity? Identit
             Content.Types.Select(t => t.FullName).Distinct(StringComparer.Ordinal).Count() != Content.Types.Count)
             return "Catalog type definitions are malformed or ambiguous.";
         if (ContentHash != Hash(Content)) return "Catalog content hash does not match.";
+        if (Content.AcquisitionFailures?.Any(f => f is null || string.IsNullOrWhiteSpace(f.Type) ||
+            string.IsNullOrWhiteSpace(f.Request) || string.IsNullOrWhiteSpace(f.Reason)) == true)
+            return "Catalog acquisition failures are malformed.";
         if (Content.Aliases.Any(a => string.IsNullOrWhiteSpace(a.Key) || !Content.Types.Any(t => t.FullName == a.Value) ||
             Content.Types.Any(t => t.FullName == a.Key && t.FullName != a.Value)))
             return "Catalog aliases are unresolved or ambiguous.";

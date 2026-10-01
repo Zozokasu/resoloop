@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using RLoop.Core;
 using Link = ResoniteLink;
 
@@ -8,7 +9,9 @@ namespace RLoop.ResoniteLink;
 
 public sealed record CatalogSnapshotContent(IReadOnlyList<Link.ComponentDefinition> Components,
     IReadOnlyList<Link.TypeDefinition> Types, IReadOnlyList<Link.SyncObjectDefinition> SyncObjects,
-    IReadOnlyDictionary<string, string> Aliases, IReadOnlyDictionary<string, CatalogEnum>? Enums = null);
+    IReadOnlyDictionary<string, string> Aliases, IReadOnlyDictionary<string, CatalogEnum>? Enums = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    IReadOnlyList<CatalogAcquisitionFailure>? AcquisitionFailures = null);
 public sealed record CatalogEnum(IReadOnlyDictionary<string, long> Values, bool IsFlags);
 public sealed record CatalogSnapshot(CatalogIdentity? Identity, CatalogIdentity? EvidenceIdentity,
     string Source, bool Synthetic, string ContentHash, CatalogSnapshotContent Content);
@@ -29,12 +32,40 @@ public static class CatalogMapper
             throw new RLoopException("APPLY_CATALOG_UNAVAILABLE", "Snapshot acquisition identity or content hash is missing/mismatched.", ExitCodes.ValidationFailed);
         var types = new Dictionary<string, CatalogType>(StringComparer.Ordinal);
         foreach (var type in snapshot.Content.Types) types[type.FullTypeName] = MapType(type);
+        var independent = new Dictionary<string, CatalogType>(types, StringComparer.Ordinal);
+        var independentDefinitions = snapshot.Content.Types.GroupBy(t => t.FullTypeName, StringComparer.Ordinal)
+            .ToDictionary(g => g.Key, g => g.Last(), StringComparer.Ordinal);
+        void AddMembers(Link.TypeDefinition definition, bool baseExpected, Dictionary<string, Link.MemberDefinition> members)
+        {
+            var embedded = MapType(definition);
+            var acquired = independent.GetValueOrDefault(definition.FullTypeName);
+            var acquiredDefinition = independentDefinitions.GetValueOrDefault(definition.FullTypeName);
+            var mapped = acquired ?? embedded with { ClosureComplete = false };
+            var agrees = acquired is not null && acquired.BaseType == embedded.BaseType &&
+                acquired.Interfaces.Order(StringComparer.Ordinal).SequenceEqual(embedded.Interfaces.Order(StringComparer.Ordinal)) &&
+                acquired.IsGeneric == embedded.IsGeneric && acquiredDefinition!.IsInterface == definition.IsInterface &&
+                acquiredDefinition.IsGenericTypeDefinition == definition.IsGenericTypeDefinition &&
+                acquiredDefinition.IsComponent == definition.IsComponent && acquiredDefinition.IsSyncObject == definition.IsSyncObject;
+            types[definition.FullTypeName] = mapped with
+            {
+                ClosureComplete = mapped.ClosureComplete && agrees && (!baseExpected || mapped.BaseType is not null),
+                Members = members.ToDictionary(p => p.Key, p => MapMember(p.Value, types), StringComparer.Ordinal),
+                MembersComplete = true
+            };
+        }
         foreach (var component in snapshot.Content.Components)
-            types[component.Type.FullTypeName] = MapType(component.Type) with
-            { Members = component.Members.ToDictionary(p => p.Key, p => MapMember(p.Value, types), StringComparer.Ordinal), MembersComplete = true };
+            AddMembers(component.Type, component.BaseTypeIsComponent, component.Members);
         foreach (var sync in snapshot.Content.SyncObjects)
-            types[sync.Type.FullTypeName] = MapType(sync.Type) with
-            { Members = sync.Members.ToDictionary(p => p.Key, p => MapMember(p.Value, types), StringComparer.Ordinal), MembersComplete = true };
+            AddMembers(sync.Type, sync.BaseTypeIsSyncObject, sync.Members);
+        foreach (var failure in snapshot.Content.AcquisitionFailures ?? [])
+        {
+            var name = snapshot.Content.Aliases.GetValueOrDefault(failure.Type) ?? failure.Type;
+            if (types.TryGetValue(name, out var type)) types[name] = type with
+            {
+                ClosureComplete = failure.Request == "type" ? false : type.ClosureComplete,
+                MembersComplete = failure.Request is "component" or "syncObject" ? false : type.MembersComplete
+            };
+        }
         foreach (var item in snapshot.Content.Enums ?? new Dictionary<string, CatalogEnum>())
             if (types.TryGetValue(item.Key, out var type)) types[item.Key] = type with { EnumValues = item.Value.Values, IsFlags = item.Value.IsFlags };
         foreach (var alias in snapshot.Content.Aliases)
@@ -45,15 +76,19 @@ public static class CatalogMapper
                 { Representation = wireType.Representation, ElementType = wireType.ElementType, TupleSize = wireType.TupleSize };
                 types.Remove(alias.Key);
             }
-        var content = new CatalogContent(types.Values.OrderBy(t => t.FullName, StringComparer.Ordinal).ToArray(), snapshot.Content.Aliases);
-        var catalog = new ApplyCatalog("1", snapshot.Identity, snapshot.EvidenceIdentity, snapshot.Source, snapshot.Synthetic, ApplyCatalog.Hash(content), content);
+        var content = new CatalogContent(types.Values.OrderBy(t => t.FullName, StringComparer.Ordinal).ToArray(), snapshot.Content.Aliases,
+            snapshot.Content.AcquisitionFailures);
+        var catalog = new ApplyCatalog(ApplyCatalog.CurrentFormatVersion, snapshot.Identity, snapshot.EvidenceIdentity, snapshot.Source, snapshot.Synthetic, ApplyCatalog.Hash(content), content);
         if (catalog.UnavailableReason() is { } reason)
             throw new RLoopException("APPLY_CATALOG_UNAVAILABLE", reason, ExitCodes.ValidationFailed);
         return catalog;
     }
 
     private static CatalogType MapType(Link.TypeDefinition type) => new(type.FullTypeName, true,
-        type.Interfaces is not null, ModelMapper.Render(type.BaseType), (type.Interfaces ?? []).Select(ModelMapper.Render).Cast<string>().ToArray(),
+        type.Interfaces is not null && (type.IsInterface || type.BaseType is not null ||
+            type.FullTypeName is "[mscorlib]System.Object" or "[System.Private.CoreLib]System.Object" or "System.Object") &&
+            !(type.BaseType?.IsGenericParameter ?? false) && !(type.Interfaces?.Any(p => p.IsGenericParameter) ?? true),
+        ModelMapper.Render(type.BaseType), (type.Interfaces ?? []).Select(ModelMapper.Render).Cast<string>().ToArray(),
         type.IsGenericType, Representation: type.IsEnum ? "enum" :
             type.FullTypeName is "System.Single" or "[mscorlib]System.Single" or "[System.Private.CoreLib]System.Single" ? "single" :
             type.IsValueType || type.IsEnginePrimitive ? "unknown" : "other");
