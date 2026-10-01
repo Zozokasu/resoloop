@@ -1570,6 +1570,7 @@ public sealed partial class ApplyWorkflowTests : IDisposable
         public Task SetComponentMembersAsync(string componentId, string componentType,
             IReadOnlyDictionary<string, string> fields, CancellationToken cancellationToken = default)
         {
+            Mutations.Add("set-members:" + componentId + ":" + string.Join(',', fields.Keys));
             cancellationToken.ThrowIfCancellationRequested();
             Write();
             BatchUpdates++;

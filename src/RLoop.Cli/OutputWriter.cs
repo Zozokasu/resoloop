@@ -10,7 +10,38 @@ public sealed class OutputWriter(bool json, bool brief = false) : IDisposable
     private static readonly JsonSerializerOptions Indented = CreateOptions(true);
 
     private StreamWriter? report;
+    private ApplyDiagnosticReport diagnosticReport = new("1", []);
+    private string diagnosticPhase = "validate";
+    private string? diagnosticBuildId;
+    private string? diagnosticsPath;
+    private bool showApplyDiagnostics;
     public string? ReportPath { get; private set; }
+
+    public void ConfigureDiagnostics(string? path, string phase, string? buildId)
+    {
+        diagnosticsPath = path;
+        showApplyDiagnostics = true;
+        diagnosticPhase = phase;
+        diagnosticBuildId = buildId;
+    }
+
+    public void SetDiagnostics(IReadOnlyList<ApplyDiagnostic> diagnostics) => diagnosticReport = new("1",
+        diagnostics.Select(d => d with { Phase = diagnosticPhase }).ToArray());
+
+    // Auxiliary output never changes validation/mutation judgement or exit status.
+    // CreateNew prevents diagnostics from overwriting IR, source, catalog or state.
+    public void WriteDiagnostics()
+    {
+        if (diagnosticsPath is null) return;
+        try
+        {
+            using var stream = new FileStream(Path.GetFullPath(diagnosticsPath), FileMode.CreateNew, FileAccess.Write, FileShare.Read);
+            JsonSerializer.Serialize(stream, diagnosticReport, new JsonSerializerOptions
+            { PropertyNamingPolicy = JsonNamingPolicy.CamelCase, WriteIndented = true });
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+        { Console.Error.WriteLine($"diagnostics write failed ({diagnosticsPath}): {ex.Message}; command judgement and exit code are unchanged."); }
+    }
 
     // Reserve before connecting or mutating. Never overwrite a manifest/checkpoint by accident.
     public void OpenReport(string path)
@@ -31,6 +62,7 @@ public sealed class OutputWriter(bool json, bool brief = false) : IDisposable
 
     public void Success(object? data, Action<TextWriter>? human = null, object? briefData = null)
     {
+        if (data is ApplyValidationResult validation) SetDiagnostics(ApplyDiagnostics.ForResult(validation).Diagnostics);
         WriteReport(new { ok = true, data });
         var visible = brief ? briefData ?? BriefOutput.Project(data) : data;
         if (json || brief || ReportPath is not null)
@@ -44,6 +76,7 @@ public sealed class OutputWriter(bool json, bool brief = false) : IDisposable
 
     public void Error(RLoopException error)
     {
+        diagnosticReport = ApplyDiagnostics.ForException(error, diagnosticPhase, diagnosticBuildId);
         var payload = new
         {
             ok = false,
@@ -65,6 +98,12 @@ public sealed class OutputWriter(bool json, bool brief = false) : IDisposable
         else
         {
             Console.Error.WriteLine($"{error.Code}: {error.Message}");
+            foreach (var diagnostic in showApplyDiagnostics ? diagnosticReport.Diagnostics : [])
+            {
+                var source = diagnostic.Source;
+                var location = source.Status == "known" ? $"{source.File}:{source.Range!.Start.Line}:{source.Range.Start.Column}" : "unknown";
+                Console.Error.WriteLine($"  {diagnostic.Code}: TSX {location}; IR {diagnostic.JsonPath ?? "unknown"}: {diagnostic.Message}");
+            }
             foreach (var suggestion in error.Suggestions) Console.Error.WriteLine($"  next: {suggestion}");
         }
     }

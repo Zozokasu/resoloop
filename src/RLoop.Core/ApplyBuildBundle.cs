@@ -8,6 +8,11 @@ namespace RLoop.Core;
 // Transport context is deliberately outside the Apply shape and state contracts.
 internal sealed class ApplyBuildBundle
 {
+    internal sealed record MapEntry(string JsonPath, IReadOnlyList<object>? PathSegments, string? EntityKind,
+        string? Key, string? Member, ApplyDiagnosticSource Source, ApplyDiagnosticSource ValueSource,
+        IReadOnlyList<ApplyDiagnosticSource> Related);
+    private readonly List<MapEntry> entries = [];
+    internal string BuildId { get; private set; } = "";
     private sealed record Input(string Path, string Sha256, string Role);
     private readonly List<Input> inputs = [];
     private string[] usedTypes = [];
@@ -54,7 +59,7 @@ internal sealed class ApplyBuildBundle
                 var stages = root.GetProperty("buildStages");
                 foreach (var stage in new[] { "typecheck", "emit", "evaluate", "inputs" })
                     if (String(stages, stage) != "passed") Fail("uncommitted", $"Build stage '{stage}' did not pass.");
-                var bundle = new ApplyBuildBundle();
+                var bundle = new ApplyBuildBundle { BuildId = request };
                 bundle.Ir = Payload(root, "ir");
                 var mapText = Payload(root, "map");
                 var catalogText = Payload(root, "catalog");
@@ -96,11 +101,97 @@ internal sealed class ApplyBuildBundle
                 if (bundle.usedTypes.Any(string.IsNullOrWhiteSpace) || !bundle.usedTypes.SequenceEqual(bundle.usedTypes.Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal)))
                     Fail("mixed", "Used types must be an ordinal sorted set.");
                 bundle.VerifyInputs();
+                foreach (var entry in map.RootElement.GetProperty("entries").EnumerateArray())
+                    bundle.ReadEntry(entry);
                 return bundle;
             }
             catch (Exception ex) when (ex is JsonException or InvalidOperationException or KeyNotFoundException or ArgumentException or NotSupportedException)
             { Fail("uncommitted", "Build bundle is missing or has invalid required payloads: " + ex.Message); return null; }
         }
+    }
+
+    internal MapEntry? FindEntry(IReadOnlyList<object> path, string? kind, string? key, string? member)
+    {
+        var matches = entries.Where(e => e.PathSegments is not null && e.PathSegments.SequenceEqual(path) &&
+            e.EntityKind == kind && e.Key == key && e.Member == member).ToArray();
+        return matches.Length == 1 ? matches[0] : null;
+    }
+
+    internal bool MatchesOriginal(ApplyDocument document, IReadOnlyList<object> segments)
+    {
+        using var original = JsonDocument.Parse(Ir);
+        var current = JsonSerializer.SerializeToElement(document, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
+        var before = original.RootElement;
+        foreach (var segment in segments)
+        {
+            if (segment is string property)
+            {
+                if (before.ValueKind != JsonValueKind.Object || current.ValueKind != JsonValueKind.Object ||
+                    !before.TryGetProperty(property, out before) || !current.TryGetProperty(property, out current)) return false;
+            }
+            else if (segment is int index)
+            {
+                if (before.ValueKind != JsonValueKind.Array || current.ValueKind != JsonValueKind.Array ||
+                    index >= before.GetArrayLength() || index >= current.GetArrayLength()) return false;
+                before = before[index]; current = current[index];
+            }
+        }
+        return JsonElement.DeepEquals(before, current);
+    }
+
+    private void ReadEntry(JsonElement entry)
+    {
+        ApplyDiagnosticSource ReadSource(JsonElement source)
+        {
+            var status = String(source, "status");
+            if (status == "unknown") return ApplyDiagnosticSource.Unknown;
+            if (status != "known") Fail("mixed", "Invalid source status.");
+            var file = String(source, "file"); var hash = String(source, "sha256");
+            if (!Path.IsPathFullyQualified(file) || !inputs.Any(i => i.Role == "source" && i.Path == file && i.Sha256 == hash))
+                Fail("mixed", "Known location file/hash is not a source input.");
+            if (!source.TryGetProperty("range", out var rangeJson) || rangeJson.ValueKind != JsonValueKind.Object)
+                Fail("mixed", "Known location requires a range.");
+            ApplySourcePoint Point(string name)
+            {
+                int o = 0, l = 0, c = 0;
+                if (!rangeJson.TryGetProperty(name, out var point) || point.ValueKind != JsonValueKind.Object ||
+                    !point.TryGetProperty("offset", out var offset) || offset.ValueKind != JsonValueKind.Number || !offset.TryGetInt32(out o) ||
+                    !point.TryGetProperty("line", out var line) || line.ValueKind != JsonValueKind.Number || !line.TryGetInt32(out l) ||
+                    !point.TryGetProperty("column", out var column) || column.ValueKind != JsonValueKind.Number || !column.TryGetInt32(out c))
+                    Fail("mixed", "Source point requires integer offset/line/column.");
+                return new(o, l, c);
+            }
+            var range = new ApplySourceRange(Point("start"), Point("end"));
+            var text = File.ReadAllText(file, new UTF8Encoding(false, true));
+            if (text.StartsWith('\uFEFF')) text = text[1..];
+            void Check(ApplySourcePoint point)
+            {
+                if (point.Offset < 0 || point.Offset > text.Length || point.Line < 1 || point.Column < 1)
+                    Fail("mixed", "Source range is outside the original file.");
+                var line = 1; var start = 0;
+                for (var i = 0; i < point.Offset; i++)
+                {
+                    if (text[i] == '\r') { if (i + 1 < point.Offset && text[i + 1] == '\n') i++; line++; start = i + 1; }
+                    else if (text[i] is '\n' or '\u2028' or '\u2029') { line++; start = i + 1; }
+                }
+                if (point.Line != line || point.Column != point.Offset - start + 1)
+                    Fail("mixed", "Source line/column does not match its offset.");
+            }
+            Check(range.Start); Check(range.End);
+            if (range.End.Offset < range.Start.Offset) Fail("mixed", "Source range is reversed.");
+            return new("known", file, hash, range);
+        }
+        string? Optional(string name) => entry.TryGetProperty(name, out var value) ? value.GetString() : null;
+        IReadOnlyList<object>? segments = null;
+        if (entry.TryGetProperty("pathSegments", out var path))
+        {
+            segments = path.EnumerateArray().Select(p => p.ValueKind == JsonValueKind.String ? (object)p.GetString()! : p.GetInt32()).ToArray();
+            if (segments.Any(p => p is int i && i < 0) || new ApplyIssuePath(segments, "$").JsonPath != String(entry, "jsonPath"))
+                Fail("mixed", "Invalid structured map path.");
+        }
+        entries.Add(new(String(entry, "jsonPath"), segments, Optional("entityKind"), Optional("key"), Optional("member"),
+            ReadSource(entry.GetProperty("source")), entry.TryGetProperty("valueSource", out var valueSource) ? ReadSource(valueSource) : ApplyDiagnosticSource.Unknown,
+            entry.TryGetProperty("related", out var related) ? related.EnumerateArray().Select(ReadSource).ToArray() : []));
     }
 
     internal void ValidateDocument(ApplyDocument document)
