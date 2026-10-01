@@ -558,7 +558,7 @@ public sealed class ObservationService(IResoniteClient client)
         if (filter.Name is not null && !slot.Name.Contains(filter.Name, StringComparison.OrdinalIgnoreCase)) return false;
         if (regex is not null && !regex.IsMatch(slot.Name)) return false;
         if (filter.ComponentType is not null &&
-            !slot.Components.Any(component => NormalizeType(component.Type).Contains(filter.ComponentType, StringComparison.OrdinalIgnoreCase))) return false;
+            !slot.Components.Any(component => ObservationTypeNames.Contains(component.Type, filter.ComponentType))) return false;
         if (filter.MemberName is not null &&
             !slot.Components.Any(component => component.Members?.ContainsKey(filter.MemberName) == true)) return false;
         if (filter.ReferenceToId is not null && !ReferencesTarget(slot, filter.ReferenceToId)) return false;

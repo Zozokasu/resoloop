@@ -109,7 +109,7 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
                 ? slot.Name.Equals(name, StringComparison.Ordinal)
                 : slot.Name.Contains(name, StringComparison.OrdinalIgnoreCase));
             var componentMatches = string.IsNullOrWhiteSpace(componentType) || slot.Components.Any(c =>
-                c.Type.Contains(componentType, StringComparison.OrdinalIgnoreCase));
+                ObservationTypeNames.Contains(c.Type, componentType));
             if (nameMatches && componentMatches)
                 results.Add(new SlotMatch(slot.Id, slot.Name, slot.Path!, slot.Components));
         }
@@ -135,7 +135,7 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
             foreach (var summary in current.Components)
             {
                 if (!string.IsNullOrWhiteSpace(componentType) &&
-                    !summary.Type.Contains(componentType, StringComparison.OrdinalIgnoreCase)) continue;
+                    !ObservationTypeNames.Contains(summary.Type, componentType)) continue;
                 var members = summary.Members ?? new Dictionary<string, MemberValue>();
                 if (!string.IsNullOrWhiteSpace(memberName))
                 {
