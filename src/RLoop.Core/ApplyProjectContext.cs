@@ -3,7 +3,8 @@ using System.Text.Json.Serialization;
 
 namespace RLoop.Core;
 
-public sealed record ApplyAuthoringSpec(string ProjectRoot, string Source,
+public sealed record ApplyAuthoringSpec([property: ApplyShape(JsonRequired = true)] string ProjectRoot,
+    [property: ApplyShape(JsonRequired = true)] string Source,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? OwnershipSource = null);
 
 internal sealed record ApplyProjectContext(string ProjectRoot, string SourceDirectory, ApplyAuthoringSpec? Authoring, string? SourcePath)

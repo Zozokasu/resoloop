@@ -2,7 +2,9 @@
 // ApplyDocument object (the JSON shape consumed by `resoloop validate` /
 // `resoloop apply`, see src/RLoop.Core/ApplyWorkflow.cs).
 
-import type { JsonValue } from "./elements.js";
+import type { ApplyDocument, ApplyOwnershipSpec, ApplySlotSpec, ApplyComponentSpec, ApplyNodeSpec } from "./generated/apply-types.js";
+import { copyComponent, copySlot } from "./generated/apply-copy.js";
+export type { ApplyDocument, ApplyOwnershipSpec, ApplySlotSpec, ApplyComponentSpec, ApplyNodeSpec } from "./generated/apply-types.js";
 import { scopeKey, scopeValue } from "./scope.js";
 
 /** Tagged build error; `code` is printed by the CLI as `code: message`
@@ -14,83 +16,6 @@ export class BuildError extends Error {
     this.name = "BuildError";
     this.code = code;
   }
-}
-
-/* ---- schema-v1 output types (field comments name the C# member) ---- */
-
-/** Mirrors C# ApplyOwnershipSpec. */
-export interface ApplyOwnershipSpec {
-  /** ApplyOwnershipSpec.Key */
-  key: string;
-}
-
-/** Mirrors C# ApplySlotSpec. */
-export interface ApplySlotSpec {
-  /** ApplySlotSpec.Name (required) */
-  name: string;
-  /** ApplySlotSpec.Parent (root slot only for JSX-authored documents) */
-  parent?: string;
-  /** ApplySlotSpec.Position */
-  position?: [number, number, number];
-  /** ApplySlotSpec.Rotation */
-  rotation?: [number, number, number, number];
-  /** ApplySlotSpec.Scale */
-  scale?: [number, number, number];
-  /** ApplySlotSpec.Key */
-  key?: string;
-  /** ApplySlotSpec.ManagedFields */
-  managedFields?: ("position" | "rotation" | "scale")[];
-  /** ApplySlotSpec.PreserveWorldTransform */
-  preserveWorldTransform?: boolean;
-  /** ApplySlotSpec.MigrateFrom */
-  migrateFrom?: string;
-  /** ApplySlotSpec.RelocationTransform */
-  relocationTransform?: "local" | "world";
-  /** ApplySlotSpec.RuntimeRelocatable */
-  runtimeRelocatable?: boolean;
-}
-
-/** Mirrors C# ApplyComponentSpec. */
-export interface ApplyComponentSpec {
-  /** ApplyComponentSpec.Type (required) */
-  type: string;
-  /** ApplyComponentSpec.Fields */
-  fields?: Record<string, JsonValue>;
-  /** ApplyComponentSpec.Key */
-  key?: string;
-  /** ApplyComponentSpec.MigrateFrom */
-  migrateFrom?: string;
-  /** ApplyComponentSpec.InitialFields */
-  initialFields?: Record<string, JsonValue>;
-  /** ApplyComponentSpec.IdentityFields */
-  identityFields?: string[];
-}
-
-/** Mirrors C# ApplyNodeSpec (every non-root <Slot> compiles to this). */
-export interface ApplyNodeSpec {
-  /** ApplyNodeSpec.Slot */
-  slot: ApplySlotSpec;
-  /** ApplyNodeSpec.Components */
-  components?: ApplyComponentSpec[];
-  /** ApplyNodeSpec.Children */
-  children?: ApplyNodeSpec[];
-}
-
-/** Mirrors C# ApplyDocument (subset supported by resoloop-jsx). */
-export interface ApplyDocument {
-  /** Source-only guard: index-derived draft keys cannot be applied. */
-  $draftKeys?: true;
-  /** ApplyDocument.SchemaVersion — always the literal string "1" */
-  schemaVersion: "1";
-  /** ApplyDocument.Ownership */
-  ownership: ApplyOwnershipSpec;
-  authoring?: { projectRoot: string; source: string; ownershipSource?: string };
-  /** ApplyDocument.Slot */
-  slot: ApplySlotSpec;
-  /** ApplyDocument.Components */
-  components: ApplyComponentSpec[];
-  /** ApplyDocument.Children */
-  children: ApplyNodeSpec[];
 }
 
 /* ---- element internals ---- */
@@ -254,17 +179,6 @@ export function evaluate(
     return generated;
   }
 
-  const SLOT_SCALAR_PROPS = [
-    "position",
-    "rotation",
-    "scale",
-    "managedFields",
-    "preserveWorldTransform",
-    "migrateFrom",
-    "relocationTransform",
-    "runtimeRelocatable",
-  ] as const;
-
   function convertComponent(
     el: RawElement,
     parentKey: string,
@@ -280,19 +194,7 @@ export function evaluate(
       );
     const key = resolveKey("component", props, type, parentKey, siblingIndex, path, el.scope ?? "");
     registerKey(componentKeys, key, "component", path);
-    const spec: ApplyComponentSpec = { type, key };
-    if (props.fields !== undefined) {
-      assertFiniteNumbers(props.fields, `${path}.fields`);
-      spec.fields = scopeValue(props.fields, el.scope ?? "");
-    }
-    if (props.migrateFrom !== undefined) spec.migrateFrom = el.scope && typeof props.migrateFrom === "string"
-      ? scopeValue(`$component:${props.migrateFrom}`, el.scope).slice(11) : props.migrateFrom;
-    if (props.initialFields !== undefined) {
-      assertFiniteNumbers(props.initialFields, `${path}.initialFields`);
-      spec.initialFields = scopeValue(props.initialFields, el.scope ?? "");
-    }
-    if (props.identityFields !== undefined) spec.identityFields = props.identityFields;
-    return spec;
+    return copyComponent(props, key, path, el.scope ?? "", false, { assertFiniteNumbers, scopeValue });
   }
 
   function convertSlot(
@@ -335,16 +237,7 @@ export function evaluate(
       nameRank++;
     }
 
-    const spec: ApplySlotSpec = { name, key };
-    if (isRoot && props.parent !== undefined) spec.parent = props.parent;
-    for (const field of SLOT_SCALAR_PROPS)
-      if (props[field] !== undefined) {
-        assertFiniteNumbers(props[field], `${path}.${field}`);
-        (spec as any)[field] = props[field];
-      }
-    if (props.migrateFrom !== undefined)
-      spec.migrateFrom = el.scope && typeof props.migrateFrom === "string"
-        ? scopeValue(`$slot:${props.migrateFrom}`, el.scope).slice(6) : props.migrateFrom;
+    const spec = copySlot(props, key, path, el.scope ?? "", isRoot, { assertFiniteNumbers, scopeValue });
 
     const components: ApplyComponentSpec[] = [];
     const children: ApplyNodeSpec[] = [];

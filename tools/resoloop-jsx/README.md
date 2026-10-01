@@ -168,3 +168,29 @@ Emitted documents contain only `schemaVersion` (`"1"`), `ownership`, `slot`,
 `identityFields`. `assets`, `cameras`, `tests`, `include`, `prototypes`,
 `parameters`, and `variables` are out of scope; because `assets` declarations
 are not yet supported, no `ref.asset` helper is exposed.
+
+## Regenerating the Apply contract (developers)
+
+The scalar prop types, schema-v1 output types and copy functions under `src/generated/`
+are generated from the C# Apply records and their shape attributes. From the repository root:
+
+```powershell
+dotnet run --project tools/RLoop.ContractGen -- tools/resoloop-jsx/src/generated
+```
+
+Commit the generated files with the C# declaration change. Do not edit them by hand.
+The .NET `GeneratedArtifacts_AreCurrent` test detects stale files and tolerates checkout
+CRLF conversion; the generator writes deterministic UTF-8 without BOM and LF line endings.
+`npm test` and TSX build use the checked-in files and do not run dotnet. The existing
+`npm run contract` command still requires the built .NET CLI.
+
+For a normal copied field, update its C# record (and any exceptional shape rule), an
+independent handwritten fixture, the authoring documentation, and affected workflow
+skills, then regenerate once. Do not copy the field into TS types, scalar lists, copy
+functions, or C# typo candidates. Fields that change world behavior still need C#
+execution changes and behavior tests. CLR nullable, constructor required, JSON required,
+JSX required, and emitted-output required remain separate conditions. C# defaults are
+descriptive metadata and are never inserted by the generated copy functions.
+
+`test/fixtures/generated-shape-oracle.expected.json` is a handwritten output oracle,
+not a generator target. Expected JSON changes require deliberate review.
