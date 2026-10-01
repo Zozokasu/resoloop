@@ -202,7 +202,8 @@ public static class ApplyDocumentValidator
         ApplyDocument document,
         IResoniteClient? client = null,
         CancellationToken cancellationToken = default,
-        IReadOnlyDictionary<string, string>? resolvedTypes = null)
+        IReadOnlyDictionary<string, string>? resolvedTypes = null,
+        ApplyCatalog? catalog = null)
     {
         if (document.Authoring is not null) _ = document.ProjectContext;
         var issues = new List<ApplyValidationIssue>();
@@ -462,6 +463,8 @@ public static class ApplyDocumentValidator
                     issues, componentPath + ".fields." + field.Key);
             }
         }
+
+        if (catalog is not null) issues.AddRange(ApplyCatalogValidator.Validate(document, catalog));
 
         if (client is not null && issues.Count == 0)
         {
