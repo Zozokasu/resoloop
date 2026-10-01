@@ -260,6 +260,10 @@ schema v1では、top-levelに `schemaVersion: "1"`、`ownership.key`、root `sl
 
 TSX builder は入口の named export `export const ownership = { key: "house-world" }` を使い、未指定ならroot Slotのkeyをownershipにします。空文字・不正形状はbuildエラーです。既存制作物ではownershipと全Slot/Component keyを保ち、draftの自動keyで置き換えないでください。
 
+新しい再利用部分木は TSX の `<Scope instanceKey="left">` で明示的に囲み、内部の明示 local key `body` を `left::body` に展開します。JSON source では node の `"$scope":"left"` が同じ規則です。nested scope は `outer::inner::local`、instance/local segment は空白のみと `:` を禁止します。兄弟順序は使わず、同名兄弟の禁止は従来どおりです。scope 内の fields/initialFields（配列・object 内も含む）の短い `$slot:` / `$component:` / `$ref:` / `$member:` / `$slot-member:` は現在 scope だけで解決し、親 scope/global に fallback しません。外からは `$member:left::state.Value` や `ref.component(ref.key("left","state"))` の完全 key を使います。完全 key は内部から別 scope を参照する場合にも使えます。`migrateFrom` も同じ scope 規則です。
+
+既存の unscoped key と state の実効 key はそのままです。Scope の追加による自動移行・再採番はせず、展開 key が旧 key と衝突すれば TSX build の `DUPLICATE_KEY` または C# の既存 key 衝突エラーで停止します。新しい segment の不正は `APPLY_SCOPE_INVALID`（終了コード6）。`--draft` の旧 index 由来 key は従来の文字列を出力しますが、source guard `"$draftKeys":true` を付け、validate/diff/plan/apply は `APPLY_DRAFT_KEY_UNSTABLE`（終了コード6）で停止します。意図した実効 key を明示 props に写して再buildしてください。scope 内は draft でも明示 key が必須です。展開後 document schema `"1"`・state schema v2・CLI selector の文字列完全一致規則は変わりません。
+
 生成JSONの任意top-level `authoring` は `{"projectRoot":"C:/projects/house","source":"content/main.tsx","ownershipSource":"entry-export"}` の形です。build時に一度だけ、明示 `--project-root` > 作者TSXの最寄り `.resoloop.json` のdirectory > TSXのdirectory、の順でprojectRootを決めます。projectRootは絶対パス、sourceはproject相対、ownershipSourceは診断情報（未指定exportでは `root-key`）です。生成JSONの出力先・コピー先はstate基準を変えません。project全体を移動したら再buildしてください。新しいmetadataを読むには対応CLIが必要です。
 
 Coreはcontextを検証して保持し、stateパスをwriter lock・Prepare・結果・captureのselectorで共有します。authoring不正時は生成JSONの場所へfallbackしません。authoringのない手書きJSONはJSONのdirectoryから最寄りconfigを探し、無ければそのdirectoryを使う従来経路（Node不要）です。明示 `--state` は常に最優先でcwd相対です。authoring付きdocumentのlocal asset検証・取り込み、mesh bounds、camera bookmarkの相対出力は作者sourceのdirectory基準です。明示出力はcwd基準、手書きJSONの相対資源は従来基準、JSON includeは各JSON基準、Flux各パスはmanifest基準、接続設定の探索はcwd起点を維持します。

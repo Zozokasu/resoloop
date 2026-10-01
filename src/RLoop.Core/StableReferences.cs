@@ -11,6 +11,41 @@ public sealed record StableComponentReference(string Key, string Id, string Slot
 public sealed record ResolvedWorldReference(string Selector, string Id, string Kind, string? Type, string? Path = null);
 public sealed record StableSelector(string Original, string Kind, string Key, string? MemberName = null);
 
+internal static class StableEffectiveKeys
+{
+    public static string NormalizeType(string type)
+    {
+        var bracket = type.IndexOf(']');
+        return bracket >= 0 ? type[(bracket + 1)..] : type;
+    }
+
+    // This legacy spelling is part of persisted state; do not renumber it.
+    public static string Component(string slotKey, string normalizedType, int ordinal) =>
+        $"{slotKey}/component:{normalizedType}:{ordinal}";
+}
+
+/// <summary>Source scopes disappear before schema-v1/state-v2 serialization.</summary>
+internal static class StableKeyScope
+{
+    public static string QualifyLocal(string scope, string? local, string path)
+    {
+        if (string.IsNullOrWhiteSpace(local) || local.Contains(':'))
+            throw new RLoopException("APPLY_SCOPE_INVALID",
+                $"{path} requires a non-empty local key without ':' (reserved for '::').", ExitCodes.ValidationFailed);
+        return scope.Length == 0 ? local : scope + "::" + local;
+    }
+
+    public static string ResolveSelector(string scope, string value)
+    {
+        if (scope.Length == 0 || !StableSelectorSyntax.TryParse(value, out var selector) ||
+            selector!.Key.Contains("::", StringComparison.Ordinal)) return value;
+        // Preserve the original prefix ($ref is an alias) and member suffix.
+        var prefix = value[..(value.IndexOf(':') + 1)];
+        return prefix + scope + "::" + selector.Key +
+            (selector.MemberName is null ? "" : "." + selector.MemberName);
+    }
+}
+
 public static class StableSelectorSyntax
 {
     public static bool TryParse(string value, out StableSelector? selector)

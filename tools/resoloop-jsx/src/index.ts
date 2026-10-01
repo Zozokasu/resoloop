@@ -1,6 +1,6 @@
 // Public entry point ("resoloop-jsx").
 
-export { Slot, Component } from "./elements.js";
+export { Slot, Component, Scope } from "./elements.js";
 export { Fragment } from "./jsx-runtime.js";
 export { ref } from "./ref.js";
 export { BuildError, evaluate } from "./evaluate.js";
@@ -11,6 +11,8 @@ export type {
   RelocationTransform,
   SlotProps,
   ComponentProps,
+  ScopeProps,
+  ScopeElement,
   JsxElement,
   SlotElement,
   ComponentElement,

@@ -81,6 +81,49 @@ the normal entry point (`import { Slot, Component } from "resoloop-jsx"`)
 `ref.slotMember(key, member)` produce the `$slot:` / `$component:` /
 `$member:` / `$slot-member:` selector strings.
 
+## Reusable subtrees and instance scopes
+
+Wrap each new reusable subtree in `<Scope instanceKey="left">`. Existing
+function components keep their current keys unless you explicitly add a Scope.
+
+```tsx
+import { Slot, Component, Scope, ref } from "resoloop-jsx";
+function Part({ name }: { name: string }) {
+  return <Slot key="body" name={name}>
+    <Component key="state" type="CALLER_REFLECTED_TYPE" />
+    <Component key="wire" type="CALLER_REFLECTED_REFERENCE_TYPE"
+      fields={{ Target: ref.component("state") }} />
+  </Slot>;
+}
+export default <Slot key="root" name="Assembly">
+  <Scope instanceKey="left"><Part name="Left" /></Scope>
+  <Scope instanceKey="right"><Part name="Right" /></Scope>
+</Slot>;
+```
+
+This emits `left::body`, `left::state`, `left::wire` and the corresponding
+`right::` keys. Give sibling Slots distinct names as before. Instance keys do
+not depend on sibling order. Nested Scopes emit `outer::inner::local`.
+Every scoped Slot/Component needs an explicit local key, even with `--draft`.
+Instance/local segments must be non-empty and cannot contain `:`; all colons
+are reserved to prevent ambiguous `::` boundaries. Legacy keys outside Scope
+remain literal, including existing colons. Duplicate scopes or flattened keys
+(including collisions with legacy keys) fail instead of receiving a suffix.
+
+Short `$slot:`, `$component:`, `$ref:`, `$member:` and `$slot-member:` selectors
+inside fields/initialFields resolve only in the current Scope, recursively in
+arrays and objects. They never fall back to a parent Scope or global key.
+Qualified keys containing `::` are absolute: from outside use
+`ref.component(ref.key("left", "state"))` or `$member:left::state.Value`.
+The same explicit form can reference another Scope from inside. Scoped
+`migrateFrom` uses this rule too; adding Scope to existing content is not an
+automatic migration. Preserve existing effective keys and state when rebuilding.
+The JSON source equivalent is `"$scope":"left"` on a node wrapping slot,
+components and children; expansion removes it before schema-v1 validation.
+Invalid segments or unresolved scoped references fail the TSX build with
+`APPLY_SCOPE_INVALID`; C# uses `APPLY_SCOPE_INVALID` for invalid segments and
+existing key-conflict/reference error codes for collisions/missing targets.
+
 ## Entry points: normal vs draft
 
 - `import { Slot, Component } from "resoloop-jsx"` — `key` is required in the
@@ -91,10 +134,15 @@ the normal entry point (`import { Slot, Component } from "resoloop-jsx"`)
   `EXPLICIT_KEY_REQUIRED` (exit code 1); with `--draft`, a deterministic key
   of the form `<parentKey>/<slug(name-or-type)>#<sameKindSiblingIndex>` is
   generated per missing key and one warning each is printed to stderr
-  (exit code 0).
+  (exit code 0). Such output carries the source guard `"$draftKeys":true`;
+  validate/diff/plan/apply reject it with `APPLY_DRAFT_KEY_UNSTABLE`.
+  Copy intended effective keys into explicit props and rebuild before applying.
+  The old generated strings remain unchanged; inserting a sibling can shift
+  their index, so they are inspection-only. Draft builds with all explicit keys
+  have no guard and remain applicable.
 
 Everything other than `Slot`/`Component` prop typing (`ref`, `Fragment`,
-`BuildError`, `evaluate`, and all shared types) is identical from either
+`Scope`, `BuildError`, `evaluate`, and all shared types) is identical from either
 entry point.
 
 ## Exit codes
@@ -111,7 +159,8 @@ found (the .NET CLI was not built — the contract test did not run).
 ## Supported schema-v1 subset
 
 Emitted documents contain only `schemaVersion` (`"1"`), `ownership`, `slot`,
-`components`, `children`, and build `authoring` metadata. `ApplySlotSpec` fields supported as props:
+`components`, `children`, and build `authoring` metadata (plus the source-only
+`$draftKeys` guard when keys were generated). `ApplySlotSpec` fields supported as props:
 `name` (required), `key`, `parent` (root only), `position`, `rotation`,
 `scale`, `managedFields`, `preserveWorldTransform`, `migrateFrom`,
 `relocationTransform`, `runtimeRelocatable`. `ApplyComponentSpec` fields:

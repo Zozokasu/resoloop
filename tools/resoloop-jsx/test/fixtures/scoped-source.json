@@ -1,0 +1,21 @@
+{
+  "schemaVersion": "1",
+  "ownership": { "key": "scoped-source" },
+  "slot": { "key": "root", "name": "Scoped", "parent": "Root" },
+  "prototypes": {
+    "part": {
+      "slot": { "key": "body", "name": "${name}" },
+      "components": [
+        { "key": "state", "type": "Test.Target", "fields": { "Enabled": true } },
+        { "key": "wire", "type": "Test.Source", "fields": {
+          "Target": "$component:state", "Member": "$member:state.Enabled",
+          "Slot": "$slot:body", "Rotation": "$slot-member:body.Rotation"
+        } }
+      ]
+    }
+  },
+  "children": [
+    { "$prototype": "part", "$with": { "name": "Left" }, "$scope": "left" },
+    { "$prototype": "part", "$with": { "name": "Right" }, "$scope": "right" }
+  ]
+}

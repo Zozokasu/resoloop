@@ -42,7 +42,7 @@ function findCliDll(): string | undefined {
 }
 
 /** Fixtures that must produce a document `resoloop validate` accepts. */
-const SUCCESS_FIXTURES: { file: string; draft?: boolean }[] = [
+const SUCCESS_FIXTURES: { file: string; draft?: boolean; error?: string }[] = [
   { file: "ownership.tsx" },
   { file: "nesting.tsx" },
   { file: "reference.tsx" },
@@ -51,7 +51,9 @@ const SUCCESS_FIXTURES: { file: string; draft?: boolean }[] = [
   { file: "conditional.tsx" },
   { file: "key-stability-base.tsx" },
   { file: "key-stability-inserted.tsx" },
-  { file: "missing-key-draft.tsx", draft: true },
+  { file: "scoped.tsx" },
+  { file: "scoped-inserted.tsx" },
+  { file: "missing-key-draft.tsx", draft: true, error: "APPLY_DRAFT_KEY_UNSTABLE" },
 ];
 
 async function main(): Promise<number> {
@@ -100,15 +102,35 @@ async function main(): Promise<number> {
         );
         continue;
       }
-      if (run.status === 0) {
+      if (fixture.error ? run.status !== 0 && (run.stdout + run.stderr).includes(fixture.error) : run.status === 0) {
         passed++;
-        process.stdout.write(`contract: PASS ${fixture.file}\n`);
+        process.stdout.write(`contract: PASS ${fixture.file}${fixture.error ? ` (rejected: ${fixture.error})` : ""}\n`);
       } else {
         failed++;
         process.stderr.write(
           `contract: FAIL ${fixture.file}: resoloop validate exited ${run.status}\n` +
             `stdout: ${run.stdout}\nstderr: ${run.stderr}\n`
         );
+      }
+    }
+
+    for (const fixture of [
+      { file: "scoped-source.json", error: "" },
+      { file: "scoped-collision.json", error: "APPLY_EXPANDED_KEY_CONFLICT" },
+      { file: "scoped-separator.json", error: "APPLY_SCOPE_INVALID" },
+      { file: "scoped-outside.json", error: "APPLY_REFERENCE_NOT_FOUND" },
+    ]) {
+      checked++;
+      const run = spawnSync("dotnet", [dll, "validate", path.join(fixturesDir, fixture.file), "--json"], { cwd: repoRoot, encoding: "utf8" });
+      const accepted = !run.error && (fixture.error
+        ? run.status !== 0 && (run.stdout + run.stderr).includes(fixture.error)
+        : run.status === 0);
+      if (accepted) {
+        passed++;
+        process.stdout.write(`contract: PASS ${fixture.file}${fixture.error ? ` (rejected: ${fixture.error})` : ""}\n`);
+      } else {
+        failed++;
+        process.stderr.write(`contract: FAIL ${fixture.file}: ${run.error ?? run.stdout + run.stderr}\n`);
       }
     }
 

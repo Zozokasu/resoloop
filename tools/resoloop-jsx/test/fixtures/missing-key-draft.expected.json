@@ -1,4 +1,5 @@
 {
+  "$draftKeys": true,
   "schemaVersion": "1",
   "ownership": { "key": "root" },
   "slot": { "name": "Root", "key": "root" },

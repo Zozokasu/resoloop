@@ -3,6 +3,7 @@
 // `resoloop apply`, see src/RLoop.Core/ApplyWorkflow.cs).
 
 import type { JsonValue } from "./elements.js";
+import { scopeKey, scopeValue } from "./scope.js";
 
 /** Tagged build error; `code` is printed by the CLI as `code: message`
  *  and maps to exit code 1. */
@@ -77,6 +78,8 @@ export interface ApplyNodeSpec {
 
 /** Mirrors C# ApplyDocument (subset supported by resoloop-jsx). */
 export interface ApplyDocument {
+  /** Source-only guard: index-derived draft keys cannot be applied. */
+  $draftKeys?: true;
   /** ApplyDocument.SchemaVersion — always the literal string "1" */
   schemaVersion: "1";
   /** ApplyDocument.Ownership */
@@ -94,6 +97,7 @@ export interface ApplyDocument {
 
 interface RawElement {
   kind: string;
+  scope?: string;
   props?: Record<string, any> | null;
 }
 
@@ -115,20 +119,27 @@ function describeValue(value: any): string {
 /** Recursively flatten a `children` value: arrays are inlined, fragments
  *  contribute their own children, falsy values are dropped. Anything else
  *  that is not a slot/component element is a hard error. */
-function flattenChildren(value: any, path: string, out: RawElement[]): void {
+function flattenChildren(value: any, path: string, out: RawElement[], scope = "", scopes = new Set<string>()): void {
   if (value === null || value === undefined || value === false || value === true)
     return;
   if (Array.isArray(value)) {
-    for (const item of value) flattenChildren(item, path, out);
+    for (const item of value) flattenChildren(item, path, out, scope, scopes);
     return;
   }
   if (isElement(value)) {
     if (value.kind === "fragment") {
-      flattenChildren(value.props?.children, path, out);
+      flattenChildren(value.props?.children, path, out, scope, scopes);
+      return;
+    }
+    if (value.kind === "scope") {
+      const nested = scopeKey(scope, value.props?.instanceKey, `${path}.instanceKey`);
+      if (scopes.has(nested)) throw new BuildError("DUPLICATE_KEY", `Instance scope '${nested}' is repeated at ${path}`);
+      scopes.add(nested);
+      flattenChildren(value.props?.children, path, out, nested, scopes);
       return;
     }
     if (value.kind === "slot" || value.kind === "component") {
-      out.push(value);
+      out.push({ ...value, scope });
       return;
     }
     throw new BuildError(
@@ -196,6 +207,8 @@ export function evaluate(
     throw new Error("ownership export must be an object containing one non-empty string key");
   const draft = options.draft === true;
   const warnings: string[] = [];
+  const scopes = new Set<string>();
+  let generatedKeys = false;
   // Single global set per kind across the whole document, matching the C#
   // validator's HashSet over the entire recursive walk.
   const slotKeys = new Map<string, string>(); // key -> first path seen
@@ -222,9 +235,11 @@ export function evaluate(
     displayName: string,
     parentKey: string | undefined,
     siblingIndex: number,
-    path: string
+    path: string,
+    scope: string
   ): string {
     const key = props.key;
+    if (scope) return scopeKey(scope, key, path);
     if (typeof key === "string" && key.trim().length > 0) return key;
     if (!draft)
       throw new BuildError(
@@ -232,6 +247,7 @@ export function evaluate(
         `${kind} "${displayName}" at ${path} requires an explicit 'key' prop (or rebuild with --draft)`
       );
     const generated = `${parentKey ?? "root"}/${slug(displayName)}#${siblingIndex}`;
+    generatedKeys = true;
     warnings.push(
       `warning: generated key "${generated}" for ${kind} "${displayName}" (--draft)`
     );
@@ -262,17 +278,18 @@ export function evaluate(
         "COMPONENT_TYPE_MISSING",
         `Component at ${path} requires a non-empty 'type' prop`
       );
-    const key = resolveKey("component", props, type, parentKey, siblingIndex, path);
+    const key = resolveKey("component", props, type, parentKey, siblingIndex, path, el.scope ?? "");
     registerKey(componentKeys, key, "component", path);
     const spec: ApplyComponentSpec = { type, key };
     if (props.fields !== undefined) {
       assertFiniteNumbers(props.fields, `${path}.fields`);
-      spec.fields = props.fields;
+      spec.fields = scopeValue(props.fields, el.scope ?? "");
     }
-    if (props.migrateFrom !== undefined) spec.migrateFrom = props.migrateFrom;
+    if (props.migrateFrom !== undefined) spec.migrateFrom = el.scope && typeof props.migrateFrom === "string"
+      ? scopeValue(`$component:${props.migrateFrom}`, el.scope).slice(11) : props.migrateFrom;
     if (props.initialFields !== undefined) {
       assertFiniteNumbers(props.initialFields, `${path}.initialFields`);
-      spec.initialFields = props.initialFields;
+      spec.initialFields = scopeValue(props.initialFields, el.scope ?? "");
     }
     if (props.identityFields !== undefined) spec.identityFields = props.identityFields;
     return spec;
@@ -292,11 +309,11 @@ export function evaluate(
         "SLOT_NAME_MISSING",
         `Slot at ${path} requires a non-empty 'name' prop`
       );
-    const key = resolveKey("slot", props, name, parentKey, siblingIndex, path);
+    const key = resolveKey("slot", props, name, parentKey, siblingIndex, path, el.scope ?? "");
     registerKey(slotKeys, key, "slot", path);
 
     const flat: RawElement[] = [];
-    flattenChildren(props.children, `${path}.children`, flat);
+    flattenChildren(props.children, `${path}.children`, flat, el.scope ?? "", scopes);
 
     // Reject repeated sibling slot names under this parent, independent of
     // keys (mirrors APPLY_SIBLING_NAME_DUPLICATE in the C# validator).
@@ -325,6 +342,9 @@ export function evaluate(
         assertFiniteNumbers(props[field], `${path}.${field}`);
         (spec as any)[field] = props[field];
       }
+    if (props.migrateFrom !== undefined)
+      spec.migrateFrom = el.scope && typeof props.migrateFrom === "string"
+        ? scopeValue(`$slot:${props.migrateFrom}`, el.scope).slice(6) : props.migrateFrom;
 
     const components: ApplyComponentSpec[] = [];
     const children: ApplyNodeSpec[] = [];
@@ -357,7 +377,7 @@ export function evaluate(
   }
 
   const roots: RawElement[] = [];
-  flattenChildren(root, "$", roots);
+  flattenChildren(root, "$", roots, "", scopes);
   if (roots.length !== 1 || roots[0].kind !== "slot")
     throw new BuildError(
       "ROOT_MUST_BE_SINGLE_SLOT",
@@ -373,5 +393,31 @@ export function evaluate(
     components: converted.components,
     children: converted.children,
   };
+  if (generatedKeys) document.$draftKeys = true;
+  // The compiler rejects a flattened scoped key colliding with a legacy key,
+  // including the other kind. Keep legacy unscoped namespaces unchanged here.
+  for (const key of slotKeys.keys())
+    if (key.includes("::") && componentKeys.has(key))
+      throw new BuildError("DUPLICATE_KEY", `Scoped stable key '${key}' is used by both a Slot and a Component`);
+  function checkReferences(value: any): void {
+    if (typeof value === "string") {
+      const match = /^(\$(slot|component|ref|member|slot-member):)(.+)$/.exec(value);
+      if (!match) return;
+      const body = match[3];
+      const member = match[2] === "member" || match[2] === "slot-member";
+      const key = member ? body.slice(0, body.lastIndexOf(".")) : body;
+      if (key.includes("::") && !(match[2].startsWith("slot") ? slotKeys : componentKeys).has(key))
+        throw new BuildError("APPLY_SCOPE_INVALID", `Scoped reference '${value}' has no declared target; use a qualified key for another scope`);
+    } else if (Array.isArray(value)) value.forEach(checkReferences);
+    else if (value !== null && typeof value === "object") Object.values(value).forEach(checkReferences);
+  }
+  function checkNode(node: { components?: ApplyComponentSpec[]; children?: ApplyNodeSpec[] }): void {
+    for (const component of node.components ?? []) {
+      checkReferences(component.fields);
+      checkReferences(component.initialFields);
+    }
+    for (const child of node.children ?? []) checkNode(child);
+  }
+  checkNode(document);
   return { document, warnings };
 }

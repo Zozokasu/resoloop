@@ -1121,7 +1121,7 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
                 var normalizedType = NormalizeType(spec.Type);
                 var ordinal = typeOrdinals.GetValueOrDefault(normalizedType);
                 typeOrdinals[normalizedType] = ordinal + 1;
-                var stableKey = spec.Key ?? $"{node.StableKey}/component:{normalizedType}:{ordinal}";
+                var stableKey = spec.Key ?? StableEffectiveKeys.Component(node.StableKey, normalizedType, ordinal);
                 prepared.State.Components.TryGetValue(stableKey, out var stateComponent);
                 var relocating = stateComponent is not null && stateComponent.SlotKey != node.StableKey;
                 var topologyTargets = stateComponent is null ? null :
@@ -2114,7 +2114,7 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
     }
     private static string NormalizePath(string path) => string.Join('/', SlotPaths.LegacySegments(path));
     private static string MemberKey(string selector) { var separator = selector.LastIndexOf('.'); return separator > 0 ? selector[..separator] : selector; }
-    private static string NormalizeType(string value) { var bracket = value.IndexOf(']'); return bracket >= 0 ? value[(bracket + 1)..] : value; }
+    private static string NormalizeType(string value) => StableEffectiveKeys.NormalizeType(value);
     private static bool TypeNamesEquivalent(string left, string right) => NormalizeType(left).Equals(NormalizeType(right), StringComparison.Ordinal) ||
         NormalizeType(left).EndsWith('.' + NormalizeType(right), StringComparison.Ordinal) || NormalizeType(right).EndsWith('.' + NormalizeType(left), StringComparison.Ordinal);
     private static RLoopException UnknownApplyReference(string value, IEnumerable<string> keys) => new("APPLY_REFERENCE_NOT_FOUND",
