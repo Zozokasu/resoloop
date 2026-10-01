@@ -23,6 +23,11 @@ internal sealed class ApplyBuildBundle
     {
         string text;
         try { text = File.ReadAllText(path, new UTF8Encoding(false, true)); }
+        catch (Exception ex) when (request is not null && ex is IOException or UnauthorizedAccessException)
+        {
+            Fail("uncommitted", "Cannot read requested build bundle: " + ex.Message);
+            return null;
+        }
         catch (DecoderFallbackException)
         {
             var damaged = File.ReadAllText(path);
@@ -201,7 +206,8 @@ internal sealed class ApplyBuildBundle
         if (!ApplyCatalogValidator.UsedTypes(document, Catalog).SetEquals(usedTypes))
             Fail("mixed", "Used types do not match validated IR/catalog.");
         if (document.Authoring is not { } authoring ||
-            !inputs.Any(i => i.Role == "source" && System.IO.Path.GetFullPath(i.Path) == System.IO.Path.GetFullPath(authoring.Source, authoring.ProjectRoot)))
+            !inputs.Any(i => i.Role == "source" && (OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal)
+                .Equals(System.IO.Path.GetFullPath(i.Path), System.IO.Path.GetFullPath(authoring.Source, authoring.ProjectRoot))))
             Fail("inputUnknown", "Authoring entry is missing from the input snapshot.");
     }
 

@@ -41,6 +41,12 @@ public static class Program
                 throw new RLoopException("INVALID_OPTION", "--diagnostics is supported only by validate/diff/plan/apply.", ExitCodes.InvalidArguments);
             if (applyCommand) output.ConfigureDiagnostics(parsed.Has("diagnostics") ? parsed.RequireOption("diagnostics") : null,
                 parsed.Positionals[0].ToLowerInvariant(), parsed.Option("build-id"));
+            if (applyCommand)
+            {
+                output.ProtectDiagnosticsPath(parsed.Positionals.Count > 1 ? parsed.Positionals[1] : null);
+                output.ProtectDiagnosticsPath(parsed.Option("state"));
+                output.ProtectDiagnosticsPath(parsed.Option("catalog"));
+            }
             if (parsed.Has("build-id") && !applyCommand)
                 throw new RLoopException("INVALID_OPTION", "--build-id is supported only by validate/diff/plan/apply.", ExitCodes.InvalidArguments);
 
@@ -162,9 +168,11 @@ public static class Program
             if (parsed.Has("catalog") && !parsed.Positionals[0].Equals("validate", StringComparison.OrdinalIgnoreCase))
                 throw new RLoopException("INVALID_OPTION", "--catalog is supported only by validate.", ExitCodes.InvalidArguments);
             ApplyDocument? applyInput = null;
+            ApplyCatalog? validationCatalog = null;
             if (applyCommand)
             {
                 applyInput = ApplyDocument.LoadBundleIfPresent(parsed.Positional(1, "Apply file"), parsed.Has("build-id") ? parsed.RequireOption("build-id") : null);
+                if (applyInput is not null) output.ProtectDiagnosticsState(applyInput, parsed.Option("state"));
                 if (applyInput?.GetBundleCatalog() is { } catalog)
                 {
                     if (resolution.Config.Backend == "workbench")
@@ -178,11 +186,16 @@ public static class Program
             if (parsed.Positionals[0].Equals("validate", StringComparison.OrdinalIgnoreCase) && (!parsed.Has("strict") || parsed.Has("catalog")))
             {
                 var document = applyInput ?? ApplyDocument.Load(parsed.Positional(1, "Apply file"));
-                var validation = parsed.Has("catalog")
-                    ? await ApplyCatalogValidator.ValidateFileAsync(document, parsed.RequireOption("catalog"), commandToken)
-                    : await ApplyDocumentValidator.ValidateAsync(document, cancellationToken: commandToken, catalog: document.GetBundleCatalog());
+                output.ProtectDiagnosticsState(document, parsed.Option("state"));
+                ApplyValidationResult validation;
+                if (parsed.Has("catalog"))
+                    (validation, validationCatalog) = await ApplyCatalogValidator.ValidateFileSnapshotAsync(document, parsed.RequireOption("catalog"), commandToken);
+                else
+                    validation = await ApplyDocumentValidator.ValidateAsync(document, cancellationToken: commandToken, catalog: document.GetBundleCatalog());
                 output.SetDiagnostics(ApplyDiagnostics.ForResult(validation).Diagnostics);
                 ApplyDocumentValidator.ThrowIfInvalid(validation);
+                if (parsed.Has("strict") && validationCatalog?.Synthetic == true)
+                    throw new RLoopException("APPLY_CATALOG_UNAVAILABLE", "Synthetic catalogs cannot be used by connected commands.", ExitCodes.ValidationFailed);
                 if (!parsed.Has("strict"))
                 {
                     output.Success(validation);
@@ -280,7 +293,7 @@ public static class Program
             if (applyInput?.GetBundleCatalog() is not null)
                 applyInput.VerifyBundleSession(await client.GetSessionInfoAsync(commandToken), CatalogMapper.ClientPackageVersion);
             var world = new WorldService(client, GeneratedContentMetadata.SourceForVersion(ProductVersion()));
-            await RunResonite(parsed, output, client, world, commandToken, applyInput);
+            await RunResonite(parsed, output, client, world, commandToken, applyInput, validationCatalog);
             return ExitCodes.Success;
         }
         catch (OperationCanceledException) when (!userCancellation.IsCancellationRequested)
@@ -545,7 +558,7 @@ public static class Program
     }
 
     private static async Task RunResonite(ParsedArguments args, OutputWriter output, IResoniteClient client,
-        WorldService world, CancellationToken cancellationToken, ApplyDocument? applyInput = null)
+        WorldService world, CancellationToken cancellationToken, ApplyDocument? applyInput = null, ApplyCatalog? validationCatalog = null)
     {
         var command = args.Positionals[0].ToLowerInvariant();
         switch (command)
@@ -627,6 +640,7 @@ public static class Program
             case "apply":
             {
                 var document = applyInput ?? ApplyDocument.Load(args.Positional(1, "Apply file"));
+                output.ProtectDiagnosticsState(document, args.Option("state"));
                 var result = await world.ApplyAsync(document, ApplyOptionsFrom(args, output), cancellationToken);
                 output.Success(result, w => w.WriteLine($"applied slot {result.SlotId} (created={result.Created}, slots added={result.SlotsCreated}, slots updated={result.SlotsUpdated}, slots unchanged={result.SlotsUnchanged}, components added={result.ComponentsAdded}, updated={result.ComponentsUpdated}, unchanged={result.ComponentsUnchanged})"));
                 break;
@@ -634,7 +648,9 @@ public static class Program
             case "diff":
             case "plan":
             {
-                var result = await world.PlanApplyAsync(applyInput ?? ApplyDocument.Load(args.Positional(1, "Apply file")),
+                var document = applyInput ?? ApplyDocument.Load(args.Positional(1, "Apply file"));
+                output.ProtectDiagnosticsState(document, args.Option("state"));
+                var result = await world.PlanApplyAsync(document,
                     ApplyOptionsFrom(args, output), cancellationToken);
                 output.SetDiagnostics(result.Warnings.Select(issue => ApplyDiagnostics.Unknown(issue.Code, issue.Message,
                     args.Positionals[0].ToLowerInvariant(), issue.Severity, args.Option("build-id")) with { JsonPath = issue.Path }).ToArray());
@@ -668,7 +684,7 @@ public static class Program
             {
                 if (args.Has("catalog"))
                 {
-                    var catalog = ApplyCatalog.Load(args.RequireOption("catalog"));
+                    var catalog = validationCatalog!;
                     var session = await client.GetSessionInfoAsync(cancellationToken);
                     if (catalog.UnavailableReason() is not null || catalog.Identity!.ResoniteVersion != session.ResoniteVersion ||
                         catalog.Identity.ResoniteLinkVersion != session.ResoniteLinkVersion ||
@@ -676,7 +692,9 @@ public static class Program
                         ApplyDocumentValidator.ThrowIfInvalid(new ApplyValidationResult(false, "1", 0, 0, 0, true,
                             [new("APPLY_CATALOG_UNAVAILABLE", "Catalog identity does not match the connected session/client package.", "$")]));
                 }
-                var validation = await world.ValidateApplyAsync(applyInput ?? ApplyDocument.Load(args.Positional(1, "Apply file")), true, cancellationToken);
+                var document = applyInput ?? ApplyDocument.Load(args.Positional(1, "Apply file"));
+                output.ProtectDiagnosticsState(document, args.Option("state"));
+                var validation = await world.ValidateApplyAsync(document, true, cancellationToken);
                 ApplyDocumentValidator.ThrowIfInvalid(validation);
                 output.Success(validation);
                 break;

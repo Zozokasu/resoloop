@@ -15,6 +15,7 @@ public sealed class OutputWriter(bool json, bool brief = false) : IDisposable
     private string? diagnosticBuildId;
     private string? diagnosticsPath;
     private bool showApplyDiagnostics;
+    private readonly List<string> protectedDiagnosticsPaths = [];
     public string? ReportPath { get; private set; }
 
     public void ConfigureDiagnostics(string? path, string phase, string? buildId)
@@ -28,14 +29,32 @@ public sealed class OutputWriter(bool json, bool brief = false) : IDisposable
     public void SetDiagnostics(IReadOnlyList<ApplyDiagnostic> diagnostics) => diagnosticReport = new("1",
         diagnostics.Select(d => d with { Phase = diagnosticPhase }).ToArray());
 
+    internal void ProtectDiagnosticsPath(string? path)
+    {
+        if (path is not null) protectedDiagnosticsPaths.Add(path);
+    }
+
+    internal void ProtectDiagnosticsState(ApplyDocument document, string? path)
+    {
+        if (diagnosticsPath is null) return;
+        try { ProtectDiagnosticsPath(document.ResolveStatePath(path)); }
+        // State resolution is auxiliary here; the command retains its own judgement.
+        catch (Exception ex) when (ex is RLoopException or IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+        { }
+    }
+
     // Auxiliary output never changes validation/mutation judgement or exit status.
-    // CreateNew prevents diagnostics from overwriting IR, source, catalog or state.
+    // Protect selected paths even when missing; CreateNew also guards existing files.
     public void WriteDiagnostics()
     {
         if (diagnosticsPath is null) return;
         try
         {
-            using var stream = new FileStream(Path.GetFullPath(diagnosticsPath), FileMode.CreateNew, FileAccess.Write, FileShare.Read);
+            var fullPath = Path.GetFullPath(diagnosticsPath);
+            var comparer = OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
+            if (protectedDiagnosticsPaths.Any(path => comparer.Equals(fullPath, Path.GetFullPath(path))))
+                throw new IOException("The diagnostics destination is a selected input, catalog or state path.");
+            using var stream = new FileStream(fullPath, FileMode.CreateNew, FileAccess.Write, FileShare.Read);
             JsonSerializer.Serialize(stream, diagnosticReport, new JsonSerializerOptions
             { PropertyNamingPolicy = JsonNamingPolicy.CamelCase, WriteIndented = true });
         }
