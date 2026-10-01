@@ -1463,6 +1463,9 @@ public sealed partial class ApplyWorkflowTests : IDisposable
         public string? TargetClaimedBy { get; set; }
         public CancellationTokenSource? Cancellation { get; set; }
         public string SessionId { get; set; } = "session-1";
+        public string EngineVersion { get; set; } = "test";
+        public string LinkVersion { get; set; } = "test";
+        public Action? OnDescribe { get; set; }
         public bool LoseNextSlotCreateResponse { get; set; }
         public int AssetImports { get; private set; }
         public List<string> DescribedTypes { get; } = [];
@@ -1483,7 +1486,7 @@ public sealed partial class ApplyWorkflowTests : IDisposable
 
         public Task ConnectAsync(Uri uri, TimeSpan timeout, CancellationToken cancellationToken = default) => Task.CompletedTask;
         public Task<SessionInfo> GetSessionInfoAsync(CancellationToken cancellationToken = default) =>
-            Task.FromResult(Read(new SessionInfo("ws://fake", true, "test", "test", SessionId)));
+            Task.FromResult(Read(new SessionInfo("ws://fake", true, EngineVersion, LinkVersion, SessionId)));
 
         public Task<SlotInfo> GetSlotAsync(string id, int depth, bool includeComponentData, CancellationToken cancellationToken = default)
         {
@@ -1589,6 +1592,7 @@ public sealed partial class ApplyWorkflowTests : IDisposable
 
         public Task<ComponentTypeInfo> DescribeComponentTypeAsync(string type, CancellationToken cancellationToken = default)
         {
+            OnDescribe?.Invoke();
             _requests++;
             DescribedTypes.Add(type);
             if (!_knownMembers.TryGetValue(type, out var known))

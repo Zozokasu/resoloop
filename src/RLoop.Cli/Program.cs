@@ -10,7 +10,9 @@ namespace RLoop.Cli;
 
 public static class Program
 {
-    public static async Task<int> Main(string[] args)
+    public static Task<int> Main(string[] args) => RunAsync(args);
+
+    internal static async Task<int> RunAsync(string[] args, Func<CancellationToken, Task<IResoniteClient>>? connect = null)
     {
         var parsed = ParsedArguments.Parse(args);
         using var output = new OutputWriter(parsed.Has("json"), parsed.Has("brief"));
@@ -33,6 +35,10 @@ public static class Program
                 PrintHelp(Console.Out, parsed.Positionals.Count > 1 ? parsed.Positionals[1] : null);
                 return ExitCodes.Success;
             }
+
+            var applyCommand = parsed.Positionals[0].ToLowerInvariant() is "validate" or "diff" or "plan" or "apply";
+            if (parsed.Has("build-id") && !applyCommand)
+                throw new RLoopException("INVALID_OPTION", "--build-id is supported only by validate/diff/plan/apply.", ExitCodes.InvalidArguments);
 
             if (parsed.Positionals[0].Equals("init", StringComparison.OrdinalIgnoreCase))
             {
@@ -151,12 +157,26 @@ public static class Program
                 return RunLogs(parsed, output, resolution.Config);
             if (parsed.Has("catalog") && !parsed.Positionals[0].Equals("validate", StringComparison.OrdinalIgnoreCase))
                 throw new RLoopException("INVALID_OPTION", "--catalog is supported only by validate.", ExitCodes.InvalidArguments);
+            ApplyDocument? applyInput = null;
+            if (applyCommand)
+            {
+                applyInput = ApplyDocument.LoadBundleIfPresent(parsed.Positional(1, "Apply file"), parsed.Has("build-id") ? parsed.RequireOption("build-id") : null);
+                if (applyInput?.GetBundleCatalog() is { } catalog)
+                {
+                    if (resolution.Config.Backend == "workbench")
+                        throw new RLoopException("BACKEND_UNSUPPORTED", "Build bundles are not supported on the workbench backend.", ExitCodes.OperationFailed);
+                    if (parsed.Has("catalog"))
+                        throw new RLoopException("INVALID_OPTION", "Bundle input uses only its embedded catalog; omit --catalog.", ExitCodes.InvalidArguments);
+                    if ((parsed.Has("strict") || !parsed.Positionals[0].Equals("validate", StringComparison.OrdinalIgnoreCase)) && catalog.Synthetic)
+                        throw new RLoopException("APPLY_CATALOG_UNAVAILABLE", "Synthetic bundle catalogs cannot be used by connected commands.", ExitCodes.ValidationFailed);
+                }
+            }
             if (parsed.Positionals[0].Equals("validate", StringComparison.OrdinalIgnoreCase) && (!parsed.Has("strict") || parsed.Has("catalog")))
             {
-                var document = ApplyDocument.Load(parsed.Positional(1, "Apply file"));
+                var document = applyInput ?? ApplyDocument.Load(parsed.Positional(1, "Apply file"));
                 var validation = parsed.Has("catalog")
                     ? await ApplyCatalogValidator.ValidateFileAsync(document, parsed.RequireOption("catalog"), commandToken)
-                    : await ApplyDocumentValidator.ValidateAsync(document, cancellationToken: commandToken);
+                    : await ApplyDocumentValidator.ValidateAsync(document, cancellationToken: commandToken, catalog: document.GetBundleCatalog());
                 ApplyDocumentValidator.ThrowIfInvalid(validation);
                 if (!parsed.Has("strict"))
                 {
@@ -249,9 +269,13 @@ public static class Program
             Uri? linkUri = string.Equals(resolution.Config.Backend, "workbench", StringComparison.Ordinal)
                 ? null
                 : await ResoniteClientFactory.ResolveConnectionUrlAsync(parsed, resolution.Config, commandToken);
-            await using var client = await ResoniteClientFactory.ConnectAsync(parsed, resolution.Config, ReflectionCacheFrom(parsed), commandToken, linkUri);
+            await using var client = connect is null
+                ? await ResoniteClientFactory.ConnectAsync(parsed, resolution.Config, ReflectionCacheFrom(parsed), commandToken, linkUri)
+                : await connect(commandToken);
+            if (applyInput?.GetBundleCatalog() is not null)
+                applyInput.VerifyBundleSession(await client.GetSessionInfoAsync(commandToken), CatalogMapper.ClientPackageVersion);
             var world = new WorldService(client, GeneratedContentMetadata.SourceForVersion(ProductVersion()));
-            await RunResonite(parsed, output, client, world, commandToken);
+            await RunResonite(parsed, output, client, world, commandToken, applyInput);
             return ExitCodes.Success;
         }
         catch (OperationCanceledException) when (!userCancellation.IsCancellationRequested)
@@ -515,7 +539,7 @@ public static class Program
     }
 
     private static async Task RunResonite(ParsedArguments args, OutputWriter output, IResoniteClient client,
-        WorldService world, CancellationToken cancellationToken)
+        WorldService world, CancellationToken cancellationToken, ApplyDocument? applyInput = null)
     {
         var command = args.Positionals[0].ToLowerInvariant();
         switch (command)
@@ -596,7 +620,7 @@ public static class Program
             case "type": await RunType(args, output, client, cancellationToken); break;
             case "apply":
             {
-                var document = ApplyDocument.Load(args.Positional(1, "Apply file"));
+                var document = applyInput ?? ApplyDocument.Load(args.Positional(1, "Apply file"));
                 var result = await world.ApplyAsync(document, ApplyOptionsFrom(args, output), cancellationToken);
                 output.Success(result, w => w.WriteLine($"applied slot {result.SlotId} (created={result.Created}, slots added={result.SlotsCreated}, slots updated={result.SlotsUpdated}, slots unchanged={result.SlotsUnchanged}, components added={result.ComponentsAdded}, updated={result.ComponentsUpdated}, unchanged={result.ComponentsUnchanged})"));
                 break;
@@ -604,7 +628,7 @@ public static class Program
             case "diff":
             case "plan":
             {
-                var result = await world.PlanApplyAsync(ApplyDocument.Load(args.Positional(1, "Apply file")),
+                var result = await world.PlanApplyAsync(applyInput ?? ApplyDocument.Load(args.Positional(1, "Apply file")),
                     ApplyOptionsFrom(args, output), cancellationToken);
                 var filters = new[] { "changes-only", "creates-only", "deletes-only", "summary" }.Where(args.Has).ToArray();
                 if (filters.Length > 1)
@@ -644,7 +668,7 @@ public static class Program
                         ApplyDocumentValidator.ThrowIfInvalid(new ApplyValidationResult(false, "1", 0, 0, 0, true,
                             [new("APPLY_CATALOG_UNAVAILABLE", "Catalog identity does not match the connected session/client package.", "$")]));
                 }
-                var validation = await world.ValidateApplyAsync(ApplyDocument.Load(args.Positional(1, "Apply file")), true, cancellationToken);
+                var validation = await world.ValidateApplyAsync(applyInput ?? ApplyDocument.Load(args.Positional(1, "Apply file")), true, cancellationToken);
                 ApplyDocumentValidator.ThrowIfInvalid(validation);
                 output.Success(validation);
                 break;
@@ -1263,13 +1287,13 @@ public static class Program
         var detail = command?.ToLowerInvariant() switch
         {
             "apply" => """
-resoloop apply FILE.json [--state FILE] [--require-state] [--adopt] [--profile] [--ndjson-progress] [--prune --yes]
+resoloop apply FILE [--build-id R] [--state FILE] [--require-state] [--adopt] [--profile] [--ndjson-progress] [--prune --yes]
 
 Validates and plans the complete document before mutation. State checkpoints make a failed non-atomic apply resumable.
 --adopt binds one verified existing root. --prune deletes stale owned targets and always requires --yes.
 """,
             "plan" or "diff" => """
-resoloop plan|diff FILE.json [--state FILE] [--require-state] [--adopt]
+resoloop plan|diff FILE [--build-id R] [--state FILE] [--require-state] [--adopt]
   [--changes-only | --creates-only | --deletes-only | --summary]
 
 Never changes the world. Without --brief, JSON includes a separate changes array; output filters affect only operations.
@@ -1359,9 +1383,10 @@ Editing:
   resoloop type search QUERY [--limit 50]
   resoloop type describe TYPE [--member FIELD] (field value type / enum values; Nullable is unwrapped)
   resoloop type specialize OPEN_GENERIC TYPE_ARGUMENT [...]
-  resoloop validate FILE.json [--catalog FILE] [--strict]
-  resoloop plan|diff FILE.json [--state FILE] [--require-state] [--adopt] [--changes-only|--creates-only|--deletes-only|--summary]
-  resoloop apply FILE.json [--state FILE] [--require-state] [--adopt] [--profile] [--ndjson-progress] [--prune --yes]
+  resoloop validate FILE [--build-id R] [--catalog FILE] [--strict]
+  resoloop plan|diff FILE [--build-id R] [--state FILE] [--require-state] [--adopt] [--changes-only|--creates-only|--deletes-only|--summary]
+  resoloop apply FILE [--build-id R] [--state FILE] [--require-state] [--adopt] [--profile] [--ndjson-progress] [--prune --yes]
+  Bundle input requires --build-id R and its embedded catalog; ordinary JSON omits --build-id.
   resoloop test FILE.json [--state FILE] [--probe --yes]
   resoloop uix audit SLOT|$slot:key [--state FILE] [--depth 6] [--max-slots 256] [--strict]
   resoloop uix recipe list

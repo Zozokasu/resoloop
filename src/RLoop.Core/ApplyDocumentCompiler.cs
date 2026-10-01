@@ -17,6 +17,18 @@ public static class ApplyDocumentCompiler
     {
         var context = new Context();
         var root = LoadMerged(Path.GetFullPath(path), context, []);
+        return CompileRoot(root, context);
+    }
+
+    internal static Result CompileBundleIr(string text)
+    {
+        var root = JsonNode.Parse(text) as JsonObject ?? throw new JsonException("The root must be an object.");
+        if (root.ContainsKey("include")) ApplyBuildBundle.Fail("inputUnknown", "Bundle IR cannot read external includes.");
+        return CompileRoot(root, new Context());
+    }
+
+    private static Result CompileRoot(JsonObject root, Context context)
+    {
         if (root.Remove("limits", out var limits))
         {
             if (limits is not JsonObject settings || settings.Any(pair => pair.Key != "expandedNodes") ||

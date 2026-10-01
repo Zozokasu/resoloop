@@ -471,6 +471,14 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
         if (options.Prune && !options.ConfirmDeletes)
             throw new RLoopException("CONFIRMATION_REQUIRED", "apply --prune is destructive and requires --yes.", ExitCodes.ValidationFailed,
                 new Dictionary<string, object?> { ["deleteCandidates"] = prepared.Deletions.Count, ["stateFile"] = prepared.StatePath });
+        document.BuildBundle?.VerifyInputs();
+        var firstWriteChecked = false;
+        void BeforeFirstWrite()
+        {
+            if (firstWriteChecked) return;
+            document.BuildBundle?.VerifyInputs();
+            firstWriteChecked = true;
+        }
         var counts = new ApplyCounts();
         var updatedComponents = new HashSet<string>(StringComparer.Ordinal);
         var completed = 0;
@@ -480,8 +488,13 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
             foreach (var asset in prepared.Assets)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                asset.Url = asset.DirectUrl ?? (asset.Action == "no-op" && prepared.State.Assets.TryGetValue(asset.Key, out var saved)
-                    ? saved.Url : await client.ImportAssetAsync(asset.Spec, asset.ResolvedSource, cancellationToken));
+                if (asset.DirectUrl is not null) asset.Url = asset.DirectUrl;
+                else if (asset.Action == "no-op" && prepared.State.Assets.TryGetValue(asset.Key, out var saved)) asset.Url = saved.Url;
+                else
+                {
+                    BeforeFirstWrite();
+                    asset.Url = await client.ImportAssetAsync(asset.Spec, asset.ResolvedSource, cancellationToken);
+                }
                 if (asset.Action == "create") counts.AssetsImported++;
                 else counts.AssetsUnchanged++;
                 prepared.State.Assets[asset.Key] = new ApplyStateAsset(asset.Spec.Kind, asset.SourceHash, asset.Url);
@@ -506,6 +519,7 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
                         // creates the Slot, the next run can bind the exact pending path without duplicating it.
                         prepared.State.Slots[node.StableKey] = new ApplyStateSlot(string.Empty, node.Path, node.Spec.RuntimeRelocatable, node.PathSegments);
                         Checkpoint(prepared);
+                        BeforeFirstWrite();
                         node.Id = await client.CreateSlotAsync(new SlotCreateRequest(parentId, node.Spec.Name,
                             node.Spec.Position?.ToVector3("position"), node.Spec.Rotation?.ToQuaternion("rotation"),
                             node.Spec.Scale?.ToVector3("scale")), cancellationToken);
@@ -513,6 +527,7 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
                         break;
                     case "update":
                         node.Id = node.Existing!.Id;
+                        BeforeFirstWrite();
                         await client.UpdateSlotAsync(CreateSlotUpdate(node, prepared.ParentId), cancellationToken);
                         counts.SlotsUpdated++;
                         break;
@@ -549,6 +564,7 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
                     }
                     prepared.State.Components[component.StableKey] = CreateComponentState(component, string.Empty);
                     Checkpoint(prepared);
+                    BeforeFirstWrite();
                     var created = await client.AddComponentAsync(component.Node.Id!, component.Spec.Type, initialFields, cancellationToken);
                     component.Id = created.Id;
                     component.ResolvedType = created.Type;
@@ -574,6 +590,7 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
                                     !MemberMatchesRaw(current, field.Value)).ToDictionary(StringComparer.Ordinal);
                 if (changed.Count > 0)
                 {
+                    BeforeFirstWrite();
                     await client.SetComponentMembersAsync(component.Id!, component.ResolvedType ?? component.Spec.Type, changed, cancellationToken);
                     if (component.Existing is not null) { counts.ComponentsUpdated++; updatedComponents.Add(component.Id!); }
                 }
@@ -583,6 +600,7 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
                 }
                 if (component.RelocationSource is not null && component.RelocationSource.Id != component.Id)
                 {
+                    BeforeFirstWrite();
                     await client.RemoveComponentAsync(component.RelocationSource.Id, cancellationToken);
                     counts.ComponentsDeleted++;
                     component.RelocationSource = null;
@@ -599,6 +617,7 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
             foreach (var node in prepared.Nodes.Where(node => node.SlotAction == "relocate"))
             {
                 cancellationToken.ThrowIfCancellationRequested();
+                BeforeFirstWrite();
                 await client.UpdateSlotAsync(CreateSlotUpdate(node, prepared.ParentId), cancellationToken);
                 counts.SlotsUpdated++;
                 prepared.State.Slots[node.StableKey] = new ApplyStateSlot(node.Id!, node.Path, node.Spec.RuntimeRelocatable, node.PathSegments);
@@ -612,6 +631,7 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
                 foreach (var deletion in prepared.Deletions.Where(x => x.Kind == "component"))
                 {
                     cancellationToken.ThrowIfCancellationRequested();
+                    BeforeFirstWrite();
                     await client.RemoveComponentAsync(deletion.Id, cancellationToken);
                     prepared.State.Components.Remove(deletion.Key);
                     counts.ComponentsDeleted++;
@@ -624,6 +644,7 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
                     cancellationToken.ThrowIfCancellationRequested();
                     if (deletion.Id.Equals("Root", StringComparison.OrdinalIgnoreCase))
                         throw new RLoopException("DELETE_ROOT_FORBIDDEN", "The Root Slot can never be pruned.", ExitCodes.ValidationFailed);
+                    BeforeFirstWrite();
                     await client.DeleteSlotAsync(deletion.Id, cancellationToken);
                     foreach (var componentKey in deletion.CoveredComponentKeys ?? [])
                         prepared.State.Components.Remove(componentKey);
@@ -986,6 +1007,7 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
         var statePath = resolvedStatePath ?? document.ResolveStatePath(options.StateFile);
         var state = ApplyStateStore.Load(statePath, document.Ownership!.Key, options.RequireState);
         var session = await client.GetSessionInfoAsync(cancellationToken);
+        document.BuildBundle?.VerifySession(session);
         // SessionId is kept in state for compatibility only. UniqueSessionId is a per-connection counter,
         // so a match never authorizes reusing a stored live ID; every reuse is proven against the live world.
         state.SessionId = session.UniqueSessionId;
