@@ -24,7 +24,10 @@ internal sealed class ScriptedMetadataLink : IMetadataLink
     public int SessionCalls;
     public TaskCompletionSource? SessionFailureGate;
     public TaskCompletionSource? SessionStarted;
-    public readonly Dictionary<string, string> TypeDefinitionFailures = new();
+    public readonly Dictionary<string, string?> TypeDefinitionFailures = new();
+    public readonly Dictionary<string, string?> ComponentDefinitionFailures = new();
+    public readonly List<string> RequestedTypeDefinitions = [];
+    public readonly List<string> RequestedComponentDefinitions = [];
     /// <summary>When set, GetComponentDefinition waits for this task before answering.</summary>
     public TaskCompletionSource? DefinitionGate;
     public TaskCompletionSource? DefinitionStarted;
@@ -84,8 +87,10 @@ internal sealed class ScriptedMetadataLink : IMetadataLink
     public async Task<LinkComponentDefinition> GetComponentDefinition(string type)
     {
         DefinitionCalls++;
+        RequestedComponentDefinitions.Add(type);
         DefinitionStarted?.TrySetResult();
         if (DefinitionGate is not null) await DefinitionGate.Task;
+        if (ComponentDefinitionFailures.TryGetValue(type, out var error)) return new(false, error, default!);
         return Definitions.TryGetValue(type, out var definition)
             ? new LinkComponentDefinition(true, null, definition)
             : new LinkComponentDefinition(false, "Component type not found.", default!);
@@ -93,6 +98,7 @@ internal sealed class ScriptedMetadataLink : IMetadataLink
 
     public async Task<LinkTypeDefinition> GetTypeDefinition(string type)
     {
+        RequestedTypeDefinitions.Add(type);
         if (TypeDefinitionFailures.TryGetValue(type, out var error)) return new(false, error, default!);
         if (TypeDefinitionFailureGate is not null)
         {
