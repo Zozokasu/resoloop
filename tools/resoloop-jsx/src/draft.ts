@@ -4,12 +4,14 @@
 // `key` optional in the prop types so prototypes can omit keys while a tree
 // is being iterated on. Omitted keys are still rejected at evaluation time
 // (EXPLICIT_KEY_REQUIRED) unless the build runs with --draft, in which case a
-// deterministic key is generated with a warning.
+// legacy index-derived key is generated with a warning and a source guard
+// that blocks validate/apply. Scope always requires explicit local keys.
 
 import { Slot as SlotImpl, Component as ComponentImpl } from "./elements.js";
 import type { SlotProps, ComponentProps, JsxNode } from "./elements.js";
 
 export { Fragment } from "./jsx-runtime.js";
+export { Scope } from "./elements.js";
 export { ref } from "./ref.js";
 export { BuildError, evaluate } from "./evaluate.js";
 
@@ -28,6 +30,8 @@ export const Component =
 
 export type {
   JsonValue,
+  ScopeProps,
+  ScopeElement,
   ManagedField,
   RelocationTransform,
   JsxElement,

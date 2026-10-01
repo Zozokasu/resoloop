@@ -8,7 +8,7 @@
 // removed from the props object. createElement merges it back into props so
 // the evaluator can uniformly read element.props.key.
 
-import { Slot, Component } from "./elements.js";
+import { Slot, Component, Scope } from "./elements.js";
 import type { JsxChild, JsxNode, JsxElement } from "./elements.js";
 
 /** Marker for <>{...}</> fragments. Also recognized by reference equality;
@@ -35,6 +35,7 @@ function createElement(type: unknown, props: any, key?: string): JsxNode {
   if (type === Slot) return { kind: "slot", props: merged };
   if (type === Component) return { kind: "component", props: merged };
   if (type === Fragment) return { kind: "fragment", props: merged };
+  if (type === Scope) return { kind: "scope", props: merged };
   // User-defined function component: resolved eagerly at evaluation time.
   if (typeof type === "function") return type(merged);
   throw new Error(

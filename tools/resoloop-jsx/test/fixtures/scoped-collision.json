@@ -1,0 +1,8 @@
+{
+  "schemaVersion": "1", "ownership": { "key": "collision" },
+  "slot": { "key": "root", "name": "Root" },
+  "children": [
+    { "$scope": "left", "slot": { "key": "body", "name": "Left" } },
+    { "slot": { "key": "left::body", "name": "Legacy" } }
+  ]
+}

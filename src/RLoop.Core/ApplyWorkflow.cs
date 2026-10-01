@@ -212,6 +212,7 @@ public static class ApplyDocumentValidator
         var components = 0;
         var references = 0;
         var componentKeys = new Dictionary<string, (ApplyComponentSpec Spec, string Path)>(StringComparer.Ordinal);
+        var effectiveComponentKeys = new Dictionary<string, string>(StringComparer.Ordinal);
         var slotKeys = new HashSet<string>(StringComparer.Ordinal);
         var slotMigrations = new Dictionary<string, (string NewKey, string Path)>(StringComparer.Ordinal);
         var componentMigrations = new Dictionary<string, (string NewKey, string Path)>(StringComparer.Ordinal);
@@ -372,12 +373,20 @@ public static class ApplyDocumentValidator
             }
 
             var typeCounts = new Dictionary<string, int>(StringComparer.Ordinal);
+            var typeOrdinals = new Dictionary<string, int>(StringComparer.Ordinal);
             for (var i = 0; i < (nodeComponents?.Count ?? 0); i++)
             {
                 var component = nodeComponents![i];
                 var componentPath = $"{path}.components[{i}]";
                 components++;
                 componentPaths.Add((component, componentPath));
+                var normalizedType = StableEffectiveKeys.NormalizeType(component.Type ?? "");
+                var ordinal = typeOrdinals.GetValueOrDefault(normalizedType);
+                typeOrdinals[normalizedType] = ordinal + 1;
+                var effectiveKey = component.Key ?? (slot.Key is null ? null : StableEffectiveKeys.Component(slot.Key, normalizedType, ordinal));
+                if (effectiveKey is not null && !effectiveComponentKeys.TryAdd(effectiveKey, componentPath) &&
+                    (string.IsNullOrWhiteSpace(component.Key) || !componentKeys.ContainsKey(effectiveKey)))
+                    Issue("APPLY_KEY_DUPLICATE", $"Effective Component key '{effectiveKey}' collides with '{effectiveComponentKeys[effectiveKey]}'. Supply distinct explicit keys.", componentPath + ".key");
                 if (string.IsNullOrWhiteSpace(component.Type))
                     Issue("APPLY_COMPONENT_TYPE_MISSING", "Every component requires type.", componentPath + ".type");
                 else
@@ -435,6 +444,9 @@ public static class ApplyDocumentValidator
         }
 
         if (document.Slot is not null) Visit(document.Slot, document.Components, document.Children, "$");
+
+        foreach (var key in slotKeys.Where(key => key.Contains("::", StringComparison.Ordinal) && componentKeys.ContainsKey(key)))
+            Issue("APPLY_KEY_DUPLICATE", $"Scoped stable key '{key}' is used by both a Slot and a Component.", componentKeys[key].Path + ".key");
 
         foreach (var migration in slotMigrations.Where(migration => slotKeys.Contains(migration.Key)))
             Issue("APPLY_MIGRATION_SOURCE_DECLARED",

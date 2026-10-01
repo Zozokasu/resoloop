@@ -1,0 +1,5 @@
+{
+  "schemaVersion": "1", "ownership": { "key": "separator" },
+  "slot": { "key": "root", "name": "Root" },
+  "children": [{ "$scope": "left:", "slot": { "key": "body", "name": "Left" } }]
+}

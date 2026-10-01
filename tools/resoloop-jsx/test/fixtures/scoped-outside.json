@@ -1,0 +1,8 @@
+{
+  "schemaVersion": "1", "ownership": { "key": "outside" },
+  "slot": { "key": "root", "name": "Root" },
+  "components": [{ "key": "target", "type": "Test.Target" }],
+  "children": [{ "$scope": "left", "slot": { "key": "body", "name": "Left" },
+    "components": [{ "key": "wire", "type": "Test.Source", "fields": { "Target": "$component:target" } }]
+  }]
+}

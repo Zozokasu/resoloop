@@ -79,7 +79,7 @@ public static class AuthoringSchema
             ? "Save example as the --request JSON for type query/check. Select explicit members; enums requests enum candidates only for selected fields. Optional expect maps member names to kind/valueType/targetType/enumValues (required name/value subset). Up to 64 selections and 256 members total. Version-matched disk metadata is trusted by query/check/diff/apply; --refresh or --cache off requests fresh definitions."
             : topic == "camera"
             ? "Place under cameras as an object keyed by bookmark name. position/target are finite 3-number vectors in Root space; they must differ. fieldOfView is vertical degrees (5..170); width/height are 64..8192. Use target, not rotation/lookAt."
-            : "Expanded declaration DTO; required marks non-null parameters without defaults plus required document fields. Semantic validation still applies. Component fields/types require runtime Reflection. Source include/prototypes/parameters are expanded before this schema. Examples are structural, not a visible UI.";
+            : "Expanded declaration DTO; required marks non-null parameters without defaults plus required document fields. Semantic validation still applies. Component fields/types require runtime Reflection. Source include/prototypes/parameters and node $scope are expanded before this schema. $scope requires explicit colon-free local keys, emits instance::local, and scopes short stable references in fields/initialFields; qualified references are absolute. Legacy keys stay literal. Index-generated TSX $draftKeys output is rejected before validation/apply. Examples are structural, not a visible UI.";
         return new(topic, properties, example, note);
     }
 

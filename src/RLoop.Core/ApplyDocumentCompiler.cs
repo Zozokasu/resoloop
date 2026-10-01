@@ -33,6 +33,9 @@ public static class ApplyDocumentCompiler
         root.Remove("variables");
         root.Remove("prototypes");
         ExpandValue(root, variables, prototypes, context, "$", allowPrototype: false);
+        if (root.ContainsKey("$draftKeys"))
+            Fail("APPLY_DRAFT_KEY_UNSTABLE", "Draft index-derived keys cannot be validated or applied. Copy the intended effective keys into explicit key props and rebuild without generated keys.");
+        ExpandScopes(root);
         DetectStableKeyConflicts(root);
         context.ExpandedNodes = CountNodes(root);
         if (context.ExpandedNodes > context.NodeLimit)
@@ -286,6 +289,56 @@ public static class ApplyDocumentCompiler
         }
         if (result.Contains("${", StringComparison.Ordinal)) Fail("APPLY_PARAMETER_NOT_FOUND", $"{path} contains an unresolved parameter in '{result}'.");
         return JsonValue.Create(result);
+    }
+
+    private static void ExpandScopes(JsonObject root)
+    {
+        var scopes = new HashSet<string>(StringComparer.Ordinal);
+        void Rewrite(JsonNode? node, string scope)
+        {
+            if (node is JsonObject obj)
+                foreach (var key in obj.Select(pair => pair.Key).ToArray())
+                {
+                    if (obj[key] is JsonValue value && value.TryGetValue<string>(out var text))
+                        obj[key] = StableKeyScope.ResolveSelector(scope, text);
+                    else Rewrite(obj[key], scope);
+                }
+            else if (node is JsonArray array)
+                for (var i = 0; i < array.Count; i++)
+                    if (array[i] is JsonValue value && value.TryGetValue<string>(out var text))
+                        array[i] = StableKeyScope.ResolveSelector(scope, text);
+                    else Rewrite(array[i], scope);
+        }
+        void Key(JsonObject spec, string scope, string path, string prefix)
+        {
+            if (scope.Length == 0) return;
+            var local = spec["key"] is JsonValue value && value.TryGetValue<string>(out var text) ? text : null;
+            spec["key"] = StableKeyScope.QualifyLocal(scope, local, path + ".key");
+            if (spec["migrateFrom"] is JsonValue migration && migration.TryGetValue<string>(out var previous))
+                spec["migrateFrom"] = StableKeyScope.ResolveSelector(scope, prefix + previous)[prefix.Length..];
+        }
+        void Visit(JsonObject node, string scope, string path)
+        {
+            if (node.Remove("$scope", out var declaration))
+            {
+                var instance = declaration is JsonValue value && value.TryGetValue<string>(out var text) ? text : null;
+                scope = StableKeyScope.QualifyLocal(scope, instance, path + ".$scope");
+                if (!scopes.Add(scope)) Fail("APPLY_EXPANDED_KEY_CONFLICT", $"Instance scope '{scope}' is repeated at {path}.");
+            }
+            if (node["slot"] is JsonObject slot) Key(slot, scope, path + ".slot", "$slot:");
+            if (node["components"] is JsonArray components)
+                for (var i = 0; i < components.Count; i++)
+                    if (components[i] is JsonObject component)
+                    {
+                        Key(component, scope, path + $".components[{i}]", "$component:");
+                        Rewrite(component["fields"], scope);
+                        Rewrite(component["initialFields"], scope);
+                    }
+            if (node["children"] is JsonArray children)
+                for (var i = 0; i < children.Count; i++)
+                    if (children[i] is JsonObject child) Visit(child, scope, path + $".children[{i}]");
+        }
+        Visit(root, "", "$");
     }
 
     private static void DetectStableKeyConflicts(JsonObject root)

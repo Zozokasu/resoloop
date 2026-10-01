@@ -5,7 +5,12 @@
 //   $member:key.Member       -> Component member ID
 //   $slot-member:key.Member  -> Slot's own exposed field ID
 
+import { scopeKey } from "./scope.js";
+
 export const ref = {
+  /** Compose an absolute scoped key, including nested instance segments. */
+  key: (...segments: [string, string, ...string[]]) =>
+    segments.reduce((scope, segment) => scopeKey(scope, segment, "ref.key"), ""),
   /** `$slot:${key}` — reference to a Slot declared with this stable key. */
   slot: (key: string) => `$slot:${key}`,
   /** `$component:${key}` — reference to a Component declared with this key. */

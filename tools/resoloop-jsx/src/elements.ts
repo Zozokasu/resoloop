@@ -89,8 +89,20 @@ export interface FragmentElement {
   props: { children?: JsxChild };
 }
 
+/** Explicit source-only boundary for a reusable subtree. */
+export interface ScopeProps {
+  /** Stable instance segment; no ':'. Keys inside are local to this scope. */
+  instanceKey: string;
+  children?: JsxChild;
+}
+
+export interface ScopeElement {
+  kind: "scope";
+  props: ScopeProps;
+}
+
 /** Any element object produced by the JSX runtime. */
-export type JsxElement = SlotElement | ComponentElement | FragmentElement;
+export type JsxElement = SlotElement | ComponentElement | FragmentElement | ScopeElement;
 
 /** Anything that may legally appear as a JSX child / function-component
  *  return value. Arrays may be nested arbitrarily; falsy values are dropped
@@ -115,4 +127,8 @@ export function Component(_props: ComponentProps): JsxNode {
   throw new Error(
     "resoloop-jsx: <Component> is a compile-time marker and must not be invoked directly"
   );
+}
+
+export function Scope(_props: ScopeProps): JsxNode {
+  throw new Error("resoloop-jsx: <Scope> is a compile-time marker");
 }
