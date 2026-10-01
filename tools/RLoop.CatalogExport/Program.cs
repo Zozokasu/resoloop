@@ -14,8 +14,8 @@ try
     else if (args.Length == 7 && args[0] == "capture" && args[1] == "--live" && args[2] == "--url" && args[4] == "--types")
     {
         var names = System.Text.Json.JsonSerializer.Deserialize<string[]>(File.ReadAllText(args[5])) ?? [];
-        using var deadline = new CancellationTokenSource(TimeSpan.FromMinutes(2));
-        var snapshot = await CatalogCapture.ReadAsync(new Uri(args[3]), names, deadline.Token);
+        // Capture owns the two-minute budget so it can save partial limit evidence.
+        var snapshot = await CatalogCapture.ReadAsync(new Uri(args[3]), names, CancellationToken.None);
         CatalogMapper.SaveSnapshot(snapshot, args[6]);
     }
     else

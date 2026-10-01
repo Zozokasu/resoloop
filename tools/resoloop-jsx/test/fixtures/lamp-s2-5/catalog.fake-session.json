@@ -4,14 +4,14 @@
     "resoniteVersion": "OFFLINE-FIXTURE-engine-1",
     "resoniteLinkVersion": "OFFLINE-FIXTURE-server-1",
     "clientPackageVersion": "0.13.1",
-    "mapperVersion": "1",
+    "mapperVersion": "2",
     "retrievedAt": "2026-10-01T00:00:00+00:00"
   },
   "evidenceIdentity": {
     "resoniteVersion": "OFFLINE-FIXTURE-engine-1",
     "resoniteLinkVersion": "OFFLINE-FIXTURE-server-1",
     "clientPackageVersion": "0.13.1",
-    "mapperVersion": "1",
+    "mapperVersion": "2",
     "retrievedAt": "2026-10-01T00:00:00+00:00"
   },
   "source": "live",

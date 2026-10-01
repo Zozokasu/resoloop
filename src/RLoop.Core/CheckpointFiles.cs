@@ -7,6 +7,7 @@ internal static class CheckpointFiles
 {
     internal static IDisposable AcquireWriter(string path)
     {
+        path = Path.GetFullPath(path);
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         try { return new FileStream(path + ".lock", FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None); }
         catch (IOException ex)
@@ -47,6 +48,7 @@ internal static class CheckpointFiles
 
     internal static void Write(string path, string content)
     {
+        path = Path.GetFullPath(path);
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         var temporary = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
         try

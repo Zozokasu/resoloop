@@ -68,7 +68,7 @@ public sealed class ApplyCatalogTests
             "mismatch" => catalog with { EvidenceIdentity = catalog.Identity! with { ResoniteVersion = "other" } },
             "unverified" => catalog with { Source = "unverified" },
             "hash" => catalog with { ContentHash = new string('0', 64) },
-            _ => catalog with { Identity = catalog.Identity! with { MapperVersion = "2" }, EvidenceIdentity = catalog.Identity! with { MapperVersion = "2" } }
+            _ => catalog with { Identity = catalog.Identity! with { MapperVersion = "1" }, EvidenceIdentity = catalog.Identity! with { MapperVersion = "1" } }
         };
         var doc = new ApplyDocument("1", new("test"), new("Root", null, null, null, null, "root"), [new("Synthetic.Holder", new Dictionary<string, JsonElement> { ["Amount"] = JsonSerializer.SerializeToElement(1) }, "holder")]);
         var issues = ApplyCatalogValidator.Validate(doc, catalog);

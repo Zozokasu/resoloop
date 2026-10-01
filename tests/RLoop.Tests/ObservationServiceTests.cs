@@ -5,6 +5,45 @@ namespace RLoop.Tests;
 
 public sealed class ObservationServiceTests
 {
+    [Theory]
+    [InlineData("FrooxEngine.Light")]
+    [InlineData("[FrooxEngine]FrooxEngine.Light")]
+    public async Task QualifiedAndUnqualifiedObservationFiltersMatchTheSameComponents(string filter)
+    {
+        var tree = Slot("Root", "Root", [
+            Slot("a", "A", components: [Component("c1", "[FrooxEngine]FrooxEngine.Light")]),
+            Slot("b", "B", components: [Component("c2", "FrooxEngine.Light")]),
+            Slot("c", "C", components: [Component("c3", "Other.Light")])
+        ]);
+        var client = new TreeClient(tree);
+        var query = await new ObservationService(client).QueryAsync("Root", "Root",
+            new HierarchyQueryFilter(ComponentType: filter), ["slot.id", "component.type"]);
+        Assert.Equal(new[] { "a", "b" }, query.Data.Matches.Select(m => m.SlotId));
+        Assert.All(query.Data.Matches, m => Assert.Equal("FrooxEngine.Light", Assert.Single(m.Components!).Type));
+        var world = new WorldService(client);
+        Assert.Equal(new[] { "a", "b" }, (await world.FindAsync(null, false, filter, 8)).Select(m => m.Id));
+        Assert.Equal(new[] { "c1", "c2" }, (await world.InspectComponentsAsync("Root", 8, filter)).Select(m => m.Component.Id));
+        var profile = (await new ObservationService(client).ProfileAsync("Root", "Root", groupBy: "component-type")).Data;
+        Assert.Equal(2, profile.Groups.Single(g => g.Key == "FrooxEngine.Light").Count);
+    }
+
+    [Fact]
+    public async Task SnapshotFilenameWithoutDirectoryWritesInCurrentDirectory()
+    {
+        // A unique basename avoids changing process-wide CurrentDirectory during parallel tests.
+        var name = "l3-snapshot-" + Guid.NewGuid().ToString("N") + ".json";
+        var expected = Path.Combine(Environment.CurrentDirectory, name);
+        try
+        {
+            var exit = await RLoop.Cli.Program.RunAsync(["snapshot", "create", "--output", name, "--url", "ws://offline:1", "--json"],
+                _ => Task.FromResult<IResoniteClient>(new TreeClient(Slot("Root", "Root"))));
+            Assert.Equal(ExitCodes.Success, exit);
+            Assert.True(File.Exists(expected));
+            Assert.Equal(0, ObservationService.Diff(name, name).Changes);
+        }
+        finally { File.Delete(expected); }
+    }
+
     [Fact]
     public async Task ProfileCountsDepthBreadthAndComponentTypesWithoutDumpingSlots()
     {

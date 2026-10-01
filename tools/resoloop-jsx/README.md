@@ -19,6 +19,39 @@ npm run contract     # additionally validates every fixture against the
                      # dotnet-built resoloop CLI (requires dotnet build ResoLoop.slnx)
 ```
 
+## Build a project outside this repository
+
+Build this package first (`npm run build` in `tools/resoloop-jsx`). In your
+external project's directory, prepare a local dependency so both TypeScript
+and the emitted JavaScript can resolve `node_modules/resoloop-jsx`:
+
+```powershell
+npm install --offline --save C:\path\to\resoloop\tools\resoloop-jsx
+```
+
+The package is private and is not installed from a registry. Use the local
+package directory with its built `dist/` and existing dependencies. When working
+entirely offline, a directory link at `PROJECT/node_modules/resoloop-jsx` to that
+built package is also sufficient; no global install resolves project imports.
+
+Set `"type": "module"` in the **project's** `package.json`, for example:
+
+```json
+{ "private": true, "type": "module", "dependencies": { "resoloop-jsx": "file:C:/path/to/resoloop/tools/resoloop-jsx" } }
+```
+
+Export a single `<Slot>` as the entry's default export, with optional named
+`ownership`, then run from the project directory:
+
+```powershell
+node C:\path\to\resoloop\tools\resoloop-jsx\dist\src\cli.js build main.tsx -o out.json
+```
+
+Without the project's `"type": "module"`, NodeNext may compile the entry as
+CommonJS and deliver `{ default: { ownership, default } }`. This reports
+`ROOT_MUST_BE_SINGLE_SLOT` with the package.json cause. Add the module setting
+and rebuild; do not unwrap or alter the TSX root to work around it.
+
 ## Usage
 
 ```sh

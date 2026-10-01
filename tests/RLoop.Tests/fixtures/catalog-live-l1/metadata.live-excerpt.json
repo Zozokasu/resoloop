@@ -1,0 +1,423 @@
+{
+  "components": [
+    {
+      "baseTypeIsComponent": true,
+      "categoryPath": "Rendering",
+      "type": {
+        "baseType": null,
+        "fullTypeName": "[FrooxEngine]FrooxEngine.MeshRenderer",
+        "assemblyName": "FrooxEngine",
+        "namespace": "FrooxEngine",
+        "name": "MeshRenderer",
+        "isAbstract": false,
+        "isInterface": false,
+        "isGenericType": false,
+        "isGenericTypeDefinition": false,
+        "directGenericParameterCount": 0,
+        "isEnginePrimitive": false,
+        "isValueType": false,
+        "isEnum": false,
+        "isComponent": true,
+        "isSyncObject": false,
+        "isWorldElement": true,
+        "isNested": false,
+        "declaringType": null,
+        "genericArguments": null,
+        "genericParameters": null,
+        "interfaces": [
+          {
+            "type": "[FrooxEngine]FrooxEngine.IBounded",
+            "isGenericParameter": false,
+            "genericArguments": null
+          },
+          {
+            "type": "[FrooxEngine]FrooxEngine.IHighlightable",
+            "isGenericParameter": false,
+            "genericArguments": null
+          },
+          {
+            "type": "[FrooxEngine]FrooxEngine.IRenderable",
+            "isGenericParameter": false,
+            "genericArguments": null
+          }
+        ]
+      },
+      "members": {
+        "Mesh": {
+          "$type": "reference",
+          "targetType": {
+            "type": "[FrooxEngine]FrooxEngine.IAssetProvider<>",
+            "isGenericParameter": false,
+            "genericArguments": [
+              {
+                "type": "[FrooxEngine]FrooxEngine.Mesh",
+                "isGenericParameter": false,
+                "genericArguments": null
+              }
+            ]
+          },
+          "type": {
+            "type": "[FrooxEngine]FrooxEngine.AssetRef<>",
+            "isGenericParameter": false,
+            "genericArguments": [
+              {
+                "type": "[FrooxEngine]FrooxEngine.Mesh",
+                "isGenericParameter": false,
+                "genericArguments": null
+              }
+            ]
+          }
+        }
+      },
+      "methods": []
+    },
+    {
+      "baseTypeIsComponent": true,
+      "categoryPath": "Assets/Procedural Meshes",
+      "type": {
+        "baseType": null,
+        "fullTypeName": "[FrooxEngine]FrooxEngine.SphereMesh",
+        "assemblyName": "FrooxEngine",
+        "namespace": "FrooxEngine",
+        "name": "SphereMesh",
+        "isAbstract": false,
+        "isInterface": false,
+        "isGenericType": false,
+        "isGenericTypeDefinition": false,
+        "directGenericParameterCount": 0,
+        "isEnginePrimitive": false,
+        "isValueType": false,
+        "isEnum": false,
+        "isComponent": true,
+        "isSyncObject": false,
+        "isWorldElement": true,
+        "isNested": false,
+        "declaringType": null,
+        "genericArguments": null,
+        "genericParameters": null,
+        "interfaces": []
+      },
+      "members": {},
+      "methods": []
+    },
+    {
+      "baseTypeIsComponent": true,
+      "categoryPath": "Assets/Materials",
+      "type": {
+        "baseType": null,
+        "fullTypeName": "[FrooxEngine]FrooxEngine.PBS_Metallic",
+        "assemblyName": "FrooxEngine",
+        "namespace": "FrooxEngine",
+        "name": "PBS_Metallic",
+        "isAbstract": false,
+        "isInterface": false,
+        "isGenericType": false,
+        "isGenericTypeDefinition": false,
+        "directGenericParameterCount": 0,
+        "isEnginePrimitive": false,
+        "isValueType": false,
+        "isEnum": false,
+        "isComponent": true,
+        "isSyncObject": false,
+        "isWorldElement": true,
+        "isNested": false,
+        "declaringType": null,
+        "genericArguments": null,
+        "genericParameters": null,
+        "interfaces": [
+          {
+            "type": "[FrooxEngine]FrooxEngine.IPBS_Metallic",
+            "isGenericParameter": false,
+            "genericArguments": null
+          }
+        ]
+      },
+      "members": {},
+      "methods": []
+    }
+  ],
+  "types": [
+    {
+      "baseType": null,
+      "fullTypeName": "[FrooxEngine]FrooxEngine.IAssetProvider<[FrooxEngine]FrooxEngine.Mesh>",
+      "assemblyName": "FrooxEngine",
+      "namespace": "FrooxEngine",
+      "name": "IAssetProvider",
+      "isAbstract": true,
+      "isInterface": true,
+      "isGenericType": true,
+      "isGenericTypeDefinition": false,
+      "directGenericParameterCount": 1,
+      "isEnginePrimitive": false,
+      "isValueType": false,
+      "isEnum": false,
+      "isComponent": false,
+      "isSyncObject": false,
+      "isWorldElement": true,
+      "isNested": false,
+      "declaringType": null,
+      "genericArguments": [
+        {
+          "type": "[FrooxEngine]FrooxEngine.Mesh",
+          "isGenericParameter": false,
+          "genericArguments": null
+        }
+      ],
+      "genericParameters": null,
+      "interfaces": [
+        {
+          "type": "[FrooxEngine]FrooxEngine.IAssetProvider",
+          "isGenericParameter": false,
+          "genericArguments": null
+        },
+        {
+          "type": "[FrooxEngine]FrooxEngine.IComponentBase",
+          "isGenericParameter": false,
+          "genericArguments": null
+        },
+        {
+          "type": "[FrooxEngine]FrooxEngine.IDestroyable",
+          "isGenericParameter": false,
+          "genericArguments": null
+        },
+        {
+          "type": "[FrooxEngine]FrooxEngine.IWorker",
+          "isGenericParameter": false,
+          "genericArguments": null
+        },
+        {
+          "type": "[FrooxEngine]FrooxEngine.IWorldElement",
+          "isGenericParameter": false,
+          "genericArguments": null
+        },
+        {
+          "type": "[FrooxEngine]FrooxEngine.IUpdatable",
+          "isGenericParameter": false,
+          "genericArguments": null
+        },
+        {
+          "type": "[FrooxEngine]FrooxEngine.IChangeable",
+          "isGenericParameter": false,
+          "genericArguments": null
+        },
+        {
+          "type": "[FrooxEngine]FrooxEngine.ILinkable",
+          "isGenericParameter": false,
+          "genericArguments": null
+        }
+      ]
+    },
+    {
+      "baseType": null,
+      "fullTypeName": "[FrooxEngine]FrooxEngine.IAssetProvider<[FrooxEngine]FrooxEngine.Material>",
+      "assemblyName": "FrooxEngine",
+      "namespace": "FrooxEngine",
+      "name": "IAssetProvider",
+      "isAbstract": true,
+      "isInterface": true,
+      "isGenericType": true,
+      "isGenericTypeDefinition": false,
+      "directGenericParameterCount": 1,
+      "isEnginePrimitive": false,
+      "isValueType": false,
+      "isEnum": false,
+      "isComponent": false,
+      "isSyncObject": false,
+      "isWorldElement": true,
+      "isNested": false,
+      "declaringType": null,
+      "genericArguments": [
+        {
+          "type": "[FrooxEngine]FrooxEngine.Material",
+          "isGenericParameter": false,
+          "genericArguments": null
+        }
+      ],
+      "genericParameters": null,
+      "interfaces": [
+        {
+          "type": "[FrooxEngine]FrooxEngine.IAssetProvider",
+          "isGenericParameter": false,
+          "genericArguments": null
+        },
+        {
+          "type": "[FrooxEngine]FrooxEngine.IComponentBase",
+          "isGenericParameter": false,
+          "genericArguments": null
+        },
+        {
+          "type": "[FrooxEngine]FrooxEngine.IDestroyable",
+          "isGenericParameter": false,
+          "genericArguments": null
+        },
+        {
+          "type": "[FrooxEngine]FrooxEngine.IWorker",
+          "isGenericParameter": false,
+          "genericArguments": null
+        },
+        {
+          "type": "[FrooxEngine]FrooxEngine.IWorldElement",
+          "isGenericParameter": false,
+          "genericArguments": null
+        },
+        {
+          "type": "[FrooxEngine]FrooxEngine.IUpdatable",
+          "isGenericParameter": false,
+          "genericArguments": null
+        },
+        {
+          "type": "[FrooxEngine]FrooxEngine.IChangeable",
+          "isGenericParameter": false,
+          "genericArguments": null
+        },
+        {
+          "type": "[FrooxEngine]FrooxEngine.ILinkable",
+          "isGenericParameter": false,
+          "genericArguments": null
+        }
+      ]
+    },
+    {
+      "baseType": null,
+      "fullTypeName": "[FrooxEngine]FrooxEngine.IPBS_Metallic",
+      "assemblyName": "FrooxEngine",
+      "namespace": "FrooxEngine",
+      "name": "IPBS_Metallic",
+      "isAbstract": true,
+      "isInterface": true,
+      "isGenericType": false,
+      "isGenericTypeDefinition": false,
+      "directGenericParameterCount": 0,
+      "isEnginePrimitive": false,
+      "isValueType": false,
+      "isEnum": false,
+      "isComponent": false,
+      "isSyncObject": false,
+      "isWorldElement": true,
+      "isNested": false,
+      "declaringType": null,
+      "genericArguments": null,
+      "genericParameters": null,
+      "interfaces": [
+        {
+          "type": "[FrooxEngine]FrooxEngine.IPBS_Material",
+          "isGenericParameter": false,
+          "genericArguments": null
+        },
+        {
+          "type": "[FrooxEngine]FrooxEngine.IAssetProvider<>",
+          "isGenericParameter": false,
+          "genericArguments": [
+            {
+              "type": "[FrooxEngine]FrooxEngine.Material",
+              "isGenericParameter": false,
+              "genericArguments": null
+            }
+          ]
+        },
+        {
+          "type": "[FrooxEngine]FrooxEngine.IAssetProvider",
+          "isGenericParameter": false,
+          "genericArguments": null
+        },
+        {
+          "type": "[FrooxEngine]FrooxEngine.IComponentBase",
+          "isGenericParameter": false,
+          "genericArguments": null
+        },
+        {
+          "type": "[FrooxEngine]FrooxEngine.IDestroyable",
+          "isGenericParameter": false,
+          "genericArguments": null
+        },
+        {
+          "type": "[FrooxEngine]FrooxEngine.IWorker",
+          "isGenericParameter": false,
+          "genericArguments": null
+        },
+        {
+          "type": "[FrooxEngine]FrooxEngine.IWorldElement",
+          "isGenericParameter": false,
+          "genericArguments": null
+        },
+        {
+          "type": "[FrooxEngine]FrooxEngine.IUpdatable",
+          "isGenericParameter": false,
+          "genericArguments": null
+        },
+        {
+          "type": "[FrooxEngine]FrooxEngine.IChangeable",
+          "isGenericParameter": false,
+          "genericArguments": null
+        },
+        {
+          "type": "[FrooxEngine]FrooxEngine.ILinkable",
+          "isGenericParameter": false,
+          "genericArguments": null
+        }
+      ]
+    },
+    {
+      "baseType": null,
+      "fullTypeName": "[FrooxEngine]FrooxEngine.IAssetProvider",
+      "assemblyName": "FrooxEngine",
+      "namespace": "FrooxEngine",
+      "name": "IAssetProvider",
+      "isAbstract": true,
+      "isInterface": true,
+      "isGenericType": false,
+      "isGenericTypeDefinition": false,
+      "directGenericParameterCount": 0,
+      "isEnginePrimitive": false,
+      "isValueType": false,
+      "isEnum": false,
+      "isComponent": false,
+      "isSyncObject": false,
+      "isWorldElement": true,
+      "isNested": false,
+      "declaringType": null,
+      "genericArguments": null,
+      "genericParameters": null,
+      "interfaces": [
+        {
+          "type": "[FrooxEngine]FrooxEngine.IComponentBase",
+          "isGenericParameter": false,
+          "genericArguments": null
+        },
+        {
+          "type": "[FrooxEngine]FrooxEngine.IDestroyable",
+          "isGenericParameter": false,
+          "genericArguments": null
+        },
+        {
+          "type": "[FrooxEngine]FrooxEngine.IWorker",
+          "isGenericParameter": false,
+          "genericArguments": null
+        },
+        {
+          "type": "[FrooxEngine]FrooxEngine.IWorldElement",
+          "isGenericParameter": false,
+          "genericArguments": null
+        },
+        {
+          "type": "[FrooxEngine]FrooxEngine.IUpdatable",
+          "isGenericParameter": false,
+          "genericArguments": null
+        },
+        {
+          "type": "[FrooxEngine]FrooxEngine.IChangeable",
+          "isGenericParameter": false,
+          "genericArguments": null
+        },
+        {
+          "type": "[FrooxEngine]FrooxEngine.ILinkable",
+          "isGenericParameter": false,
+          "genericArguments": null
+        }
+      ]
+    }
+  ],
+  "syncObjects": [],
+  "aliases": {},
+  "enums": {}
+}
