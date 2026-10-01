@@ -468,7 +468,7 @@ public sealed partial class ApplyWorkflowTests : IDisposable
     }
 
     [Fact]
-    public async Task StableKeysResolveDuplicateTypesAfterSessionChange()
+    public async Task StableKeysWithoutIdentityEvidenceStopForDuplicateTypesAfterSessionChange()
     {
         var client = new FakeResoniteClient();
         var service = new WorldService(client);
@@ -483,10 +483,8 @@ public sealed partial class ApplyWorkflowTests : IDisposable
 
         client.SessionId = "session-2";
         client.ResetWriteCounts();
-        var reapplied = await service.ApplyAsync(document, new ApplyOptions(state));
-
-        Assert.Equal(0, reapplied.ComponentsAdded);
-        Assert.Equal(2, reapplied.ComponentsUnchanged);
+        var error = await Assert.ThrowsAsync<RLoopException>(() => service.ApplyAsync(document, new ApplyOptions(state)));
+        Assert.Equal("STABLE_COMPONENT_AMBIGUOUS", error.Code);
         Assert.Equal(0, client.Writes);
     }
 
@@ -1468,6 +1466,9 @@ public sealed partial class ApplyWorkflowTests : IDisposable
         public bool LoseNextSlotCreateResponse { get; set; }
         public int AssetImports { get; private set; }
         public List<string> DescribedTypes { get; } = [];
+        public Dictionary<string, Exception> SlotReadFailures { get; } = new(StringComparer.Ordinal);
+        public HashSet<string> UnreadComponentIds { get; } = new(StringComparer.Ordinal);
+        public HashSet<string> SlotIdsOmittedFromChildren { get; } = new(StringComparer.Ordinal);
 
         public FakeResoniteClient(ApplyDocument? definitions = null)
         {
@@ -1488,8 +1489,9 @@ public sealed partial class ApplyWorkflowTests : IDisposable
         {
             cancellationToken.ThrowIfCancellationRequested();
             _requests++;
+            if (SlotReadFailures.TryGetValue(id, out var failure)) throw failure;
             if (!_slots.TryGetValue(id, out var slot)) throw new RLoopException("SLOT_NOT_FOUND", id, ExitCodes.NotFound);
-            return Task.FromResult(Map(slot, depth, includeComponentData));
+            return Task.FromResult(Map(slot, depth, includeComponentData, UnreadComponentIds, SlotIdsOmittedFromChildren));
         }
 
         public Task<ComponentInfo> GetComponentAsync(string id, CancellationToken cancellationToken = default)
@@ -1695,10 +1697,12 @@ public sealed partial class ApplyWorkflowTests : IDisposable
             ScanNodes(document.Components, document.Children);
         }
 
-        private static SlotInfo Map(FakeSlot slot, int depth, bool members) => new(slot.Id, slot.Name, slot.ParentId,
+        private static SlotInfo Map(FakeSlot slot, int depth, bool members, IReadOnlySet<string>? unread = null,
+            IReadOnlySet<string>? omittedChildren = null) => new(slot.Id, slot.Name, slot.ParentId,
             slot.Position, slot.Rotation, slot.Scale, true, true, null, false,
-            slot.Components.Select(x => new ComponentSummary(x.Id, x.Type, members ? x.Members : null)).ToArray(),
-            depth == 0 ? [] : slot.Children.Select(x => Map(x, depth < 0 ? -1 : depth - 1, members)).ToArray(),
+            slot.Components.Select(x => new ComponentSummary(x.Id, x.Type, members && unread?.Contains(x.Id) != true ? x.Members : null)).ToArray(),
+            depth == 0 ? [] : slot.Children.Where(x => omittedChildren?.Contains(x.Id) != true)
+                .Select(x => Map(x, depth < 0 ? -1 : depth - 1, members, unread, omittedChildren)).ToArray(),
             Members: new Dictionary<string, MemberValue> { ["Rotation"] = new("field", slot.Id + ":Rotation", "floatQ") });
 
         public sealed class FakeSlot(string id, string name, string? parentId, Vector3Value? position,

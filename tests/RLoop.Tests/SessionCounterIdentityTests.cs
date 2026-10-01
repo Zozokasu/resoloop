@@ -58,7 +58,7 @@ public sealed partial class ApplyWorkflowTests
     }
 
     [Fact]
-    public async Task EqualSessionCounterDoesNotReuseStoredComponentIdOfADifferentType()
+    public async Task EqualSessionCounterStopsWhenStoredComponentIdOnOwnerHasADifferentType()
     {
         var (state, document, _) = await ApplyIntoOldWorldAsync("counter-component");
         var newWorld = new FakeResoniteClient();
@@ -67,11 +67,12 @@ public sealed partial class ApplyWorkflowTests
         var service = new WorldService(newWorld);
 
         var resolveError = await Assert.ThrowsAsync<RLoopException>(() => service.ResolveStableReferenceAsync(state, "$component:target", "session-1"));
-        await service.ApplyAsync(document, new ApplyOptions(state));
+        var applyError = await Assert.ThrowsAsync<RLoopException>(() => service.ApplyAsync(document, new ApplyOptions(state)));
 
-        Assert.Equal("FLUX_BINDING_COMPONENT_NOT_FOUND", resolveError.Code);
+        Assert.Equal("APPLY_STORED_ID_UNVERIFIED", resolveError.Code);
+        Assert.Equal("APPLY_STORED_ID_UNVERIFIED", applyError.Code);
         var slot = Assert.Single(newWorld.Root.Children);
-        Assert.Equal(["Test.Source", "Test.Target"], slot.Components.Select(component => component.Type).ToArray());
+        Assert.Equal("Test.Source", Assert.Single(slot.Components).Type);
         Assert.DoesNotContain(slot.Components[0].Members, member => member.Value.Value?.ToJsonString() == "true");
     }
 
