@@ -93,6 +93,118 @@ public sealed class S1ReviewFixTests
 
     // C4
     [Fact]
+    public async Task SessionFailureAnswerAfterReconnectAbortsTheWholeQuery()
+    {
+        var link = new ScriptedMetadataLink { Connected = false };
+        link.SessionFailureGate = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        link.SessionStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var client = new ResoniteLinkClientAdapter(link, Timeout, new ReflectionCacheOptions("auto"));
+        await client.ConnectAsync(A, Timeout);
+        var query = ReflectionQuery.RunAsync(client, new ReflectionRequest([new(Comp, ["Intensity"]), new(Listed, ["Intensity"])]));
+        await link.SessionStarted.Task.WaitAsync(Timeout);
+        link.Connected = false;
+        await client.ConnectAsync(B, Timeout);
+        link.SessionFailureGate.SetResult();
+
+        var ex = await Assert.ThrowsAsync<RLoopException>(() => query);
+        Assert.Equal("CONNECTION_GENERATION_CHANGED", ex.Code);
+        Assert.Equal(1, link.SessionCalls);
+        Assert.Equal(0, link.DefinitionCalls);
+        Assert.Equal(0, link.GetAllCalls);
+    }
+
+    [Fact]
+    public async Task NonComponentTypeDefinitionFailureIsUnreadableRatherThanNotFound()
+    {
+        const string enumType = "[Test]Test.Mode";
+        var link = new ScriptedMetadataLink { AllTypes = [Comp] };
+        link.TypeDefinitions[enumType] = new Link.TypeDefinition { FullTypeName = enumType, IsEnum = true };
+        link.TypeDefinitionFailures[enumType] = "world loading";
+        await using var client = Adapter(link);
+
+        var ex = await Assert.ThrowsAsync<RLoopException>(() => client.DescribeTypeAsync(enumType));
+        Assert.Equal("TYPE_DEFINITION_UNREADABLE", ex.Code);
+        Assert.Equal(ExitCodes.OperationFailed, ex.ExitCode);
+        Assert.Equal("world loading", ex.Context!["errorInfo"]);
+    }
+
+    [Theory]
+    [InlineData("component-types")]
+    [InlineData("type")]
+    [InlineData("component")]
+    public async Task CacheFastPathRejectsNewGenerationCacheForAnOldRequest(string cache)
+    {
+        var link = new ScriptedMetadataLink { AllTypes = [Comp], Connected = false };
+        link.Definitions[Comp] = WidgetDefinition();
+        link.TypeDefinitions[Comp] = new Link.TypeDefinition { FullTypeName = Comp, Name = "old" };
+        await using var client = Adapter(link);
+        await client.ConnectAsync(A, Timeout);
+        async Task Read()
+        {
+            if (cache == "component-types") await client.SearchComponentTypesAsync("Widget", 10);
+            else if (cache == "type") await client.DescribeTypeMetadataAsync(Comp);
+            else await client.DescribeComponentMetadataAsync(Comp);
+        }
+        await Read();
+        client.BeforeCacheReadForTests = kind =>
+        {
+            Assert.Equal(cache, kind);
+            client.BeforeCacheReadForTests = null;
+            // Deterministically reconnect and populate the new cache after the old request captured its generation.
+            link.Connected = false;
+            client.ConnectAsync(B, Timeout).GetAwaiter().GetResult();
+            link.AllTypes = [Listed];
+            link.TypeDefinitions[Comp] = new Link.TypeDefinition { FullTypeName = Comp, Name = "new" };
+            link.Definitions[Comp].CategoryPath = "new";
+            Read().GetAwaiter().GetResult();
+        };
+
+        var ex = await Assert.ThrowsAsync<RLoopException>(Read);
+        Assert.Equal("CONNECTION_GENERATION_CHANGED", ex.Code);
+    }
+
+    [Fact]
+    public async Task TypeListCacheHitIsCopiedUnderLockBeforeReconnectCanClearIt()
+    {
+        var link = new ScriptedMetadataLink { AllTypes = [Comp], Connected = false };
+        await using var client = Adapter(link);
+        await client.ConnectAsync(A, Timeout);
+        await client.SearchComponentTypesAsync("Widget", 10);
+        var events = new List<string>();
+        void Record(string value) { lock (events) events.Add(value); }
+        var reconnectDone = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        client.InsideReconnectLockForTests = () => Record("reconnect-locked");
+        client.AfterCacheReadForTests = kind =>
+        {
+            Assert.Equal("component-types", kind);
+            client.AfterCacheReadForTests = null;
+            Record("cache-copied");
+            link.Connected = false;
+            var thread = new Thread(() =>
+            {
+                try { client.ConnectAsync(B, Timeout).GetAwaiter().GetResult(); reconnectDone.SetResult(); }
+                catch (Exception ex) { reconnectDone.SetException(ex); }
+            }) { IsBackground = true };
+            thread.Start();
+            // Thread state supplies synchronization evidence; the deadline only bounds a broken test.
+            Assert.True(SpinWait.SpinUntil(() =>
+            {
+                lock (events) if (events.Contains("reconnect-locked")) return true;
+                return (thread.ThreadState & System.Threading.ThreadState.WaitSleepJoin) != 0;
+            }, Timeout));
+            lock (events) Assert.Equal(["cache-copied"], events);
+            Record("read-lock-held");
+        };
+
+        Assert.Equal([Comp], await client.SearchComponentTypesAsync("Widget", 10));
+        await reconnectDone.Task.WaitAsync(Timeout);
+        lock (events) Assert.Equal(["cache-copied", "read-lock-held", "reconnect-locked"], events);
+        link.AllTypes = [Listed];
+        Assert.Equal([Listed], await client.SearchComponentTypesAsync("Gradient", 10));
+        Assert.Equal(2, link.GetAllCalls);
+    }
+
+    [Fact]
     public async Task GenerationChangeAbortsTheWholeQueryInsteadOfMovingToTheNextType()
     {
         var link = new ScriptedMetadataLink { AllTypes = [Comp, "[FrooxEngine]FrooxEngine.Other"], Connected = false };
