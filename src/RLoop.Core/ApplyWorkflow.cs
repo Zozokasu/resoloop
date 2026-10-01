@@ -5,14 +5,16 @@ using System.Text.RegularExpressions;
 
 namespace RLoop.Core;
 
-public sealed record ApplyOwnershipSpec(string Key);
+public sealed record ApplyOwnershipSpec([property: ApplyShape(JsonRequired = true, OutputRequired = true)] string Key);
 
+[ApplySourceProperty("$draftKeys", "true")]
+[ApplySourceProperty("$scope", "string")]
 public sealed record ApplyDocument(
-    string? SchemaVersion,
-    ApplyOwnershipSpec? Ownership,
-    ApplySlotSpec? Slot,
-    IReadOnlyList<ApplyComponentSpec>? Components,
-    IReadOnlyList<ApplyNodeSpec>? Children = null,
+    [property: ApplyShape(JsonRequired = true, OutputRequired = true, Choices = new[] { "1" })] string? SchemaVersion,
+    [property: ApplyShape(JsonRequired = true, OutputRequired = true)] ApplyOwnershipSpec? Ownership,
+    [property: ApplyShape(JsonRequired = true, OutputRequired = true)] ApplySlotSpec? Slot,
+    [property: ApplyShape(OutputRequired = true)] IReadOnlyList<ApplyComponentSpec>? Components,
+    [property: ApplyShape(OutputRequired = true)] IReadOnlyList<ApplyNodeSpec>? Children = null,
     IReadOnlyDictionary<string, ApplyAssetSpec>? Assets = null,
     IReadOnlyDictionary<string, ApplyCameraSpec>? Cameras = null,
     IReadOnlyList<ApplyTestSpec>? Tests = null,
@@ -104,14 +106,7 @@ public sealed record ApplyDocument(
             [$"Did you mean '{suggestion}'? Unknown properties are rejected to prevent silent no-ops."];
     }
 
-    private static readonly string[] KnownProperties =
-    [
-        "schemaVersion", "authoring", "projectRoot", "source", "ownershipSource", "ownership", "key", "slot", "parent", "name", "position", "rotation", "scale",
-        "managedFields", "preserveWorldTransform", "runtimeRelocatable", "relocationTransform", "migrateFrom", "components", "children", "type", "fields",
-        "initialFields", "identityFields", "assets", "cameras", "tests", "assertions", "probe", "arguments",
-        "method", "kind", "target", "value", "values", "restore", "safe", "expected", "exists", "phase", "componentType",
-        "count", "delta", "timeoutMs", "pollMs"
-    ];
+    private static IEnumerable<string> KnownProperties => ApplyShape.KnownProperties;
 }
 
 public sealed record ApplyCompilationSummary(
@@ -123,26 +118,29 @@ public sealed record ApplyCompilationSummary(
     long ExpandedBytes,
     int ExpandedNodeLimit = 10_000);
 
-public sealed record ApplyAssetSpec(string Kind, string Source, IReadOnlyDictionary<string, JsonElement>? Options = null);
+public sealed record ApplyAssetSpec(
+    [property: ApplyShape(JsonRequired = true)] string Kind,
+    [property: ApplyShape(JsonRequired = true)] string Source,
+    [property: ApplyShape(SuggestCandidate = false)] IReadOnlyDictionary<string, JsonElement>? Options = null);
 
 public sealed record ApplyCameraSpec(
-    float[] Position,
-    float[] Target,
-    float FieldOfView = 60,
-    int Width = 1280,
-    int Height = 720,
-    string? Output = null,
-    bool Representative = false);
+    [property: ApplyShape(Length = 3, JsonRequired = true)] float[] Position,
+    [property: ApplyShape(Length = 3, JsonRequired = true)] float[] Target,
+    [property: ApplyShape(SuggestCandidate = false)] float FieldOfView = 60,
+    [property: ApplyShape(SuggestCandidate = false)] int Width = 1280,
+    [property: ApplyShape(SuggestCandidate = false)] int Height = 720,
+    [property: ApplyShape(SuggestCandidate = false)] string? Output = null,
+    [property: ApplyShape(SuggestCandidate = false)] bool Representative = false);
 
 public sealed record ApplyTestSpec(
-    string Name,
+    [property: ApplyShape(JsonRequired = true)] string Name,
     IReadOnlyList<ApplyAssertionSpec>? Assertions,
     ApplyProbeSpec? Probe = null,
     int TimeoutMs = 2000,
     int PollMs = 100);
 
 public sealed record ApplyAssertionSpec(
-    string Target,
+    [property: ApplyShape(JsonRequired = true)] string Target,
     JsonElement? Expected = null,
     bool? Exists = null,
     string? Phase = null,
@@ -163,28 +161,29 @@ public sealed record ApplyProbeSpec(
     IReadOnlyDictionary<string, JsonElement>? Values = null);
 
 public sealed record ApplySlotSpec(
-    string Name,
-    string? Parent,
-    float[]? Position,
-    float[]? Rotation,
-    float[]? Scale,
-    string? Key = null,
-    IReadOnlyList<string>? ManagedFields = null,
-    bool PreserveWorldTransform = false,
-    string? MigrateFrom = null,
-    string RelocationTransform = "local",
-    bool RuntimeRelocatable = false);
+    [property: ApplyShape(JsonRequired = true, JsxRequired = true, OutputRequired = true, Copy = ApplyCopyPolicy.Identity)] string Name,
+    [property: ApplyShape(Copy = ApplyCopyPolicy.RootOnly)] string? Parent,
+    [property: ApplyShape(Length = 3, CheckFinite = true)] float[]? Position,
+    [property: ApplyShape(Length = 4, CheckFinite = true)] float[]? Rotation,
+    [property: ApplyShape(Length = 3, CheckFinite = true)] float[]? Scale,
+    [property: ApplyShape(JsxRequired = true, Copy = ApplyCopyPolicy.Identity)] string? Key = null,
+    [property: ApplyShape(Choices = new[] { "position", "rotation", "scale" }, Alias = "ManagedField", CheckFinite = true)] IReadOnlyList<string>? ManagedFields = null,
+    [property: ApplyShape(CheckFinite = true)] bool PreserveWorldTransform = false,
+    [property: ApplyShape(Copy = ApplyCopyPolicy.SlotMigration, CheckFinite = true)] string? MigrateFrom = null,
+    [property: ApplyShape(Choices = new[] { "local", "world" }, Alias = "RelocationTransform", CheckFinite = true)] string RelocationTransform = "local",
+    [property: ApplyShape(CheckFinite = true)] bool RuntimeRelocatable = false);
 
 public sealed record ApplyComponentSpec(
-    string Type,
-    IReadOnlyDictionary<string, JsonElement>? Fields,
-    string? Key = null,
-    string? MigrateFrom = null,
-    IReadOnlyDictionary<string, JsonElement>? InitialFields = null,
+    [property: ApplyShape(JsonRequired = true, JsxRequired = true, OutputRequired = true, Copy = ApplyCopyPolicy.Identity)] string Type,
+    [property: ApplyShape(Copy = ApplyCopyPolicy.ScopeValue, CheckFinite = true)] IReadOnlyDictionary<string, JsonElement>? Fields,
+    [property: ApplyShape(JsxRequired = true, Copy = ApplyCopyPolicy.Identity)] string? Key = null,
+    [property: ApplyShape(Copy = ApplyCopyPolicy.ComponentMigration)] string? MigrateFrom = null,
+    [property: ApplyShape(Copy = ApplyCopyPolicy.ScopeValue, CheckFinite = true)] IReadOnlyDictionary<string, JsonElement>? InitialFields = null,
     IReadOnlyList<string>? IdentityFields = null);
 
+[ApplySourceProperty("$scope", "string")]
 public sealed record ApplyNodeSpec(
-    ApplySlotSpec Slot,
+    [property: ApplyShape(JsonRequired = true, OutputRequired = true)] ApplySlotSpec Slot,
     IReadOnlyList<ApplyComponentSpec>? Components,
     IReadOnlyList<ApplyNodeSpec>? Children = null);
 
@@ -347,15 +346,15 @@ public static class ApplyDocumentValidator
             foreach (var duplicate in (children ?? []).GroupBy(child => child.Slot.Name, StringComparer.Ordinal).Where(group => group.Count() > 1))
                 Issue("APPLY_SIBLING_NAME_DUPLICATE", $"Sibling name '{duplicate.Key}' is repeated. Stable keys do not disambiguate names after reconnect; choose distinct sibling names before creating the tree.", path + ".children");
             if (string.IsNullOrWhiteSpace(slot.Name)) Issue("APPLY_SLOT_NAME_MISSING", "Every slot requires a non-empty name.", path + ".slot.name");
-            if (slot.Position is { Length: not 3 }) Issue("APPLY_VECTOR_INVALID", "position requires exactly 3 numbers.", path + ".slot.position");
-            if (slot.Rotation is { Length: not 4 }) Issue("APPLY_QUATERNION_INVALID", "rotation requires exactly 4 numbers.", path + ".slot.rotation");
-            if (slot.Scale is { Length: not 3 }) Issue("APPLY_VECTOR_INVALID", "scale requires exactly 3 numbers.", path + ".slot.scale");
+            if (slot.Position is { } position && position.Length != ApplyShape.Property<ApplySlotSpec>(nameof(ApplySlotSpec.Position)).Rules.Length) Issue("APPLY_VECTOR_INVALID", "position requires exactly 3 numbers.", path + ".slot.position");
+            if (slot.Rotation is { } rotation && rotation.Length != ApplyShape.Property<ApplySlotSpec>(nameof(ApplySlotSpec.Rotation)).Rules.Length) Issue("APPLY_QUATERNION_INVALID", "rotation requires exactly 4 numbers.", path + ".slot.rotation");
+            if (slot.Scale is { } scale && scale.Length != ApplyShape.Property<ApplySlotSpec>(nameof(ApplySlotSpec.Scale)).Rules.Length) Issue("APPLY_VECTOR_INVALID", "scale requires exactly 3 numbers.", path + ".slot.scale");
             if (!string.IsNullOrWhiteSpace(slot.Key) && !slotKeys.Add(slot.Key))
                 Issue("APPLY_SLOT_KEY_DUPLICATE", $"Slot key '{slot.Key}' is duplicated.", path + ".slot.key");
             foreach (var field in slot.ManagedFields ?? [])
-                if (field is not ("position" or "rotation" or "scale"))
+                if (!ApplyShape.Allows<ApplySlotSpec>(nameof(ApplySlotSpec.ManagedFields), field))
                     Issue("APPLY_MANAGED_FIELD_INVALID", $"Managed Slot field '{field}' is not supported.", path + ".slot.managedFields");
-            if (slot.RelocationTransform is not ("local" or "world"))
+            if (!ApplyShape.Allows<ApplySlotSpec>(nameof(ApplySlotSpec.RelocationTransform), slot.RelocationTransform))
                 Issue("APPLY_RELOCATION_TRANSFORM_INVALID", "relocationTransform must be 'local' or 'world'.",
                     path + ".slot.relocationTransform");
             if (slot.RuntimeRelocatable && (nodeComponents?.Count ?? 0) == 0)
