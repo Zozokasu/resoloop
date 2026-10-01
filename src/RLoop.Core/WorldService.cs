@@ -460,10 +460,14 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
     {
         options ??= new ApplyOptions();
         var stopwatch = Stopwatch.StartNew();
-        using var writer = CheckpointFiles.AcquireWriter(ApplyStateStore.ResolvePath(document, options.StateFile));
+        document = document with { ResolvedProjectContext = document.ProjectContext };
+        var statePath = document.ResolveStatePath(options.StateFile);
+        if (options.RequireState && !File.Exists(statePath))
+            throw new RLoopException("APPLY_STATE_NOT_FOUND", $"World state file '{statePath}' does not exist.", ExitCodes.NotFound);
+        using var writer = CheckpointFiles.AcquireWriter(statePath);
         if (client is IResoniteClientDiagnostics diagnostics) diagnostics.ResetMetrics();
         options.Progress?.Invoke(new ApplyProgress("validate", 0, 1, document.SourcePath, "Validating and planning before mutation."));
-        var prepared = await PrepareAsync(document, options, cancellationToken);
+        var prepared = await PrepareAsync(document, options, cancellationToken, statePath);
         if (options.Prune && !options.ConfirmDeletes)
             throw new RLoopException("CONFIRMATION_REQUIRED", "apply --prune is destructive and requires --yes.", ExitCodes.ValidationFailed,
                 new Dictionary<string, object?> { ["deleteCandidates"] = prepared.Deletions.Count, ["stateFile"] = prepared.StatePath });
@@ -973,13 +977,14 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
 
     private static string SymbolKey(string value) => value[(value.IndexOf(':') + 1)..].Split('.')[0];
 
-    private async Task<PreparedApply> PrepareAsync(ApplyDocument document, ApplyOptions options, CancellationToken cancellationToken)
+    private async Task<PreparedApply> PrepareAsync(ApplyDocument document, ApplyOptions options, CancellationToken cancellationToken, string? resolvedStatePath = null)
     {
+        document = document with { ResolvedProjectContext = document.ProjectContext };
         document = GeneratedContentMetadata.AddToGeneratedRoots(document, generatedContentSource);
         var offlineValidation = await ApplyDocumentValidator.ValidateAsync(document, cancellationToken: cancellationToken);
         ApplyDocumentValidator.ThrowIfInvalid(offlineValidation);
-        var statePath = ApplyStateStore.ResolvePath(document, options.StateFile);
-        var state = ApplyStateStore.Load(statePath, document.Ownership!.Key);
+        var statePath = resolvedStatePath ?? document.ResolveStatePath(options.StateFile);
+        var state = ApplyStateStore.Load(statePath, document.Ownership!.Key, options.RequireState);
         var session = await client.GetSessionInfoAsync(cancellationToken);
         // SessionId is kept in state for compatibility only. UniqueSessionId is a per-connection counter,
         // so a match never authorizes reusing a stored live ID; every reuse is proven against the live world.
@@ -1212,7 +1217,7 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
             }
             else
             {
-                var sourceDirectory = Path.GetDirectoryName(prepared.Document.SourcePath) ?? Environment.CurrentDirectory;
+                var sourceDirectory = prepared.Document.ResourceDirectory;
                 resolved = uri?.Scheme == Uri.UriSchemeFile ? uri.LocalPath : Path.GetFullPath(pair.Value.Source, sourceDirectory);
                 if (!File.Exists(resolved))
                     throw new RLoopException("ASSET_SOURCE_NOT_FOUND", $"Asset '{pair.Key}' source '{resolved}' does not exist.", ExitCodes.NotFound);

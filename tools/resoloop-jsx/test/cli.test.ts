@@ -14,7 +14,9 @@ const fixturesDir = path.join(packageRoot, "test", "fixtures");
 const fixture = (name: string) => path.join(fixturesDir, name);
 
 const expectedJson = (name: string) =>
-  JSON.parse(fs.readFileSync(fixture(name), { encoding: "utf8" }));
+  ({ ...JSON.parse(fs.readFileSync(fixture(name), { encoding: "utf8" })), authoring: {
+    projectRoot: fixturesDir, source: name.replace(".expected.json", ".tsx"), ownershipSource: "root-key",
+  } });
 
 const SUCCESS_FIXTURES = [
   "nesting",

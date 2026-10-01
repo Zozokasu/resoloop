@@ -15,10 +15,19 @@ public sealed record ApplyDocument(
     IReadOnlyList<ApplyNodeSpec>? Children = null,
     IReadOnlyDictionary<string, ApplyAssetSpec>? Assets = null,
     IReadOnlyDictionary<string, ApplyCameraSpec>? Cameras = null,
-    IReadOnlyList<ApplyTestSpec>? Tests = null)
+    IReadOnlyList<ApplyTestSpec>? Tests = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] ApplyAuthoringSpec? Authoring = null)
 {
     [JsonIgnore]
     public string? SourcePath { get; init; }
+
+    internal ApplyProjectContext? ResolvedProjectContext { get; init; }
+
+    internal ApplyProjectContext ProjectContext => ResolvedProjectContext is { } context &&
+        context.Authoring == Authoring && context.SourcePath == SourcePath ? context : ApplyProjectContext.Resolve(this);
+    internal string ResourceDirectory => Authoring is null
+        ? Path.GetDirectoryName(SourcePath) ?? Environment.CurrentDirectory
+        : ProjectContext.SourceDirectory;
 
     public string ResolveStatePath(string? explicitPath = null) => ApplyStateStore.ResolvePath(this, explicitPath);
 
@@ -32,12 +41,14 @@ public sealed record ApplyDocument(
         {
             var fullPath = Path.GetFullPath(path);
             var expanded = ApplyDocumentCompiler.Compile(fullPath);
-            return (JsonSerializer.Deserialize<ApplyDocument>(expanded.Json, JsonOptions)
+            ApplyProjectContext.ValidateJson(expanded.Json);
+            var document = (JsonSerializer.Deserialize<ApplyDocument>(expanded.Json, JsonOptions)
                     ?? throw new JsonException("Document was empty.")) with
             {
                 SourcePath = fullPath,
                 Compilation = expanded.Summary
             };
+            return document.Authoring is null ? document : document with { ResolvedProjectContext = ApplyProjectContext.Resolve(document) };
         }
         catch (JsonException ex)
         {
@@ -95,7 +106,7 @@ public sealed record ApplyDocument(
 
     private static readonly string[] KnownProperties =
     [
-        "schemaVersion", "ownership", "key", "slot", "parent", "name", "position", "rotation", "scale",
+        "schemaVersion", "authoring", "projectRoot", "source", "ownershipSource", "ownership", "key", "slot", "parent", "name", "position", "rotation", "scale",
         "managedFields", "preserveWorldTransform", "runtimeRelocatable", "relocationTransform", "migrateFrom", "components", "children", "type", "fields",
         "initialFields", "identityFields", "assets", "cameras", "tests", "assertions", "probe", "arguments",
         "method", "kind", "target", "value", "values", "restore", "safe", "expected", "exists", "phase", "componentType",
@@ -183,7 +194,8 @@ public sealed record ApplyOptions(
     bool Profile = false,
     Action<ApplyProgress>? Progress = null,
     bool Prune = false,
-    bool ConfirmDeletes = false);
+    bool ConfirmDeletes = false,
+    bool RequireState = false);
 
 public static class ApplyDocumentValidator
 {
@@ -193,6 +205,7 @@ public static class ApplyDocumentValidator
         CancellationToken cancellationToken = default,
         IReadOnlyDictionary<string, string>? resolvedTypes = null)
     {
+        if (document.Authoring is not null) _ = document.ProjectContext;
         var issues = new List<ApplyValidationIssue>();
         var strict = client is not null;
         var slots = 0;
@@ -227,7 +240,7 @@ public static class ApplyDocumentValidator
                 var kind = asset.Value.Kind.ToLowerInvariant();
                 if (kind is not ("texture" or "texture2d" or "audio" or "audioclip" or "mesh"))
                     Issue("ASSET_KIND_UNSUPPORTED", $"Local asset kind '{asset.Value.Kind}' is not supported.", path + ".kind");
-                var baseDirectory = Path.GetDirectoryName(document.SourcePath) ?? Environment.CurrentDirectory;
+                var baseDirectory = document.ResourceDirectory;
                 var sourcePath = uri?.Scheme == Uri.UriSchemeFile ? uri.LocalPath : Path.GetFullPath(asset.Value.Source, baseDirectory);
                 if (!File.Exists(sourcePath)) Issue("ASSET_SOURCE_NOT_FOUND", $"Asset source '{sourcePath}' does not exist.", path + ".source");
             }
@@ -629,15 +642,14 @@ internal static class ApplyStateStore
 {
     public static string ResolvePath(ApplyDocument document, string? requestedPath)
     {
+        var context = document.ProjectContext;
         if (!string.IsNullOrWhiteSpace(requestedPath)) return Path.GetFullPath(requestedPath);
-        var sourceDirectory = document.SourcePath is null ? Environment.CurrentDirectory : Path.GetDirectoryName(document.SourcePath)!;
-        var projectConfig = ConfigResolver.FindProjectConfigPath(sourceDirectory);
-        var projectRoot = projectConfig is null ? sourceDirectory : Path.GetDirectoryName(projectConfig)!;
+        var projectRoot = context.ProjectRoot;
         var key = Sanitize(document.Ownership?.Key ?? "unowned");
         return Path.Combine(projectRoot, ".resoloop", "state", key + ".json");
     }
 
-    public static ApplyState Load(string path, string ownershipKey)
+    public static ApplyState Load(string path, string ownershipKey, bool requireState = false)
     {
         try
         {
@@ -653,8 +665,11 @@ internal static class ApplyStateStore
             state.SchemaVersion = 2;
             return state;
         }
-        catch (FileNotFoundException) { return new ApplyState { OwnershipKey = ownershipKey }; }
-        catch (DirectoryNotFoundException) { return new ApplyState { OwnershipKey = ownershipKey }; }
+        catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException)
+        {
+            if (requireState) throw new RLoopException("APPLY_STATE_NOT_FOUND", $"World state file '{path}' does not exist.", ExitCodes.NotFound, innerException: ex);
+            return new ApplyState { OwnershipKey = ownershipKey };
+        }
         catch (RLoopException) { throw; }
         catch (Exception ex) when (ex is IOException or JsonException or UnauthorizedAccessException)
         {

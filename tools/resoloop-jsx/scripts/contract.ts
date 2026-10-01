@@ -43,6 +43,7 @@ function findCliDll(): string | undefined {
 
 /** Fixtures that must produce a document `resoloop validate` accepts. */
 const SUCCESS_FIXTURES: { file: string; draft?: boolean }[] = [
+  { file: "ownership.tsx" },
   { file: "nesting.tsx" },
   { file: "reference.tsx" },
   { file: "composition.tsx" },

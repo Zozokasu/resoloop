@@ -207,7 +207,7 @@ public static class Program
                 if (!Path.IsPathFullyQualified(captureOutput))
                     captureOutput = explicitCaptureOutput is not null || document.SourcePath is null
                         ? Path.GetFullPath(captureOutput)
-                        : Path.GetFullPath(captureOutput, Path.GetDirectoryName(document.SourcePath)!);
+                        : Path.GetFullPath(captureOutput, document.ResourceDirectory);
                 int? width = parsed.Option("width") is null ? null : parsed.IntOption("width", 1280, 64, 8192);
                 int? height = parsed.Option("height") is null ? null : parsed.IntOption("height", 720, 64, 8192);
                 CaptureArtifact result;
@@ -1220,7 +1220,7 @@ public static class Program
     private static ApplyOptions ApplyOptionsFrom(ParsedArguments args, OutputWriter output) => new(
         args.Option("state"), args.Has("adopt"), args.Has("profile"),
         args.Has("quiet") || args.Has("brief") && !args.Has("ndjson-progress") ? null : progress => output.Progress(progress, args.Has("ndjson-progress")),
-        args.Has("prune"), args.Has("yes"));
+        args.Has("prune"), args.Has("yes"), args.Has("require-state"));
 
     private static string ProductVersion()
     {
@@ -1246,13 +1246,13 @@ public static class Program
         var detail = command?.ToLowerInvariant() switch
         {
             "apply" => """
-resoloop apply FILE.json [--state FILE] [--adopt] [--profile] [--ndjson-progress] [--prune --yes]
+resoloop apply FILE.json [--state FILE] [--require-state] [--adopt] [--profile] [--ndjson-progress] [--prune --yes]
 
 Validates and plans the complete document before mutation. State checkpoints make a failed non-atomic apply resumable.
 --adopt binds one verified existing root. --prune deletes stale owned targets and always requires --yes.
 """,
             "plan" or "diff" => """
-resoloop plan|diff FILE.json [--state FILE] [--adopt]
+resoloop plan|diff FILE.json [--state FILE] [--require-state] [--adopt]
   [--changes-only | --creates-only | --deletes-only | --summary]
 
 Never changes the world. Without --brief, JSON includes a separate changes array; output filters affect only operations.
@@ -1343,8 +1343,8 @@ Editing:
   resoloop type describe TYPE [--member FIELD] (field value type / enum values; Nullable is unwrapped)
   resoloop type specialize OPEN_GENERIC TYPE_ARGUMENT [...]
   resoloop validate FILE.json [--strict]
-  resoloop plan|diff FILE.json [--state FILE] [--adopt] [--changes-only|--creates-only|--deletes-only|--summary]
-  resoloop apply FILE.json [--state FILE] [--adopt] [--profile] [--ndjson-progress] [--prune --yes]
+  resoloop plan|diff FILE.json [--state FILE] [--require-state] [--adopt] [--changes-only|--creates-only|--deletes-only|--summary]
+  resoloop apply FILE.json [--state FILE] [--require-state] [--adopt] [--profile] [--ndjson-progress] [--prune --yes]
   resoloop test FILE.json [--state FILE] [--probe --yes]
   resoloop uix audit SLOT|$slot:key [--state FILE] [--depth 6] [--max-slots 256] [--strict]
   resoloop uix recipe list

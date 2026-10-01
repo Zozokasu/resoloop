@@ -81,6 +81,7 @@ export interface ApplyDocument {
   schemaVersion: "1";
   /** ApplyDocument.Ownership */
   ownership: ApplyOwnershipSpec;
+  authoring?: { projectRoot: string; source: string; ownershipSource?: string };
   /** ApplyDocument.Slot */
   slot: ApplySlotSpec;
   /** ApplyDocument.Components */
@@ -167,6 +168,7 @@ function assertFiniteNumbers(value: unknown, path: string): void {
 }
 
 export interface EvaluateOptions {
+  ownership?: unknown;
   draft?: boolean;
 }
 
@@ -186,6 +188,12 @@ export function evaluate(
   root: unknown,
   options: EvaluateOptions = {}
 ): EvaluateResult {
+  const hasOwnership = Object.prototype.hasOwnProperty.call(options, "ownership");
+  const ownership = options.ownership;
+  if (hasOwnership && (ownership === null || typeof ownership !== "object" || Array.isArray(ownership) ||
+      Object.keys(ownership).length !== 1 || !("key" in ownership) ||
+      typeof ownership.key !== "string" || ownership.key.trim().length === 0))
+    throw new Error("ownership export must be an object containing one non-empty string key");
   const draft = options.draft === true;
   const warnings: string[] = [];
   // Single global set per kind across the whole document, matching the C#
@@ -360,7 +368,7 @@ export function evaluate(
   const converted = convertSlot(roots[0], undefined, 0, "$", true);
   const document: ApplyDocument = {
     schemaVersion: "1",
-    ownership: { key: converted.key },
+    ownership: hasOwnership ? ownership as ApplyOwnershipSpec : { key: converted.key },
     slot: converted.spec,
     components: converted.components,
     children: converted.children,

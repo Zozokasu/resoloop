@@ -45,7 +45,7 @@ internal sealed class SceneMeshBounds
             if (Uri.TryCreate(source, UriKind.Absolute, out var uri) && !uri.IsFile && !Path.IsPathFullyQualified(source))
             { unknown = true; continue; }
             var path = Path.GetFullPath(uri?.IsFile == true ? uri.LocalPath : source,
-                Path.GetDirectoryName(_document.SourcePath) ?? Environment.CurrentDirectory);
+                _document.ResourceDirectory);
             if (!_cache.TryGetValue(path, out var bounds)) _cache[path] = bounds = Read(path);
             if (bounds is { } known) result.Add(known); else unknown = true;
         }
