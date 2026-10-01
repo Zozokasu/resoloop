@@ -135,6 +135,29 @@ async function main(): Promise<number> {
       }
     }
 
+    // V11: synthetic original and independent handwritten diagnostics. Expected
+    // codes/paths come only from this table, never from generated types/catalog.
+    const catalogDir = path.join(fixturesDir, "catalog-v11");
+    const oracle = JSON.parse(fs.readFileSync(path.join(catalogDir, "oracle.handwritten.json"))) as {
+      cases: { name: string; document: unknown; issues: { code: string; path: string }[] }[];
+    };
+    for (const fixture of oracle.cases) {
+      checked++;
+      const file = path.join(tmpDir, `catalog-${fixture.name}.json`);
+      fs.writeFileSync(file, JSON.stringify(fixture.document));
+      const run = spawnSync("dotnet", [dll, "validate", file, "--catalog", path.join(catalogDir, "catalog.synthetic.json"), "--url", "not-a-url", "--json"], { cwd: repoRoot, encoding: "utf8" });
+      let matches = false;
+      try {
+        const output = JSON.parse(fixture.issues.length ? run.stderr : run.stdout);
+        const issues = (fixture.issues.length ? output.error.context.issues : output.data.issues) as { code: string; path: string }[];
+        matches = !run.error && run.status === (fixture.issues.length ? 6 : 0) &&
+          JSON.stringify(issues.map(i => ({ code: i.code, path: i.path }))) === JSON.stringify(fixture.issues) &&
+          (fixture.issues.length > 0 || output.data.strict === false);
+      } catch { /* Invalid output fails the contract. */ }
+      if (matches) { passed++; process.stdout.write(`contract: PASS synthetic-catalog/${fixture.name}\n`); }
+      else { failed++; process.stderr.write(`contract: FAIL synthetic-catalog/${fixture.name}: ${run.error ?? run.stdout + run.stderr}\n`); }
+    }
+
     // Negative check: schemaVersion as a JSON number must be rejected.
     checked++;
     const invalidPath = path.join(fixturesDir, "invalid-schema-version.json");

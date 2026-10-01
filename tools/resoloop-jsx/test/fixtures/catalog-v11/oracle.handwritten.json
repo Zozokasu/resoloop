@@ -1,0 +1,931 @@
+{
+  "synthetic": true,
+  "identity": {
+    "resoniteVersion": "SYNTHETIC-engine-1",
+    "resoniteLinkVersion": "SYNTHETIC-server-1",
+    "clientPackageVersion": "0.13.1",
+    "mapperVersion": "1",
+    "retrievedAt": "2026-10-01T00:00:00+00:00"
+  },
+  "contentHash": "60eca209e09e4eb9707232b7966d0812d4c9c079133bdb11ffcfa2e8cb7b6446",
+  "members": [
+    {
+      "type": "Synthetic.Holder",
+      "member": "Amount",
+      "valueType": "System.Single"
+    },
+    {
+      "type": "Synthetic.Holder",
+      "member": "Optional",
+      "valueType": "Synthetic.OptionalSingle"
+    },
+    {
+      "type": "Synthetic.Holder",
+      "member": "Vector",
+      "valueType": "Synthetic.Float3"
+    },
+    {
+      "type": "Synthetic.Holder",
+      "member": "Target",
+      "targetType": "Synthetic.Base"
+    }
+  ],
+  "cases": [
+    {
+      "name": "single-normal",
+      "document": {
+        "schemaVersion": "1",
+        "ownership": {
+          "key": "synthetic-v11"
+        },
+        "slot": {
+          "key": "root",
+          "name": "Synthetic"
+        },
+        "components": [
+          {
+            "key": "holder",
+            "type": "Synthetic.Holder",
+            "fields": {
+              "Amount": 0.1
+            }
+          }
+        ]
+      },
+      "issues": []
+    },
+    {
+      "name": "single-no-member-range",
+      "document": {
+        "schemaVersion": "1",
+        "ownership": {
+          "key": "synthetic-v11"
+        },
+        "slot": {
+          "key": "root",
+          "name": "Synthetic"
+        },
+        "components": [
+          {
+            "key": "holder",
+            "type": "Synthetic.Holder",
+            "fields": {
+              "Amount": 2
+            }
+          }
+        ]
+      },
+      "issues": []
+    },
+    {
+      "name": "single-rounding",
+      "document": {
+        "schemaVersion": "1",
+        "ownership": {
+          "key": "synthetic-v11"
+        },
+        "slot": {
+          "key": "root",
+          "name": "Synthetic"
+        },
+        "components": [
+          {
+            "key": "holder",
+            "type": "Synthetic.Holder",
+            "fields": {
+              "Amount": 1.0000000001
+            }
+          }
+        ]
+      },
+      "issues": []
+    },
+    {
+      "name": "single-underflow",
+      "document": {
+        "schemaVersion": "1",
+        "ownership": {
+          "key": "synthetic-v11"
+        },
+        "slot": {
+          "key": "root",
+          "name": "Synthetic"
+        },
+        "components": [
+          {
+            "key": "holder",
+            "type": "Synthetic.Holder",
+            "fields": {
+              "Amount": "1e-100"
+            }
+          }
+        ]
+      },
+      "issues": []
+    },
+    {
+      "name": "single-max",
+      "document": {
+        "schemaVersion": "1",
+        "ownership": {
+          "key": "synthetic-v11"
+        },
+        "slot": {
+          "key": "root",
+          "name": "Synthetic"
+        },
+        "components": [
+          {
+            "key": "holder",
+            "type": "Synthetic.Holder",
+            "fields": {
+              "Amount": 3.4028234663852886e+38
+            }
+          }
+        ]
+      },
+      "issues": []
+    },
+    {
+      "name": "single-min",
+      "document": {
+        "schemaVersion": "1",
+        "ownership": {
+          "key": "synthetic-v11"
+        },
+        "slot": {
+          "key": "root",
+          "name": "Synthetic"
+        },
+        "components": [
+          {
+            "key": "holder",
+            "type": "Synthetic.Holder",
+            "fields": {
+              "Amount": -3.4028234663852886e+38
+            }
+          }
+        ]
+      },
+      "issues": []
+    },
+    {
+      "name": "single-overflow",
+      "document": {
+        "schemaVersion": "1",
+        "ownership": {
+          "key": "synthetic-v11"
+        },
+        "slot": {
+          "key": "root",
+          "name": "Synthetic"
+        },
+        "components": [
+          {
+            "key": "holder",
+            "type": "Synthetic.Holder",
+            "fields": {
+              "Amount": 3.4028235e+38
+            }
+          }
+        ]
+      },
+      "issues": [
+        {
+          "code": "VALUE_CONVERSION_FAILED",
+          "path": "$.components[0].fields.Amount"
+        }
+      ]
+    },
+    {
+      "name": "single-nan",
+      "document": {
+        "schemaVersion": "1",
+        "ownership": {
+          "key": "synthetic-v11"
+        },
+        "slot": {
+          "key": "root",
+          "name": "Synthetic"
+        },
+        "components": [
+          {
+            "key": "holder",
+            "type": "Synthetic.Holder",
+            "fields": {
+              "Amount": "NaN"
+            }
+          }
+        ]
+      },
+      "issues": [
+        {
+          "code": "VALUE_CONVERSION_FAILED",
+          "path": "$.components[0].fields.Amount"
+        }
+      ]
+    },
+    {
+      "name": "single-infinity",
+      "document": {
+        "schemaVersion": "1",
+        "ownership": {
+          "key": "synthetic-v11"
+        },
+        "slot": {
+          "key": "root",
+          "name": "Synthetic"
+        },
+        "components": [
+          {
+            "key": "holder",
+            "type": "Synthetic.Holder",
+            "fields": {
+              "Amount": "Infinity"
+            }
+          }
+        ]
+      },
+      "issues": [
+        {
+          "code": "VALUE_CONVERSION_FAILED",
+          "path": "$.components[0].fields.Amount"
+        }
+      ]
+    },
+    {
+      "name": "single-negative-infinity",
+      "document": {
+        "schemaVersion": "1",
+        "ownership": {
+          "key": "synthetic-v11"
+        },
+        "slot": {
+          "key": "root",
+          "name": "Synthetic"
+        },
+        "components": [
+          {
+            "key": "holder",
+            "type": "Synthetic.Holder",
+            "fields": {
+              "Amount": "-Infinity"
+            }
+          }
+        ]
+      },
+      "issues": [
+        {
+          "code": "VALUE_CONVERSION_FAILED",
+          "path": "$.components[0].fields.Amount"
+        }
+      ]
+    },
+    {
+      "name": "single-conversion",
+      "document": {
+        "schemaVersion": "1",
+        "ownership": {
+          "key": "synthetic-v11"
+        },
+        "slot": {
+          "key": "root",
+          "name": "Synthetic"
+        },
+        "components": [
+          {
+            "key": "holder",
+            "type": "Synthetic.Holder",
+            "fields": {
+              "Amount": "not-a-number"
+            }
+          }
+        ]
+      },
+      "issues": [
+        {
+          "code": "VALUE_CONVERSION_FAILED",
+          "path": "$.components[0].fields.Amount"
+        }
+      ]
+    },
+    {
+      "name": "nullable-null",
+      "document": {
+        "schemaVersion": "1",
+        "ownership": {
+          "key": "synthetic-v11"
+        },
+        "slot": {
+          "key": "root",
+          "name": "Synthetic"
+        },
+        "components": [
+          {
+            "key": "holder",
+            "type": "Synthetic.Holder",
+            "fields": {
+              "Optional": null
+            }
+          }
+        ]
+      },
+      "issues": []
+    },
+    {
+      "name": "nullable-overflow",
+      "document": {
+        "schemaVersion": "1",
+        "ownership": {
+          "key": "synthetic-v11"
+        },
+        "slot": {
+          "key": "root",
+          "name": "Synthetic"
+        },
+        "components": [
+          {
+            "key": "holder",
+            "type": "Synthetic.Holder",
+            "fields": {
+              "Optional": "1e40"
+            }
+          }
+        ]
+      },
+      "issues": [
+        {
+          "code": "VALUE_CONVERSION_FAILED",
+          "path": "$.components[0].fields.Optional"
+        }
+      ]
+    },
+    {
+      "name": "tuple-normal",
+      "document": {
+        "schemaVersion": "1",
+        "ownership": {
+          "key": "synthetic-v11"
+        },
+        "slot": {
+          "key": "root",
+          "name": "Synthetic"
+        },
+        "components": [
+          {
+            "key": "holder",
+            "type": "Synthetic.Holder",
+            "fields": {
+              "Vector": [
+                0.1,
+                2,
+                3
+              ]
+            }
+          }
+        ]
+      },
+      "issues": []
+    },
+    {
+      "name": "tuple-overflow",
+      "document": {
+        "schemaVersion": "1",
+        "ownership": {
+          "key": "synthetic-v11"
+        },
+        "slot": {
+          "key": "root",
+          "name": "Synthetic"
+        },
+        "components": [
+          {
+            "key": "holder",
+            "type": "Synthetic.Holder",
+            "fields": {
+              "Vector": [
+                0,
+                1e+40,
+                2
+              ]
+            }
+          }
+        ]
+      },
+      "issues": [
+        {
+          "code": "VALUE_CONVERSION_FAILED",
+          "path": "$.components[0].fields.Vector[1]"
+        }
+      ]
+    },
+    {
+      "name": "tuple-nan-string",
+      "document": {
+        "schemaVersion": "1",
+        "ownership": {
+          "key": "synthetic-v11"
+        },
+        "slot": {
+          "key": "root",
+          "name": "Synthetic"
+        },
+        "components": [
+          {
+            "key": "holder",
+            "type": "Synthetic.Holder",
+            "fields": {
+              "Vector": "0,NaN,1"
+            }
+          }
+        ]
+      },
+      "issues": [
+        {
+          "code": "VALUE_CONVERSION_FAILED",
+          "path": "$.components[0].fields.Vector[1]"
+        }
+      ]
+    },
+    {
+      "name": "tuple-object-infinity",
+      "document": {
+        "schemaVersion": "1",
+        "ownership": {
+          "key": "synthetic-v11"
+        },
+        "slot": {
+          "key": "root",
+          "name": "Synthetic"
+        },
+        "components": [
+          {
+            "key": "holder",
+            "type": "Synthetic.Holder",
+            "fields": {
+              "Vector": {
+                "x": 0,
+                "y": 1,
+                "z": "Infinity"
+              }
+            }
+          }
+        ]
+      },
+      "issues": [
+        {
+          "code": "VALUE_CONVERSION_FAILED",
+          "path": "$.components[0].fields.Vector.z"
+        }
+      ]
+    },
+    {
+      "name": "reference-same",
+      "document": {
+        "schemaVersion": "1",
+        "ownership": {
+          "key": "synthetic-v11"
+        },
+        "slot": {
+          "key": "root",
+          "name": "Synthetic"
+        },
+        "components": [
+          {
+            "key": "holder",
+            "type": "Synthetic.Holder",
+            "fields": {
+              "Target": "$component:source"
+            }
+          }
+        ],
+        "children": [
+          {
+            "slot": {
+              "key": "source-slot",
+              "name": "Source"
+            },
+            "components": [
+              {
+                "key": "source",
+                "type": "Synthetic.Base",
+                "fields": {}
+              }
+            ]
+          }
+        ]
+      },
+      "issues": []
+    },
+    {
+      "name": "reference-inherited",
+      "document": {
+        "schemaVersion": "1",
+        "ownership": {
+          "key": "synthetic-v11"
+        },
+        "slot": {
+          "key": "root",
+          "name": "Synthetic"
+        },
+        "components": [
+          {
+            "key": "holder",
+            "type": "Synthetic.Holder",
+            "fields": {
+              "Target": "$component:source"
+            }
+          }
+        ],
+        "children": [
+          {
+            "slot": {
+              "key": "source-slot",
+              "name": "Source"
+            },
+            "components": [
+              {
+                "key": "source",
+                "type": "Synthetic.Derived",
+                "fields": {}
+              }
+            ]
+          }
+        ]
+      },
+      "issues": []
+    },
+    {
+      "name": "reference-mismatch",
+      "document": {
+        "schemaVersion": "1",
+        "ownership": {
+          "key": "synthetic-v11"
+        },
+        "slot": {
+          "key": "root",
+          "name": "Synthetic"
+        },
+        "components": [
+          {
+            "key": "holder",
+            "type": "Synthetic.Holder",
+            "fields": {
+              "Target": "$component:source"
+            }
+          }
+        ],
+        "children": [
+          {
+            "slot": {
+              "key": "source-slot",
+              "name": "Source"
+            },
+            "components": [
+              {
+                "key": "source",
+                "type": "Synthetic.Other",
+                "fields": {}
+              }
+            ]
+          }
+        ]
+      },
+      "issues": [
+        {
+          "code": "APPLY_REFERENCE_TYPE_MISMATCH",
+          "path": "$.components[0].fields.Target"
+        }
+      ]
+    },
+    {
+      "name": "reference-incomplete",
+      "document": {
+        "schemaVersion": "1",
+        "ownership": {
+          "key": "synthetic-v11"
+        },
+        "slot": {
+          "key": "root",
+          "name": "Synthetic"
+        },
+        "components": [
+          {
+            "key": "holder",
+            "type": "Synthetic.Holder",
+            "fields": {
+              "Target": "$component:source"
+            }
+          }
+        ],
+        "children": [
+          {
+            "slot": {
+              "key": "source-slot",
+              "name": "Source"
+            },
+            "components": [
+              {
+                "key": "source",
+                "type": "Synthetic.Broken",
+                "fields": {}
+              }
+            ]
+          }
+        ]
+      },
+      "issues": [
+        {
+          "code": "APPLY_CATALOG_UNAVAILABLE",
+          "path": "$.components[0].fields.Target"
+        }
+      ]
+    },
+    {
+      "name": "reference-generic",
+      "document": {
+        "schemaVersion": "1",
+        "ownership": {
+          "key": "synthetic-v11"
+        },
+        "slot": {
+          "key": "root",
+          "name": "Synthetic"
+        },
+        "components": [
+          {
+            "key": "holder",
+            "type": "Synthetic.Holder",
+            "fields": {
+              "Target": "$component:source"
+            }
+          }
+        ],
+        "children": [
+          {
+            "slot": {
+              "key": "source-slot",
+              "name": "Source"
+            },
+            "components": [
+              {
+                "key": "source",
+                "type": "Synthetic.Generic",
+                "fields": {}
+              }
+            ]
+          }
+        ]
+      },
+      "issues": [
+        {
+          "code": "APPLY_CATALOG_UNAVAILABLE",
+          "path": "$.components[0].fields.Target"
+        }
+      ]
+    },
+    {
+      "name": "reference-raw-id",
+      "document": {
+        "schemaVersion": "1",
+        "ownership": {
+          "key": "synthetic-v11"
+        },
+        "slot": {
+          "key": "root",
+          "name": "Synthetic"
+        },
+        "components": [
+          {
+            "key": "holder",
+            "type": "Synthetic.Holder",
+            "fields": {
+              "Target": "Reso_123"
+            }
+          }
+        ]
+      },
+      "issues": [
+        {
+          "code": "APPLY_CATALOG_UNAVAILABLE",
+          "path": "$.components[0].fields.Target"
+        }
+      ]
+    },
+    {
+      "name": "reference-slot",
+      "document": {
+        "schemaVersion": "1",
+        "ownership": {
+          "key": "synthetic-v11"
+        },
+        "slot": {
+          "key": "root",
+          "name": "Synthetic"
+        },
+        "components": [
+          {
+            "key": "holder",
+            "type": "Synthetic.Holder",
+            "fields": {
+              "Target": "$slot:root"
+            }
+          }
+        ]
+      },
+      "issues": [
+        {
+          "code": "APPLY_CATALOG_UNAVAILABLE",
+          "path": "$.components[0].fields.Target"
+        }
+      ]
+    },
+    {
+      "name": "reference-null",
+      "document": {
+        "schemaVersion": "1",
+        "ownership": {
+          "key": "synthetic-v11"
+        },
+        "slot": {
+          "key": "root",
+          "name": "Synthetic"
+        },
+        "components": [
+          {
+            "key": "holder",
+            "type": "Synthetic.Holder",
+            "fields": {
+              "Target": null
+            }
+          }
+        ]
+      },
+      "issues": []
+    },
+    {
+      "name": "list-overflow",
+      "document": {
+        "schemaVersion": "1",
+        "ownership": {
+          "key": "synthetic-v11"
+        },
+        "slot": {
+          "key": "root",
+          "name": "Synthetic"
+        },
+        "components": [
+          {
+            "key": "holder",
+            "type": "Synthetic.Holder",
+            "fields": {
+              "Values": [
+                1,
+                "1e40"
+              ]
+            }
+          }
+        ]
+      },
+      "issues": [
+        {
+          "code": "VALUE_CONVERSION_FAILED",
+          "path": "$.components[0].fields.Values[1]"
+        }
+      ]
+    },
+    {
+      "name": "array-nan",
+      "document": {
+        "schemaVersion": "1",
+        "ownership": {
+          "key": "synthetic-v11"
+        },
+        "slot": {
+          "key": "root",
+          "name": "Synthetic"
+        },
+        "components": [
+          {
+            "key": "holder",
+            "type": "Synthetic.Holder",
+            "fields": {
+              "Array": [
+                "NaN"
+              ]
+            }
+          }
+        ]
+      },
+      "issues": [
+        {
+          "code": "VALUE_CONVERSION_FAILED",
+          "path": "$.components[0].fields.Array[0]"
+        }
+      ]
+    },
+    {
+      "name": "dictionary-mismatch",
+      "document": {
+        "schemaVersion": "1",
+        "ownership": {
+          "key": "synthetic-v11"
+        },
+        "slot": {
+          "key": "root",
+          "name": "Synthetic"
+        },
+        "components": [
+          {
+            "key": "holder",
+            "type": "Synthetic.Holder",
+            "fields": {
+              "Targets": {
+                "one": "$component:source"
+              }
+            }
+          }
+        ],
+        "children": [
+          {
+            "slot": {
+              "key": "source-slot",
+              "name": "Source"
+            },
+            "components": [
+              {
+                "key": "source",
+                "type": "Synthetic.Other",
+                "fields": {}
+              }
+            ]
+          }
+        ]
+      },
+      "issues": [
+        {
+          "code": "APPLY_REFERENCE_TYPE_MISMATCH",
+          "path": "$.components[0].fields.Targets.one"
+        }
+      ]
+    },
+    {
+      "name": "syncobject-overflow",
+      "document": {
+        "schemaVersion": "1",
+        "ownership": {
+          "key": "synthetic-v11"
+        },
+        "slot": {
+          "key": "root",
+          "name": "Synthetic"
+        },
+        "components": [
+          {
+            "key": "holder",
+            "type": "Synthetic.Holder",
+            "fields": {
+              "Embedded": {
+                "Amount": "1e40"
+              }
+            }
+          }
+        ]
+      },
+      "issues": [
+        {
+          "code": "VALUE_CONVERSION_FAILED",
+          "path": "$.components[0].fields.Embedded.Amount"
+        }
+      ]
+    },
+    {
+      "name": "initial-single-overflow",
+      "document": {
+        "schemaVersion": "1",
+        "ownership": {
+          "key": "synthetic-v11"
+        },
+        "slot": {
+          "key": "root",
+          "name": "Synthetic"
+        },
+        "components": [
+          {
+            "key": "holder",
+            "type": "Synthetic.Holder",
+            "initialFields": {
+              "Amount": "1e40"
+            }
+          }
+        ]
+      },
+      "issues": [
+        {
+          "code": "VALUE_CONVERSION_FAILED",
+          "path": "$.components[0].initialFields.Amount"
+        }
+      ]
+    }
+  ]
+}

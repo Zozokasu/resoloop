@@ -149,13 +149,20 @@ public static class Program
                 return await RunFlux(parsed, output, resolution.Config, flux, commandToken);
             if (parsed.Positionals[0].Equals("logs", StringComparison.OrdinalIgnoreCase))
                 return RunLogs(parsed, output, resolution.Config);
-            if (parsed.Positionals[0].Equals("validate", StringComparison.OrdinalIgnoreCase) && !parsed.Has("strict"))
+            if (parsed.Has("catalog") && !parsed.Positionals[0].Equals("validate", StringComparison.OrdinalIgnoreCase))
+                throw new RLoopException("INVALID_OPTION", "--catalog is supported only by validate.", ExitCodes.InvalidArguments);
+            if (parsed.Positionals[0].Equals("validate", StringComparison.OrdinalIgnoreCase) && (!parsed.Has("strict") || parsed.Has("catalog")))
             {
-                var validation = await ApplyDocumentValidator.ValidateAsync(
-                    ApplyDocument.Load(parsed.Positional(1, "Apply file")), cancellationToken: commandToken);
+                var document = ApplyDocument.Load(parsed.Positional(1, "Apply file"));
+                var validation = parsed.Has("catalog")
+                    ? await ApplyCatalogValidator.ValidateFileAsync(document, parsed.RequireOption("catalog"), commandToken)
+                    : await ApplyDocumentValidator.ValidateAsync(document, cancellationToken: commandToken);
                 ApplyDocumentValidator.ThrowIfInvalid(validation);
-                output.Success(validation);
-                return ExitCodes.Success;
+                if (!parsed.Has("strict"))
+                {
+                    output.Success(validation);
+                    return ExitCodes.Success;
+                }
             }
             if (parsed.Positionals[0].Equals("type", StringComparison.OrdinalIgnoreCase) &&
                 parsed.Positional(1, "type subcommand").Equals("specialize", StringComparison.OrdinalIgnoreCase))
@@ -627,6 +634,16 @@ public static class Program
             }
             case "validate":
             {
+                if (args.Has("catalog"))
+                {
+                    var catalog = ApplyCatalog.Load(args.RequireOption("catalog"));
+                    var session = await client.GetSessionInfoAsync(cancellationToken);
+                    if (catalog.UnavailableReason() is not null || catalog.Identity!.ResoniteVersion != session.ResoniteVersion ||
+                        catalog.Identity.ResoniteLinkVersion != session.ResoniteLinkVersion ||
+                        catalog.Identity.ClientPackageVersion != CatalogMapper.ClientPackageVersion)
+                        ApplyDocumentValidator.ThrowIfInvalid(new ApplyValidationResult(false, "1", 0, 0, 0, true,
+                            [new("APPLY_CATALOG_UNAVAILABLE", "Catalog identity does not match the connected session/client package.", "$")]));
+                }
                 var validation = await world.ValidateApplyAsync(ApplyDocument.Load(args.Positional(1, "Apply file")), true, cancellationToken);
                 ApplyDocumentValidator.ThrowIfInvalid(validation);
                 output.Success(validation);
@@ -1342,7 +1359,7 @@ Editing:
   resoloop type search QUERY [--limit 50]
   resoloop type describe TYPE [--member FIELD] (field value type / enum values; Nullable is unwrapped)
   resoloop type specialize OPEN_GENERIC TYPE_ARGUMENT [...]
-  resoloop validate FILE.json [--strict]
+  resoloop validate FILE.json [--catalog FILE] [--strict]
   resoloop plan|diff FILE.json [--state FILE] [--require-state] [--adopt] [--changes-only|--creates-only|--deletes-only|--summary]
   resoloop apply FILE.json [--state FILE] [--require-state] [--adopt] [--profile] [--ndjson-progress] [--prune --yes]
   resoloop test FILE.json [--state FILE] [--probe --yes]

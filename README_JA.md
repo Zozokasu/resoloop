@@ -120,3 +120,9 @@ Reflectionは `type query --request FILE.json --json` で必要なmemberとenum�
 [AGPL-3.0-or-later](LICENSE)
 
 既存制作物の再適用・移行ではcheckpointを保持し、`diff/plan/apply --state STATE --require-state` を使います。TSXのnamed exportでownershipをroot keyから独立指定でき、build metadataは生成JSONの出力先に依存せずproject基準を保ちます。project全体の移動後は再buildしてください。[制作・移行の詳細](README-DETAILS.md)を参照してください。
+
+## catalog を使う offline 検証
+
+`resoloop validate content/panel.json --catalog catalog.json --json` は接続・Node なしで展開済み IR を検証します。catalog は明示したファイルだけを読み、自動検索・live 取得はしません。取得 identity と mapper version、内容 hash を確認し、Single の変換失敗・非有限・表現範囲外を `VALUE_CONVERSION_FAILED`、確認済み型閉包から証明できた参照不適合を `APPLY_REFERENCE_TYPE_MISMATCH` で拒否します。通常の丸め・精度損失は許容し、member 固有の 0〜1 等の範囲は推測しません。欠落・未確認・識別不一致・閉包不足・外部 ID／asset／Slot member 等の型不明は `APPLY_CATALOG_UNAVAILABLE` で停止し、既存 issues に型・member・JSON path を返します。終了コードは既存の検証失敗と同じ 6 です。
+
+成功しても `strict: false` のままです。`--catalog --strict` は catalog preflight 後に従来の live strict を実行し、接続先の version も照合します。live 実行は別途認可が必要です。catalog 未指定の validate・diff・plan・apply、schema/state、出力 JSON は変更しません。catalog の hash は改変検出用で、実機取得の証明ではありません。識別情報のない旧 reflection cache は catalog に昇格できません。V11 の固定原本・identity/hash・手書き診断表は合成 fixture で、実 Component の検証結果ではありません。[開発用 export/import tool](tools/RLoop.CatalogExport/README.md) を参照してください。Reflection、範囲を絞った現況観測、変更後 inspection は引き続き必要です。

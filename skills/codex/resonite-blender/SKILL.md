@@ -5,6 +5,8 @@ description: Create detailed static 3D models with Blender Python for Resonite w
 
 # Resonite Blender
 
+For offline declaration diagnosis with an explicitly supplied identified catalog, use `validate FILE.json --catalog CATALOG.json --json`. It needs neither Node nor Resonite, refuses missing/unconfirmed identity or type closure with `APPLY_CATALOG_UNAVAILABLE`, rejects proven incompatible references with `APPLY_REFERENCE_TYPE_MISMATCH`, and checks Single conversion/non-finite/range failures via `VALUE_CONVERSION_FAILED` (existing validation exit 6). Do not guess short names, generic arguments or member-specific ranges. Success keeps `strict: false`; adding `--strict` also requests the existing live check after catalog preflight and session version comparison, so live authorization still applies. A hash is integrity evidence only; legacy reflection caches and synthetic fixtures are not runtime catalog evidence. Never fetch a catalog automatically. Continue Reflection-first authoring, bounded current observation, exact-target deletion with `--yes`, and post-change inspection; catalog checks do not establish runtime behavior.
+
 Use Blender when the requested silhouette, organic surface, cutouts, bevels or topology would be awkward or expensive to build with Resonite procedural meshes. Prefer native meshes for simple or runtime-parametric shapes. Combine an authored mesh with native colliders, interaction and Flux where useful. Preserve the requested visual quality and scope.
 
 ## Find Blender before modeling

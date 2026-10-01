@@ -136,3 +136,11 @@ Batch required Reflection metadata with `type query --request FILE.json --json`;
 ## License
 
 [AGPL-3.0-or-later](LICENSE)
+
+## Offline catalog validation
+
+`resoloop validate content/panel.json --catalog catalog.json --json` validates expanded IR without Resonite or Node. Supply a catalog explicitly; the CLI neither searches for one nor fetches metadata. It checks acquisition identity, mapper version and content hash, then rejects invalid/non-finite/out-of-range Single values with `VALUE_CONVERSION_FAILED` and proven reference incompatibility with `APPLY_REFERENCE_TYPE_MISMATCH`. Normal rounding and values outside an assumed member-specific range remain allowed. Missing/unconfirmed evidence, identity mismatch and insufficient reference closure fail with `APPLY_CATALOG_UNAVAILABLE`; issues retain type/member/path context and validation exit code 6. Unknown external IDs, assets and Slot/member reference types cannot be certified offline.
+
+Catalog success leaves `strict: false`. With both `--catalog` and `--strict`, catalog preflight runs first, then the existing live validation checks the selected session's versions; it requires an authorized live connection. The commands without `--catalog` retain their existing behavior. Catalog checks do not replace bounded observation, current-ID verification or post-change inspection.
+
+The developer tool uses no new packages: `dotnet run --project tools/RLoop.CatalogExport --no-build -- export SNAPSHOT.json CATALOG.json` or `... -- import CATALOG.json OUTPUT.json`. Snapshots preserve recursive SDK definitions and identity (Resonite/server Link/client package/mapper versions and acquisition time). Catalogs include a content hash and `live`, identity-matched `version-cache`, or refused `unverified` provenance; a hash proves integrity, not runtime acquisition. Legacy reflection caches without acquisition identity are refused. The V11 fixtures are **synthetic**, with a fixed original, identity/hash and handwritten diagnostic table; real Component catalogs and live capture remain unverified. See [catalog tool](tools/RLoop.CatalogExport/README.md).
