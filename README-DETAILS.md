@@ -415,6 +415,7 @@ resoloop logs --tail 200 --json
 ~~~
 
 - CONNECTION_FAILED: ResoniteLinkがworldで有効か、画面上のportとURLが同じか確認
+- 直結経路のGetSlotで `Success=false` のとき、`SLOT_NOT_FOUND`（終了コード5）は要求IDへのResoniteLinkの明確な不在応答 `Slot with ID '<要求ID>' not found.` と完全一致する場合だけで、それ以外の失敗応答は `RESONITE_OPERATION_FAILED`（終了コード7）になります。
 - APPLY_STORED_ID_UNVERIFIED（終了コード6）: stateに保存されたSlot IDの実体は実機に存在しますが、記録された名前・親のpathやComponentの証拠で所有を検証できず、一意な再解決先もないため、変更前に停止しました。手動改名・移動と別worldでのID衝突を区別しません。`context`の`storedId`、`recordedPath`、`observedName`、`observedPath`、`reason`を確認し、所有Slotだと確認できた場合は記録された名前と親に戻してください。それ以外はcheckpointを保持してstateを明示的に修復・置換します。未検証のIDを採用したり、stateを無条件に捨てて再applyしたりしないでください
 - STABLE_COMPONENT_AMBIGUOUS（終了コード6）: 所有Slot上に型・member名・identity値・管理参照で区別できないComponent候補が複数あり、記録済みの同型集合も完全と検証できません。`candidateIds`を観測してstateを保持し、所有と各候補を確認してから明示的に復旧してください。既存checkpointへmanifestの`identityFields`を追加するだけでは保存済み証拠は補われません。新規制作では名前付きprovider Slotへ分けるか、作成時に不変の`identityFields`を記録します
 - COMPONENT_TYPE_NOT_FOUND: type searchの完全な結果を使う

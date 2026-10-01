@@ -11,6 +11,7 @@ public sealed class ResoniteLinkClientAdapter : IResoniteClient, IResoniteClient
 {
     private readonly Link.LinkInterface _link = new();
     private readonly IMetadataLink _meta;
+    private readonly Func<Link.GetSlot, Task<Link.SlotData>> _getSlotData;
     private readonly TimeSpan _requestTimeout;
     private readonly Dictionary<string, Link.ComponentDefinition> _componentDefinitions = new(StringComparer.Ordinal);
     private readonly Dictionary<string, TypeInfo> _typeDefinitions = new(StringComparer.Ordinal);
@@ -43,9 +44,11 @@ public sealed class ResoniteLinkClientAdapter : IResoniteClient, IResoniteClient
     {
     }
 
-    internal ResoniteLinkClientAdapter(IMetadataLink? metadataLink, TimeSpan? requestTimeout = null, ReflectionCacheOptions? reflectionCache = null)
+    internal ResoniteLinkClientAdapter(IMetadataLink? metadataLink, TimeSpan? requestTimeout = null, ReflectionCacheOptions? reflectionCache = null,
+        Func<Link.GetSlot, Task<Link.SlotData>>? getSlotData = null)
     {
         _meta = metadataLink ?? new SdkMetadataLink(_link);
+        _getSlotData = getSlotData ?? _link.GetSlotData;
         _cacheOptions = reflectionCache ?? new();
         _cacheOptions.Validate();
         _requestTimeout = requestTimeout is { } value && value > TimeSpan.Zero ? value : TimeSpan.FromSeconds(30);
@@ -105,10 +108,16 @@ public sealed class ResoniteLinkClientAdapter : IResoniteClient, IResoniteClient
     public async Task<SlotInfo> GetSlotAsync(string id, int depth, bool includeComponentData, CancellationToken cancellationToken = default)
     {
         EnsureConnected();
-        var response = await Wait(_link.GetSlotData(new Link.GetSlot { SlotID = id, Depth = depth, IncludeComponentData = includeComponentData }), "slot.get", cancellationToken);
-        EnsureSuccess(response, "SLOT_NOT_FOUND", new Dictionary<string, object?> { ["slotId"] = id });
+        var response = await Wait(_getSlotData(new Link.GetSlot { SlotID = id, Depth = depth, IncludeComponentData = includeComponentData }), "slot.get", cancellationToken);
+        EnsureSuccess(response, IsSlotNotFound(id, response.ErrorInfo) ? "SLOT_NOT_FOUND" : "RESONITE_OPERATION_FAILED",
+            new Dictionary<string, object?> { ["slotId"] = id, ["errorInfo"] = response.ErrorInfo });
         return ModelMapper.MapSlot(response.Data);
     }
+
+    // Read-only live record c04-live/raw-getslot.txt (2026-10-01): Resonite 2026.9.18.82,
+    // ResoniteLink 0.13.1.0; only the exact requested-ID absence response is evidence of NotFound.
+    private static bool IsSlotNotFound(string id, string? errorInfo) =>
+        string.Equals(errorInfo?.Trim(), $"Slot with ID '{id}' not found.", StringComparison.Ordinal);
 
     public async Task<ComponentInfo> GetComponentAsync(string id, CancellationToken cancellationToken = default)
     {

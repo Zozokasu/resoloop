@@ -16,6 +16,8 @@ internal sealed class ScriptedMetadataLink : IMetadataLink
     public readonly Dictionary<string, Link.TypeDefinition> TypeDefinitions = new();
     public readonly Dictionary<string, Func<Task<LinkTypeList>>> CategoryFaults = new(StringComparer.Ordinal);
     public bool Connected = true;
+    public Link.SlotData SlotResponse = new();
+    public readonly List<Link.GetSlot> RequestedSlots = [];
     public int ConnectCalls;
     public int DefinitionCalls;
     public int GetAllCalls;
@@ -28,6 +30,12 @@ internal sealed class ScriptedMetadataLink : IMetadataLink
     public TaskCompletionSource? DefinitionStarted;
 
     public bool IsConnected => Connected;
+
+    public Task<Link.SlotData> GetSlotData(Link.GetSlot request)
+    {
+        RequestedSlots.Add(request);
+        return Task.FromResult(SlotResponse);
+    }
 
     public Task Connect(Uri uri, CancellationToken cancellationToken)
     {
