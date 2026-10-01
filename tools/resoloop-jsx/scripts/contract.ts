@@ -158,6 +158,50 @@ async function main(): Promise<number> {
       else { failed++; process.stderr.write(`contract: FAIL synthetic-catalog/${fixture.name}: ${run.error ?? run.stdout + run.stderr}\n`); }
     }
 
+    // V12: actual Node producer -> offline Core/CLI. The expected statuses and
+    // reasons below are handwritten; synthetic provenance is never live evidence.
+    const bundleEntry = path.join(tmpDir, "bundle.tsx");
+    const bundleImport = path.join(tmpDir, "config.ts");
+    const bundleFile = path.join(tmpDir, "R1", "bundle.data");
+    fs.writeFileSync(bundleImport, "export const amount = 1;");
+    fs.writeFileSync(bundleEntry, `import { Slot, Component } from "resoloop-jsx";
+      import { amount } from "./config.js";
+      export default <Slot key="root" name="Synthetic"><Component key="holder" type="Synthetic.Holder" fields={{Amount: amount}} /></Slot>;`);
+    const built = await buildFile(bundleEntry, { bundle: true, catalog: path.join(catalogDir, "catalog.synthetic.json"),
+      buildId: "R1", output: bundleFile, projectRoot: tmpDir });
+    if (built.exitCode !== 0) throw new Error(built.errors.join("\n"));
+    const bundleOriginal = fs.readFileSync(bundleFile, { encoding: "utf8" });
+    function bundleCheck(name: string, file: string, request: string | undefined, exit: number, reason?: string): void {
+      checked++;
+      const run = spawnSync("dotnet", [dll!, "validate", file, ...(request === undefined ? [] : ["--build-id", request]), "--url", "not-a-url", "--json"],
+        { cwd: repoRoot, encoding: "utf8" });
+      if (!run.error && run.status === exit && (!reason || (run.stdout + run.stderr).includes(reason))) {
+        passed++; process.stdout.write(`contract: PASS bundle/${name}\n`);
+      } else { failed++; process.stderr.write(`contract: FAIL bundle/${name}: ${run.error ?? run.stdout + run.stderr}\n`); }
+    }
+    bundleCheck("success", bundleFile, "R1", 0);
+    bundleCheck("stale-request", bundleFile, "R2", 6, "requestMismatch");
+    bundleCheck("missing-request", bundleFile, undefined, 2, "OPTION_REQUIRED");
+    const ordinaryIr = path.join(tmpDir, "ordinary-ir.json");
+    fs.writeFileSync(ordinaryIr, JSON.parse(bundleOriginal).ir.text);
+    bundleCheck("ordinary-rejects-request", ordinaryIr, "R1", 2, "INVALID_OPTION");
+    const mixedMap = JSON.parse(bundleOriginal); mixedMap.map = { text: "{}", sha256: mixedMap.map.sha256 };
+    const mixedMapFile = path.join(tmpDir, "mixed-map.json"); fs.writeFileSync(mixedMapFile, JSON.stringify(mixedMap));
+    bundleCheck("mixed-map", mixedMapFile, "R1", 6, "mixed");
+    const mixedCatalog = JSON.parse(bundleOriginal); mixedCatalog.catalog.text += " ";
+    const mixedCatalogFile = path.join(tmpDir, "mixed-catalog.json"); fs.writeFileSync(mixedCatalogFile, JSON.stringify(mixedCatalog));
+    bundleCheck("mixed-catalog", mixedCatalogFile, "R1", 6, "mixed");
+    fs.writeFileSync(bundleImport, "export const amount = 2;");
+    bundleCheck("changed-import", bundleFile, "R1", 6, "inputChanged");
+    fs.writeFileSync(bundleEntry, "export default 123;");
+    const failedFile = path.join(tmpDir, "R2", "bundle.data");
+    const failedBuild = await buildFile(bundleEntry, { bundle: true, catalog: path.join(catalogDir, "catalog.synthetic.json"),
+      buildId: "R2", output: failedFile, projectRoot: tmpDir });
+    checked++;
+    if (failedBuild.exitCode === 1 && !fs.existsSync(failedFile) && fs.readFileSync(bundleFile, { encoding: "utf8" }) === bundleOriginal) {
+      passed++; process.stdout.write("contract: PASS bundle/failed-R2-never-published\n");
+    } else { failed++; process.stderr.write("contract: FAIL bundle/failed-R2-never-published\n"); }
+
     // Negative check: schemaVersion as a JSON number must be rejected.
     checked++;
     const invalidPath = path.join(fixturesDir, "invalid-schema-version.json");

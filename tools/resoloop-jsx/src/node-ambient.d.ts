@@ -6,12 +6,19 @@
 declare module "node:fs" {
   export function mkdtempSync(prefix: string): string;
   export function mkdirSync(path: string, options?: { recursive?: boolean }): void;
-  export function writeFileSync(path: string, data: string, options?: { encoding?: string }): void;
-  export function readFileSync(path: string, options?: { encoding?: string }): string;
+  export function writeFileSync(path: string, data: string, options?: { encoding?: string; flag?: string }): void;
+  export function readFileSync(path: string): any;
+  export function readFileSync(path: string, options: { encoding?: string }): string;
+  export function renameSync(oldPath: string, newPath: string): void;
   export function rmSync(path: string, options?: { recursive?: boolean; force?: boolean }): void;
   export function existsSync(path: string): boolean;
   export function readdirSync(path: string, options?: { withFileTypes?: boolean }): any[];
   export function statSync(path: string): { mtimeMs: number; isFile(): boolean; isDirectory(): boolean };
+}
+
+declare module "node:crypto" {
+  export function createHash(name: string): { update(data: any, encoding?: string): any; digest(encoding: string): string };
+  export function randomUUID(): string;
 }
 
 declare module "node:path" {
