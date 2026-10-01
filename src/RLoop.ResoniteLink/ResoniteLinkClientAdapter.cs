@@ -12,6 +12,7 @@ public sealed class ResoniteLinkClientAdapter : IResoniteClient, IResoniteClient
     private readonly Link.LinkInterface _link = new();
     private readonly IMetadataLink _meta;
     private readonly Func<Link.GetSlot, Task<Link.SlotData>> _getSlotData;
+    private readonly Func<Link.GetComponent, Task<Link.ComponentData>> _getComponentData;
     private readonly TimeSpan _requestTimeout;
     private readonly Dictionary<string, Link.ComponentDefinition> _componentDefinitions = new(StringComparer.Ordinal);
     private readonly Dictionary<string, TypeInfo> _typeDefinitions = new(StringComparer.Ordinal);
@@ -45,10 +46,12 @@ public sealed class ResoniteLinkClientAdapter : IResoniteClient, IResoniteClient
     }
 
     internal ResoniteLinkClientAdapter(IMetadataLink? metadataLink, TimeSpan? requestTimeout = null, ReflectionCacheOptions? reflectionCache = null,
-        Func<Link.GetSlot, Task<Link.SlotData>>? getSlotData = null)
+        Func<Link.GetSlot, Task<Link.SlotData>>? getSlotData = null,
+        Func<Link.GetComponent, Task<Link.ComponentData>>? getComponentData = null)
     {
         _meta = metadataLink ?? new SdkMetadataLink(_link);
         _getSlotData = getSlotData ?? _link.GetSlotData;
+        _getComponentData = getComponentData ?? _link.GetComponentData;
         _cacheOptions = reflectionCache ?? new();
         _cacheOptions.Validate();
         _requestTimeout = requestTimeout is { } value && value > TimeSpan.Zero ? value : TimeSpan.FromSeconds(30);
@@ -119,11 +122,22 @@ public sealed class ResoniteLinkClientAdapter : IResoniteClient, IResoniteClient
     private static bool IsSlotNotFound(string id, string? errorInfo) =>
         string.Equals(errorInfo?.Trim(), $"Slot with ID '{id}' not found.", StringComparison.Ordinal);
 
+    // Read-only s1-live2/raw-getcomponent.txt (2026-10-01), Resonite 2026.9.18.82 / ResoniteLink 0.13.1.0:
+    // only the exact requested-ID absence response proves NotFound, including malformed IDs.
+    private static bool IsComponentNotFound(string id, string? errorInfo) =>
+        string.Equals(errorInfo?.Trim(), $"Component with ID '{id}' not found.", StringComparison.Ordinal);
+
+    // Read-only s1-live2/v04-missing-describe.json (2026-10-01), Resonite 2026.9.18.82 / ResoniteLink 0.13.1.0:
+    // compare with the type name actually sent; other definition failures do not prove absence.
+    private static bool IsTypeNotFound(string type, string? errorInfo) =>
+        string.Equals(errorInfo?.Trim(), $"{type} is not a valid type", StringComparison.Ordinal);
+
     public async Task<ComponentInfo> GetComponentAsync(string id, CancellationToken cancellationToken = default)
     {
         EnsureConnected();
-        var response = await Wait(_link.GetComponentData(new Link.GetComponent { ComponentID = id }), "component.get", cancellationToken);
-        EnsureSuccess(response, "COMPONENT_NOT_FOUND", new Dictionary<string, object?> { ["componentId"] = id });
+        var response = await Wait(_getComponentData(new Link.GetComponent { ComponentID = id }), "component.get", cancellationToken);
+        EnsureSuccess(response, IsComponentNotFound(id, response.ErrorInfo) ? "COMPONENT_NOT_FOUND" : "RESONITE_OPERATION_FAILED",
+            new Dictionary<string, object?> { ["componentId"] = id, ["errorInfo"] = response.ErrorInfo });
         return ModelMapper.MapComponent(response.Data);
     }
 
@@ -293,7 +307,9 @@ public sealed class ResoniteLinkClientAdapter : IResoniteClient, IResoniteClient
             CommitIfCurrent(generation, () => RememberType(type, stored.Value, stored.ObservedAt, false));
             return (stored.Value, stored.ObservedAt, false);
         }
-        var response = await Wait(_meta.GetTypeDefinition(type), "type.get", cancellationToken);
+        var requestedType = type;
+        var listedType = false;
+        var response = await Wait(_meta.GetTypeDefinition(requestedType), "type.get", cancellationToken);
         // A failure answer of an old connection says nothing about the current one: check the generation first.
         EnsureGeneration(generation);
         if (!response.Success)
@@ -302,18 +318,24 @@ public sealed class ResoniteLinkClientAdapter : IResoniteClient, IResoniteClient
             {
                 var resolved = await ResolveComponentTypeAsync(type, cancellationToken);
                 EnsureGeneration(generation);
-                response = await Wait(_meta.GetTypeDefinition(resolved), "type.get", cancellationToken);
+                requestedType = resolved;
+                listedType = true;
+                response = await Wait(_meta.GetTypeDefinition(requestedType), "type.get", cancellationToken);
                 EnsureGeneration(generation);
             }
             catch (RLoopException ex) when (ex.Code == "COMPONENT_TYPE_NOT_FOUND")
             {
                 // A component-only list says nothing about the existence of enums or other runtime types.
-                // Keep the original failed definition response and classify it as unreadable below.
+                // Keep the original response; only an exact invalid-type answer proves absence below.
             }
         }
         if (!response.Success)
         {
-            // The response has no structured absence signal. A failed read does not prove type absence.
+            // A response contradicting the type list's existence evidence means unknown, never NotFound.
+            if (!listedType && IsTypeNotFound(requestedType, response.ErrorInfo))
+                throw new RLoopException("TYPE_NOT_FOUND", $"Type '{requestedType}' was not found.",
+                    ExitCodes.NotFound, new Dictionary<string, object?> { ["type"] = requestedType, ["errorInfo"] = response.ErrorInfo });
+            // Other failed reads do not prove type absence.
             var detail = string.IsNullOrWhiteSpace(response.ErrorInfo) ? "ResoniteLink operation failed." : response.ErrorInfo!;
             throw new RLoopException("TYPE_DEFINITION_UNREADABLE",
                 $"ResoniteLink could not read the definition of type '{type}'; its existence cannot be determined from this response: {detail}",
@@ -567,7 +589,7 @@ public sealed class ResoniteLinkClientAdapter : IResoniteClient, IResoniteClient
             EnsureGeneration(generation);
             if (first.Response is not { Success: true })
             {
-                // The type is in the type list, so this is "definition unreadable", never "not found".
+                // A response contradicting the type list's existence evidence means unknown, never NotFound.
                 var detail = first.Error is not null ? first.Error.Message
                     : string.IsNullOrWhiteSpace(first.Response?.ErrorInfo) ? "ResoniteLink operation failed." : first.Response!.ErrorInfo!;
                 throw new RLoopException("COMPONENT_DEFINITION_UNREADABLE",
