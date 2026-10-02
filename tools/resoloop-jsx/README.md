@@ -257,7 +257,7 @@ Emitted documents contain only `schemaVersion` (`"1"`), `ownership`, `slot`,
 `scale`, `managedFields`, `preserveWorldTransform`, `migrateFrom`,
 `relocationTransform`, `runtimeRelocatable`. `ApplyComponentSpec` fields:
 `type` (required), `key`, `fields`, `migrateFrom`, `initialFields`,
-`identityFields`. `assets`, `cameras`, `tests`, `include`, `prototypes`,
+`identityFields`, `propertyModes`. `assets`, `cameras`, `tests`, `include`, `prototypes`,
 `parameters`, and `variables` are out of scope; because `assets` declarations
 are not yet supported, no `ref.asset` helper is exposed.
 
@@ -292,3 +292,57 @@ not a generator target. Expected JSON changes require deliberate review.
 After building an IR file, run `resoloop validate FILE.json --catalog CATALOG.json --json`. This is a C# Core check and runs without Node or a Resonite connection. No separate TypeScript member validator is introduced. Catalogs must carry acquisition identity, provenance and an intact content hash; missing/unconfirmed evidence and unknown reference closure fail with `APPLY_CATALOG_UNAVAILABLE`. Proven incompatible references use `APPLY_REFERENCE_TYPE_MISMATCH`; invalid/non-finite/out-of-range Single values use `VALUE_CONVERSION_FAILED`, including nullable non-null values and tuple elements. Rounding is allowed; member-specific ranges are not guessed. Both catalog error codes retain validation exit 6 and the existing issue format. Success keeps `strict: false`; adding `--strict` also requests the existing live validation after catalog preflight and session version comparison against the same snapshot; synthetic catalogs are rejected before connection.
 
 `test/fixtures/catalog-v11/catalog.synthetic.json` is a fixed **synthetic** original with identity and content hash. `oracle.handwritten.json` independently fixes expected member types, case inputs and diagnostic codes/paths; do not derive or regenerate its expectations from the catalog or generated Apply types. `npm run contract` runs these cases and request-bound bundle handoffs through the actual offline CLI alongside the unchanged existing fixtures. This does not establish real Component/runtime verification. [CatalogExport](../RLoop.CatalogExport/README.md) provides developer-only export/import; legacy reflection caches without acquisition identity are not catalogs. Source locations are covered by the independent source-v11 oracle.
+## propertyModes
+
+`<Component propertyModes={{ Config: "config", Seed: "initial", Clock: "runtime", Driven: "driver-owned" }}>`
+declares member policies. Omitted members retain the existing behavior: `fields` is config and
+`initialFields` is initial (creation only). Ordinary apply never writes runtime or driver-owned
+members, including on creation. A driver-owned declaration does not prove writer ownership.
+
+## Applying and recovering the emitted document
+
+Build emits schema `"1"`; apply state is v3, with confirmed bindings and pending evidence.
+Older v1/v2 states are readable and save as v3; older CLIs reject v3. Preserve the state
+and stable keys when changing TSX. Apply compares planned values/types and connection before
+each send; observed conflicts or a possible writer referencing the target field give
+`APPLY_PRECONDITION_FAILED` (exit 6). Writer evidence outside the bounded observation is
+`unknown`, permits writing and never proves absence. Sent values are read back once;
+incomplete/mismatched results stop with pending evidence and `APPLY_WRITE_UNVERIFIED` (exit 7).
+References are not replayed at the end, and lost creation IDs are not recovered by name/type/order.
+
+Explicit server rejection clears pending evidence. A later apply with matching discovery
+identity, acceptance and exact target/owner evidence settles confirmed results or known
+mismatches, then plans from current values. Explicit `--url` connections have unknown identity;
+their interrupted pending operations cannot be automatically settled. Discovery-selected
+connections can provide matching identity. Read failure context and diagnostics, inspect exact
+IDs, and only after inspection use `resoloop apply FILE --state STATE --discard-pending OPERATION_ID --yes`.
+This offline operation preserves confirmed bindings and does not adopt creation candidates;
+discarded creations can be duplicated. Discarded updates/deletions require inspecting the
+existing correspondence and re-planning. Keep the author's document and state together.
+
+Writers to the same normalized URL share an exclusive handle under
+`<LocalApplicationData>/ResoLoop/write-locks/<URL-hash>.lock`, across projects on one PC/OS user.
+Apply (including imports), direct Slot/Component mutations, raster capture and authorized
+probes participate; reads, offline SVG and Flux deployment do not. Contention returns
+`APPLY_SESSION_BUSY` (exit 7); `APPLY_STATE_BUSY` remains a separate state-file lock.
+The lock records the last writer's state location before pending persistence. A confirmed
+missing file or directory allows writing to continue; access denial is not absence. Pending
+or unreadable state, or a corrupt lock record, blocks other projects with `APPLY_WRITE_UNVERIFIED`.
+Failure context includes `stateFile` and `lockFile`; a corrupt record can leave `stateFile` unknown.
+Repair the state or resolve pending evidence using the original project's document/state;
+inspect exact targets before explicitly discarding its chosen operation. If the state is
+permanently lost, verify that no ResoLoop writes are running and inspect the live world before
+deleting the reported `lockFile`. Never delete or steal a lock held by an active writer.
+
+Prune needs `--prune --yes`. Both prune and relocation-source removal recheck stable key,
+exact ID and owner before deletion. Slot deletion requires complete subtree child/component
+coverage and refuses unmanaged contents, including unowned automatically added components.
+Only exact `SLOT_NOT_FOUND` / `COMPONENT_NOT_FOUND` readback proves absence. Direct delete/remove
+conditions retain their existing target/confirmation/Root protections. For a driver replacement
+blocked by the old owner, first remove the old driver declaration and prune it after reviewing
+diff; inspect absence, then add the new driver and apply. One apply stops at the first mismatch.
+
+These checks coordinate this and later cooperating local ResoLoop versions and detect observed
+conflicts. Apply remains `atomic:false`: no rollback, exclusion of external writers/ProtoFlux,
+older CLIs or other PCs/users, nor detection of every unobserved race or future retention.
+See [the recovery workflow](../../skills/codex/resonite-build/references/apply-recovery.md).

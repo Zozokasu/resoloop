@@ -20,6 +20,18 @@ public sealed class LiveCaptureWorkflowTests : IDisposable
     }
 
     [Fact]
+    public async Task S3RasterCaptureParticipatesBeforeCreatingTemporaryCamera()
+    {
+        var client = DispatchProxy.Create<IResoniteClient, CaptureClient>();
+        SessionLockTestIsolation.Share(client, _root);
+        using var holder = SessionWriteLock.Acquire("ws://capture-test/", _root);
+        var error = await Assert.ThrowsAsync<RLoopException>(() => new LiveCaptureService(client)
+            .CaptureAsync(Document(), "main", Path.Combine(_root, "out.jpg"), _root));
+        Assert.Equal("APPLY_SESSION_BUSY", error.Code);
+        Assert.Null(((CaptureClient)client).Created);
+    }
+
+    [Fact]
     public async Task RequiresRuntimeCaptureMethodBeforeCreatingContent()
     {
         var client = DispatchProxy.Create<IResoniteClient, CaptureClient>();
@@ -87,6 +99,8 @@ public sealed class LiveCaptureWorkflowTests : IDisposable
             if (args.LastOrDefault() is CancellationToken ct) ct.ThrowIfCancellationRequested();
             switch (method!.Name)
             {
+                case nameof(IResoniteClient.GetSessionInfoAsync):
+                    return Task.FromResult(new SessionInfo("ws://capture-test/", true, "test", "test", "1"));
                 case nameof(IResoniteClient.DescribeComponentTypeAsync):
                     return Task.FromResult(new ComponentTypeInfo("[FrooxEngine]FrooxEngine.InteractiveCamera", null, null, false, [],
                         HasCapture ? [new SyncMethodInfo("Capture", new Dictionary<string, string?>(), "void", false, false)] : []));

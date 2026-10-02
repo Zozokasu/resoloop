@@ -82,6 +82,7 @@ public sealed class OutputWriter(bool json, bool brief = false) : IDisposable
     public void Success(object? data, Action<TextWriter>? human = null, object? briefData = null)
     {
         if (data is ApplyValidationResult validation) SetDiagnostics(ApplyDiagnostics.ForResult(validation).Diagnostics);
+        else if (data is ApplyResult or ApplyPlanResult) SetDiagnostics(ApplyDiagnostics.ForRuntime(data).Diagnostics);
         WriteReport(new { ok = true, data });
         var visible = brief ? briefData ?? BriefOutput.Project(data) : data;
         if (json || brief || ReportPath is not null)

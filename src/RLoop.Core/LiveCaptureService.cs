@@ -27,6 +27,7 @@ public sealed class LiveCaptureService(IResoniteClient client)
         if (extension is not (".png" or ".jpg" or ".jpeg"))
             throw new RLoopException("CAPTURE_FORMAT_UNSUPPORTED", "Live capture requires .png or .jpg output; use .svg for offline projection.", ExitCodes.ValidationFailed);
         var directory = Path.GetFullPath(screenshotDirectory);
+        using var sessionWriter = await SessionWriteLock.AcquireAsync(client, null, cancellationToken);
         var summary = await SceneArtifactService.SummarizeAsync(document, cancellationToken);
         using var export = new ScreenshotExport(directory);
 

@@ -5,6 +5,8 @@ description: Create detailed static 3D models with Blender Python for Resonite w
 
 # Resonite Blender
 
+Asset imports within apply and raster capture's temporary camera share the normalized endpoint's local writer lock (`APPLY_SESSION_BUSY`); offline Blender work/SVG and reads do not. After any apply stop, preserve the v3 state and follow [apply recovery](../resonite-build/references/apply-recovery.md); import/creation candidates are not adopted by discard and may be repeated. Apply uses preconditions and one readback without reference replay, is non-atomic and does not exclude external writers or ProtoFlux. Prune requires `--prune --yes`, exact ownership and complete subtree coverage.
+
 Use Blender when the requested silhouette, organic surface, cutouts, bevels or topology would be awkward or expensive to build with Resonite procedural meshes. Prefer native meshes for simple or runtime-parametric shapes. Combine an authored mesh with native colliders, interaction and Flux where useful. Preserve the requested visual quality and scope.
 
 ## Find Blender before modeling

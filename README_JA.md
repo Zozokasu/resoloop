@@ -29,6 +29,30 @@ resoloop が生成する作業ルートには `FrooxEngine.AI_GeneratedContent` 
 > [!NOTE]
 > 現在はプレビュー版です。ResoniteLink も Beta のため、更新によって動作が変わる可能性があります。
 
+## apply が停止したら state と実機を確認する
+
+apply は各送信の直前に、計画時の値・型・接続を再確認します。値の変化や対象 field を参照する writer の可能性を観測したら、`APPLY_PRECONDITION_FAILED`（終了コード6）でその書込みを止めます。観測の外に writer がいるかは「不明」です。不明でも書込みは進みますが、writer がいないことを証明したわけではありません。応答後は送った値を一度だけ読み直します。不一致なら保留を残し、`APPLY_WRITE_UNVERIFIED`（終了コード7）で停止します。末尾で参照を再送する処理はありません。
+
+Component の `propertyModes` は member ごとに `config`・`initial`・`runtime`・`driver-owned` を指定します。省略時は従来どおり、`fields` は設定、`initialFields` は作成時だけの初期値です。通常 apply は runtime と driver-owned を作成時にも書きません。宣言だけで driver の所有を認めることもありません。
+
+state v3 は確定済みの対応と保留を保存します。v1/v2 は読めますが、保存は v3 になり、古い CLI は v3 を拒否します。サーバが明示的に拒否した要求は保留を解消します。次の apply は、discovery の identity・受付・正確な ID・型・親・所有の証拠がそろった保留を照合し、一致した部分を確定します。確認できた不一致は保留を解消し、今の観測から再計画します。作成 ID や受付、identity が不明なら自動では解消しません。同名・型・順番による作成の回収も行いません。明示の `--url` で接続すると identity は不明になり、中断した保留を自動で確定できません。discovery 経由の接続なら一致を照合できます。
+
+失敗後は `context.reason`、`stateFile`、`operationId`、確定部分と completeness を読み、`inspect EXACT_SLOT_ID --members` または `component inspect EXACT_COMPONENT_ID` で実機を確認してください。そのうえで、指定した保留だけを破棄できます。
+
+```powershell
+resoloop apply FILE --state STATE --discard-pending OPERATION_ID --yes
+```
+
+この操作は接続せず、世界へ書きません。確定済みの対応は残ります。作成の候補を採用することはなく、実機で作成済みなら次の apply で重複する可能性があります。更新・削除の保留を破棄しても、確定済みの対応は管理対象として残るため、実機確認と再計画が必要です。
+
+直結の書込みは、正規化 URL を鍵に `<LocalApplicationData>/ResoLoop/write-locks/<hash>.lock` の排他的 handle を共有します。別 project でも host の大文字小文字、loopback アドレス（localhost、127.0.0.0/8 の 127.0.0.2 など、::1）、既定 port の表記ゆれは同じ鍵です。scheme・port・path・query が違えば別の鍵で、別の鍵が同じ world へ届くかは検証していません。apply とその asset import、直接の Slot/Component 編集・削除、画像 capture の一時カメラ、`test --probe` が参加します。読取りと offline SVG capture は lock を取りません。Flux deploy は対象外です。`APPLY_SESSION_BUSY`（終了コード7）は同じ URL の書込み競合、`APPLY_STATE_BUSY` は一つの project state の競合です。動いている writer が保持する lock を削除・奪取しないでください。
+
+次の holder は最後の書込み元 state を確認します。ファイルまたは directory が無いと正確に分かれば、別 project の書込みも続行します。アクセス拒否は不在と扱いません。保留あり・読取り不能、または lock の所在情報が壊れている場合は `APPLY_WRITE_UNVERIFIED` で止め、context に `stateFile` と `lockFile` を返します。その state を直すか、元の project の宣言と state で保留を解決してください。指定保留を破棄する場合は、先に正確な対象を実機で確かめます。state を恒久的に失った場合は、ResoLoop の書込みが動いていないことと実機の状態を確かめたうえで、報告された `lockFile` を削除してください。cache 清掃で lock や保留は消えません。
+
+prune は `--prune --yes` が必須です。prune と relocate の移動元削除は、直前に stable key・正確な ID・所有 Slot を再確認します。Slot の部分木を完全に観測できない、管理していない子孫がある場合は削除を送りません。engine が自動で足した Component も、出現しただけでは所有物にしません。削除後は正確な ID の不在を `SLOT_NOT_FOUND` / `COMPONENT_NOT_FOUND` だけで確認します。直接の `slot delete` / `component remove` は既存の対象確認・`--yes`・Root 拒否を維持します。古い driver が新しい参照を妨げる入替えは、先に古い driver を宣言から外し、diff を確認して `--prune --yes` で削除します。不在を確認してから新しい driver を足して apply してください。readback 不一致を越えて一回で入れ替えることはできません。
+
+保証するのは観測した競合の検出と、同じ PC・同じ OS ユーザーの、この版以降の ResoLoop 間の書込み調整です。操作は `atomic:false` で rollback はありません。古い CLI、別 PC・別ユーザー、人、外部ツール、ProtoFlux への排他や、観測の外・確認後の競合、値の将来の保持は保証しません。[停止後の詳しい手順](README-DETAILS.md#apply-の停止後は保留と実機を確認する)を参照してください。
+
 ## インストール
 
 必要なもの:

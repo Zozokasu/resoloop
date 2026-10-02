@@ -106,7 +106,7 @@ public sealed partial class ApplyWorkflowTests
                 Assert.Equal(0, result.SlotsCreated + result.SlotsUpdated + result.SlotsDeleted + result.ComponentsAdded + result.ComponentsUpdated + result.ComponentsDeleted);
                 Assert.Equal(0, client.Writes);
                 var saved = JsonNode.Parse(File.ReadAllText(statePath))!.AsObject();
-                Assert.Equal(2, saved["schemaVersion"]!.GetValue<int>());
+                Assert.Equal(3, saved["schemaVersion"]!.GetValue<int>());
                 Assert.Equal(ids, StateIds(saved));
             }
         }

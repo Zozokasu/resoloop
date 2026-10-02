@@ -22,7 +22,15 @@ public sealed record ApplyDiagnosticValue(string Status, object? Value)
 public sealed record ApplyDiagnostic(string DiagnosticVersion, string Code, string Severity, string Message,
     string Phase, string? BuildId, string? EntityKind, string? Key, string? Member, string? JsonPath,
     IReadOnlyList<object>? PathSegments, ApplyDiagnosticSource Source, IReadOnlyList<ApplyDiagnosticSource> Related,
-    ApplyDiagnosticValue Expected, ApplyDiagnosticValue Observed, IReadOnlyDictionary<string, string> Completeness);
+    ApplyDiagnosticValue Expected, ApplyDiagnosticValue Observed, IReadOnlyDictionary<string, string> Completeness)
+{
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public string? OperationId { get; init; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public string? SendStatus { get; init; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public object? Pending { get; init; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public IReadOnlyList<string>? Confirmed { get; init; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public object? EvidencePersistence { get; init; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public object? ConfirmedBindings { get; init; }
+}
 public sealed record ApplyDiagnosticReport(string DiagnosticVersion, IReadOnlyList<ApplyDiagnostic> Diagnostics);
 public sealed record ApplyDetailedValidation(ApplyValidationResult Result, IReadOnlyList<ApplyDiagnostic> Diagnostics);
 
@@ -47,6 +55,29 @@ public static class ApplyDiagnostics
     private static readonly ConditionalWeakTable<ApplyValidationIssue, ApplyIssueDetail> details = new();
     private static readonly ConditionalWeakTable<ApplyValidationResult, ApplyDetailedValidation> results = new();
     private static readonly ConditionalWeakTable<Exception, ApplyDiagnosticReport> failures = new();
+    private static readonly ConditionalWeakTable<object, ApplyDiagnosticReport> runtime = new();
+    public static ApplyDiagnosticReport ForRuntime(object result) => runtime.TryGetValue(result, out var report) ? report : new("1", []);
+    internal static void AttachRuntime(object result, IReadOnlyList<ApplyDiagnostic> diagnostics)
+    {
+        var report = new ApplyDiagnosticReport("1", diagnostics);
+        if (result is Exception error) failures.Add(error, report);
+        else runtime.Add(result, report);
+    }
+    internal static void CopyFailure(Exception source, Exception target)
+    {
+        if (failures.TryGetValue(source, out var report)) failures.Add(target, report);
+    }
+    internal static ApplyDiagnostic LocateRuntime(ApplyDocument document, ApplyDiagnostic diagnostic,
+        ApplyIssuePath? path)
+    {
+        if (path is null) return diagnostic;
+        var entry = document.BuildBundle?.MatchesOriginal(document, path.Segments) == true
+            ? document.BuildBundle.FindEntry(path.Segments, diagnostic.EntityKind, diagnostic.Key, diagnostic.Member) : null;
+        var source = entry?.Source ?? ApplyDiagnosticSource.Unknown;
+        return diagnostic with { BuildId = document.BuildBundle?.BuildId, JsonPath = path.JsonPath,
+            PathSegments = path.Segments, Source = source, Related = entry?.Related ?? [],
+            Completeness = new Dictionary<string, string>(diagnostic.Completeness) { ["location"] = source.Status == "known" ? "complete" : "unknown" } };
+    }
 
     internal static void Add(List<ApplyValidationIssue> issues, string code, string message, ApplyIssuePath path,
         string? key, string? member, object? expected = null, bool expectedKnown = false, object? observed = null, bool observedKnown = false)

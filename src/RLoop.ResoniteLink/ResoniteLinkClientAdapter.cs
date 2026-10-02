@@ -7,9 +7,52 @@ using Link = ResoniteLink;
 
 namespace RLoop.ResoniteLink;
 
-public sealed class ResoniteLinkClientAdapter : IResoniteClient, IResoniteClientDiagnostics, IReflectionMetadataClient
+public sealed class ResoniteLinkClientAdapter : IResoniteClient, IResoniteClientDiagnostics, IReflectionMetadataClient, IApplySessionObservation, IApplyConnectionGuard, IApplySendEvidence, IApplyDeletionObservation
 {
     private readonly Link.LinkInterface _link = new();
+    private readonly AsyncLocal<string?> _applyGeneration = new();
+    private sealed class SendEvidence { public bool Started; public bool ResponseReceived; public bool Accepted; }
+    private readonly AsyncLocal<SendEvidence?> _sendEvidence = new();
+    public void BeginApplySend() => _sendEvidence.Value = new();
+    public bool ApplySendStarted => _sendEvidence.Value?.Started == true;
+    public bool ApplyResponseReceived => _sendEvidence.Value?.ResponseReceived == true;
+    public bool ApplyResponseAccepted => _sendEvidence.Value?.Accepted == true;
+    private void ObserveApplyResponse(bool accepted)
+    {
+        if (_sendEvidence.Value is not { } evidence) return;
+        evidence.ResponseReceived = true;
+        evidence.Accepted = accepted;
+    }
+    private IReadOnlyList<DiscoveredResoniteSession> _applyAnnouncements = [];
+    public void SetApplyAnnouncements(IReadOnlyList<DiscoveredResoniteSession> announcements) => _applyAnnouncements = announcements.ToArray();
+    public ApplySessionObservation ObserveApplySession() => ApplySessionObservation.Observe(_uri!.AbsoluteUri, _applyAnnouncements);
+    public ApplyConnectionObservation ObserveApplyConnection() => new(_meta.IsConnected, Volatile.Read(ref _generation));
+    public IDisposable GuardApplyWrites(string? plannedGeneration)
+    {
+        var previous = _applyGeneration.Value;
+        _applyGeneration.Value = plannedGeneration;
+        return new ApplyGuardScope(() => _applyGeneration.Value = previous);
+    }
+    private sealed class ApplyGuardScope(Action dispose) : IDisposable { public void Dispose() => dispose(); }
+    internal Action? BeforeApplyWriteBoundaryForTests;
+    internal Func<string, CancellationToken, Task<string>> ReadMeshFileAsync { get; set; } = File.ReadAllTextAsync;
+    private void CheckApplyWriteBoundary(CancellationToken ct)
+    {
+        if (_applyGeneration.Value is null)
+        {
+            ct.ThrowIfCancellationRequested();
+            if (_sendEvidence.Value is { } unguarded) unguarded.Started = true;
+            return;
+        }
+        BeforeApplyWriteBoundaryForTests?.Invoke();
+        ct.ThrowIfCancellationRequested();
+        if (_applyGeneration.Value is { } expected) EnsureGeneration(expected);
+        if (_applyGeneration.Value is not null && !_meta.IsConnected)
+            throw new RLoopException("APPLY_PRECONDITION_FAILED", "The planned apply connection is no longer connected.", ExitCodes.ValidationFailed,
+                new Dictionary<string, object?> { ["reason"] = "generationChanged" });
+        EnsureConnected();
+        if (_sendEvidence.Value is { } evidence) evidence.Started = true;
+    }
     private readonly IMetadataLink _meta;
     private readonly Func<Link.GetSlot, Task<Link.SlotData>> _getSlotData;
     private readonly Func<Link.GetComponent, Task<Link.ComponentData>> _getComponentData;
@@ -68,6 +111,7 @@ public sealed class ResoniteLinkClientAdapter : IResoniteClient, IResoniteClient
         {
             InsideReconnectLockForTests?.Invoke();
             Volatile.Write(ref _generation, null);
+            _applyAnnouncements = [];
             ClearReflectionMemory();
             _diskCache = null;
             _cacheSession = null;
@@ -117,6 +161,31 @@ public sealed class ResoniteLinkClientAdapter : IResoniteClient, IResoniteClient
         return ModelMapper.MapSlot(response.Data);
     }
 
+    public async Task<ApplyDeletionObservation> ObserveDeletionSlotAsync(string id, CancellationToken cancellationToken = default)
+    {
+        EnsureConnected();
+        var response = await Wait(_getSlotData(new Link.GetSlot { SlotID = id, Depth = 1, IncludeComponentData = true }), "slot.get", cancellationToken);
+        EnsureSuccess(response, IsSlotNotFound(id, response.ErrorInfo) ? "SLOT_NOT_FOUND" : "RESONITE_OPERATION_FAILED");
+        var raw = response.Data ?? throw new RLoopException("RESONITE_OPERATION_FAILED",
+            "ResoniteLink returned a successful slot.get without Slot data.", ExitCodes.OperationFailed);
+        // Coverage is judged on the raw SDK objects, because the mapped model drops the
+        // per-component reference-only flag. SlotData.Depth is NOT evidence: live record
+        // TestResults/S3-LIVE/executor-v3b/ResoLoop_Test_DriverSwap_TwoStage_e8c680baa2bf4fe2ba1e8aa231072dcc/
+        // driver-swap-raw-getslot.json (Resonite 2026.9.18.82 / ResoniteLink 0.13.1.0) shows it is 0
+        // for requested depths 0, 1 and 2 alike. The same record shows what does carry the signal:
+        // children are reference-only when the request depth did not reach them and full when it
+        // did; components are reference-only unless IncludeComponentData was requested.
+        var full = !raw.IsReferenceOnly && raw.ID == id;
+        // Live s3-0 (.ccg/tasks/resoloop-slimming, s3-0-live): an actual leaf's Children is null,
+        // so null on a full, exact Slot means no children. A listed child counts only when it is
+        // itself full and identified; one reference-only or unidentified child leaves it unknown.
+        var children = full && (raw.Children is null ||
+            raw.Children.All(c => c is not null && !c.IsReferenceOnly && !string.IsNullOrWhiteSpace(c.ID)));
+        var components = full && raw.Components is not null &&
+            raw.Components.All(c => c is not null && !c.IsReferenceOnly && !string.IsNullOrWhiteSpace(c.ID));
+        return new(ModelMapper.MapSlot(raw), children, components);
+    }
+
     // Read-only live record c04-live/raw-getslot.txt (2026-10-01): Resonite 2026.9.18.82,
     // ResoniteLink 0.13.1.0; only the exact requested-ID absence response is evidence of NotFound.
     private static bool IsSlotNotFound(string id, string? errorInfo) =>
@@ -153,7 +222,9 @@ public sealed class ResoniteLinkClientAdapter : IResoniteClient, IResoniteClient
             Rotation = request.Rotation is null ? null : new Link.Field_floatQ { Value = ToLink(request.Rotation) },
             Scale = request.Scale is null ? null : new Link.Field_float3 { Value = ToLink(request.Scale) }
         };
+        CheckApplyWriteBoundary(cancellationToken);
         var response = await Wait(_link.AddSlot(new Link.AddSlot { Data = slot }), "slot.add", cancellationToken);
+        ObserveApplyResponse(response.Success);
         EnsureSuccess(response, "SLOT_CREATE_FAILED", new Dictionary<string, object?> { ["parentId"] = request.ParentId, ["name"] = request.Name });
         return response.EntityId;
     }
@@ -170,14 +241,18 @@ public sealed class ResoniteLinkClientAdapter : IResoniteClient, IResoniteClient
             Rotation = request.Rotation is null ? null : new Link.Field_floatQ { Value = ToLink(request.Rotation) },
             Scale = request.Scale is null ? null : new Link.Field_float3 { Value = ToLink(request.Scale) }
         };
+        CheckApplyWriteBoundary(cancellationToken);
         var response = await Wait(_link.UpdateSlot(new Link.UpdateSlot { Data = slot }), "slot.update", cancellationToken);
+        ObserveApplyResponse(response.Success);
         EnsureSuccess(response, "SLOT_UPDATE_FAILED", new Dictionary<string, object?> { ["slotId"] = request.Id });
     }
 
     public async Task DeleteSlotAsync(string id, CancellationToken cancellationToken = default)
     {
         EnsureConnected();
+        CheckApplyWriteBoundary(cancellationToken);
         var response = await Wait(_link.RemoveSlot(new Link.RemoveSlot { SlotID = id }), "slot.remove", cancellationToken);
+        ObserveApplyResponse(response.Success);
         EnsureSuccess(response, "SLOT_DELETE_FAILED", new Dictionary<string, object?> { ["slotId"] = id });
     }
 
@@ -189,11 +264,13 @@ public sealed class ResoniteLinkClientAdapter : IResoniteClient, IResoniteClient
         var definition = await GetComponentDefinitionCachedAsync(componentType, cancellationToken);
         var resolvedType = definition.Type.FullTypeName;
 
+        CheckApplyWriteBoundary(cancellationToken);
         var response = await Wait(_link.AddComponent(new Link.AddComponent
         {
             ContainerSlotId = slotId,
             Data = new Link.Component { ComponentType = resolvedType, Members = members }
         }), "component.add", cancellationToken);
+        ObserveApplyResponse(response.Success);
         if (!response.Success) InvalidateDiskEvidence();
         EnsureSuccess(response, "COMPONENT_ADD_FAILED", new Dictionary<string, object?> { ["slotId"] = slotId, ["componentType"] = resolvedType });
         return new ComponentCreateResult(response.EntityId, resolvedType);
@@ -222,10 +299,12 @@ public sealed class ResoniteLinkClientAdapter : IResoniteClient, IResoniteClient
         EnsureConnected();
         if (fields.Count == 0) return;
         var members = await ParseMembersAsync(componentType, fields, cancellationToken);
+        CheckApplyWriteBoundary(cancellationToken);
         var response = await Wait(_link.UpdateComponent(new Link.UpdateComponent
         {
             Data = new Link.Component { ID = componentId, Members = members }
         }), "component.update", cancellationToken);
+        ObserveApplyResponse(response.Success);
         if (!response.Success) InvalidateDiskEvidence();
         EnsureSuccess(response, "COMPONENT_UPDATE_FAILED", new Dictionary<string, object?>
             { ["componentId"] = componentId, ["members"] = fields.Keys.ToArray() });
@@ -234,7 +313,9 @@ public sealed class ResoniteLinkClientAdapter : IResoniteClient, IResoniteClient
     public async Task RemoveComponentAsync(string componentId, CancellationToken cancellationToken = default)
     {
         EnsureConnected();
+        CheckApplyWriteBoundary(cancellationToken);
         var response = await Wait(_link.RemoveComponent(new Link.RemoveComponent { ComponentID = componentId }), "component.remove", cancellationToken);
+        ObserveApplyResponse(response.Success);
         EnsureSuccess(response, "COMPONENT_REMOVE_FAILED", new Dictionary<string, object?> { ["componentId"] = componentId });
     }
 
@@ -387,19 +468,34 @@ public sealed class ResoniteLinkClientAdapter : IResoniteClient, IResoniteClient
         EnsureConnected();
         Link.AssetData response = asset.Kind.ToLowerInvariant() switch
         {
-            "texture" or "texture2d" => await Wait(_link.ImportTexture(new Link.ImportTexture2DFile { FilePath = resolvedSource }), "asset.texture.import", cancellationToken),
-            "audio" or "audioclip" => await Wait(_link.ImportAudioClip(new Link.ImportAudioClipFile { FilePath = resolvedSource }), "asset.audio.import", cancellationToken),
+            "texture" or "texture2d" => await ImportTexture(resolvedSource, cancellationToken),
+            "audio" or "audioclip" => await ImportAudio(resolvedSource, cancellationToken),
             "mesh" => await ImportMeshJson(resolvedSource, cancellationToken),
             _ => throw new RLoopException("ASSET_KIND_UNSUPPORTED", $"Asset kind '{asset.Kind}' is not importable. Use a resdb URI for material and other runtime assets.", ExitCodes.ValidationFailed)
         };
+        ObserveApplyResponse(response.Success);
         EnsureSuccess(response, "ASSET_IMPORT_FAILED", new Dictionary<string, object?> { ["kind"] = asset.Kind, ["source"] = resolvedSource });
         return response.AssetURL?.ToString() ?? throw new RLoopException("ASSET_URL_MISSING", "Asset import succeeded without an AssetURL.", ExitCodes.OperationFailed);
     }
 
+    private async Task<Link.AssetData> ImportTexture(string path, CancellationToken cancellationToken)
+    {
+        CheckApplyWriteBoundary(cancellationToken);
+        return await Wait(_link.ImportTexture(new Link.ImportTexture2DFile { FilePath = path }), "asset.texture.import", cancellationToken);
+    }
+
+    private async Task<Link.AssetData> ImportAudio(string path, CancellationToken cancellationToken)
+    {
+        CheckApplyWriteBoundary(cancellationToken);
+        return await Wait(_link.ImportAudioClip(new Link.ImportAudioClipFile { FilePath = path }), "asset.audio.import", cancellationToken);
+    }
+
     private async Task<Link.AssetData> ImportMeshJson(string path, CancellationToken cancellationToken)
     {
-        var request = MeshImportDocument.Parse(await File.ReadAllTextAsync(path, cancellationToken));
-        if (MeshImportDocument.ToRawStatic(request) is { } raw)
+        var request = MeshImportDocument.Parse(await ReadMeshFileAsync(path, cancellationToken));
+        var raw = MeshImportDocument.ToRawStatic(request);
+        CheckApplyWriteBoundary(cancellationToken);
+        if (raw is not null)
             return await Wait(_link.ImportMesh(raw), "asset.mesh.import", cancellationToken);
         return await Wait(_link.ImportMesh(request), "asset.mesh.import", cancellationToken);
     }
@@ -780,7 +876,7 @@ public sealed class ResoniteLinkClientAdapter : IResoniteClient, IResoniteClient
                 {
                     ["operation"] = operation,
                     ["timeoutSeconds"] = _requestTimeout.TotalSeconds
-                }, ["Retry after checking Resonite responsiveness; apply checkpoints make retry safe."], ex);
+                }, ["Check Resonite responsiveness and inspect apply pending evidence; unresolved results stop before new writes."], ex);
         }
         finally
         {
@@ -1267,7 +1363,7 @@ public static class ValueCodec
         {
             throw new RLoopException("REQUEST_TIMEOUT", $"ResoniteLink request '{operation}' timed out after {timeout!.Value.TotalSeconds:0.#} seconds.",
                 ExitCodes.Timeout, new Dictionary<string, object?> { ["operation"] = operation, ["timeoutSeconds"] = timeout.Value.TotalSeconds },
-                ["Retry after checking Resonite responsiveness; apply checkpoints make retry safe."], ex);
+                ["Check Resonite responsiveness and inspect apply pending evidence; unresolved results stop before new writes."], ex);
         }
         finally
         {

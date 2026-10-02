@@ -131,20 +131,20 @@ public sealed partial class ApplyWorkflowTests
         await service.ApplyAsync(document, options);
         Assert.Equal(0, client.Writes);
         var upgraded = JsonNode.Parse(File.ReadAllText(options.StateFile!))!;
-        Assert.Equal(2, upgraded["schemaVersion"]!.GetValue<int>());
+        Assert.Equal(3, upgraded["schemaVersion"]!.GetValue<int>());
         Assert.Equal(new[] { "Root", "Managed" }, ((JsonArray)upgraded["slots"]!["root"]!["pathSegments"]!).Select(value => value!.GetValue<string>()));
     }
 
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task ReplacementDriverPrunesOrStopsResumeWhenReferenceEvidenceClaimsBothOwners(bool prune)
+    public async Task ReplacementDriverStopsAtReadbackBeforePruneOrReplay(bool prune)
     {
         var initial = Document("driver-swap", """
             [{"key":"target","type":"Test.Target","fields":{"Enabled":true}},
              {"key":"old","type":"Test.Source","fields":{"Target":"$member:target.Enabled"}}]
             """);
-        var client = new FakeResoniteClient(initial);
+        var client = new FakeResoniteClient(initial) { DiscoverId = "S-test" };
         var service = new WorldService(client);
         var options = new ApplyOptions(Path.Combine(_root, "drivers.state.json"));
         await service.ApplyAsync(initial, options);
@@ -153,25 +153,24 @@ public sealed partial class ApplyWorkflowTests
             [{"key":"target","type":"Test.Target","fields":{"Enabled":true}},
              {"key":"replacement","type":"Test.Source","fields":{"Target":"$member:target.Enabled"}}]
             """);
-        if (!prune)
-        {
-            var error = await Assert.ThrowsAsync<RLoopException>(() => service.ApplyAsync(desired, options));
-            Assert.Equal("APPLY_REFERENCE_NOT_RETAINED", error.Code);
-            // The interrupted write saved the replacement key, but only the old driver retained the reference.
-            // Reference evidence alone now maps both keys to the old driver; IDs cannot repair that correspondence.
-            client.ResetWriteCounts();
-            var resume = await Assert.ThrowsAsync<RLoopException>(() => service.ApplyAsync(desired,
-                options with { Prune = true, ConfirmDeletes = true }));
-            Assert.Equal("APPLY_COMPONENT_OWNERSHIP_CONFLICT", resume.Code);
-            Assert.Equal(0, client.Writes);
-            return;
-        }
-        await service.ApplyAsync(desired, options with { Prune = true, ConfirmDeletes = true });
-        var replacement = await service.ResolveComponentSelectorAsync("$component:replacement", options.StateFile);
-        Assert.NotNull((await client.GetComponentAsync(replacement)).Members["Target"].TargetId);
+        var error = await Assert.ThrowsAsync<RLoopException>(() => service.ApplyAsync(desired,
+            options with { Prune = prune, ConfirmDeletes = prune }));
+        Assert.Equal("APPLY_WRITE_UNVERIFIED", error.Code);
+        Assert.Equal("readbackMismatch", error.Context["reason"]);
+        // A rejected reference now stops before deleting the old driver, even with explicit prune.
+        Assert.Contains(Assert.Single(client.Root.Children).Components, c => c.Id == client.TargetClaimedBy);
+        Assert.Equal(0, client.BatchUpdates);
         client.ResetWriteCounts();
-        await service.ApplyAsync(desired, options);
+        var resume = await Assert.ThrowsAsync<RLoopException>(() => service.ApplyAsync(desired, options with { Prune = true, ConfirmDeletes = true }));
+        // Reconciliation settles the mismatch, then existing correspondence resolution
+        // sees two indistinguishable Source Components before reference writes or prune.
+        Assert.Equal("STABLE_COMPONENT_AMBIGUOUS", resume.Code);
         Assert.Equal(0, client.Writes);
+        Assert.Equal(0, client.BatchUpdates);
+        Assert.Empty(ApplyStateStore.Load(options.StateFile!, desired.Ownership!.Key).Pending);
+        Assert.True(ApplyStateStore.Load(options.StateFile!, desired.Ownership.Key).Components.ContainsKey("replacement"));
+        Assert.Contains(Assert.Single(client.Root.Children).Components, c => c.Id == client.TargetClaimedBy);
+        Assert.Contains(ApplyDiagnostics.ForException(resume, "apply").Diagnostics, d => d.Code == "APPLY_PENDING_RESOLVED_NOT_APPLIED");
     }
 
     [Fact]
