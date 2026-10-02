@@ -443,7 +443,7 @@ resoloop logs --tail 200 --json
 - 直結経路のGetSlotで `Success=false` のとき、`SLOT_NOT_FOUND`（終了コード5）は要求IDへのResoniteLinkの明確な不在応答 `Slot with ID '<要求ID>' not found.` と完全一致する場合だけで、それ以外の失敗応答は `RESONITE_OPERATION_FAILED`（終了コード7）になります。
 - 型定義とGetComponentの不在も、実際に送った型名への `<型名> is not a valid type`、要求IDへの `Component with ID '<要求ID>' not found.` という明確な不在応答との完全一致（Ordinal、前後空白のみ除去）で判定します。ただし型一覧に載っている型は、完全一致の不在応答でも一覧の存在証拠と矛盾するため NotFound にせず unreadable / unknown にします。未掲載の型定義は完全一致時に `TYPE_NOT_FOUND`、Component型の解決は完全な一覧に一致が無いときに `COMPONENT_TYPE_NOT_FOUND`（終了コード5）となり、その他の定義失敗は unreadable / unknown、GetComponentのその他の失敗は `RESONITE_OPERATION_FAILED`（終了コード7、contextに `componentId` と `errorInfo`）です。
 - APPLY_STORED_ID_UNVERIFIED（終了コード6）: 保存Slot IDの不在・所有を検証できない、または検証済み所有Slot上の保存Componentの証拠が不一致・未読のため、変更前に停止しました。Slot IDの読取失敗は`SLOT_NOT_FOUND`だけを不在とし、一般失敗・例外は`reason: storedIdReadFailed`、旧pathの読取失敗は`recordedPathReadFailed`で停止します。Componentの証拠不一致は`componentEvidenceMismatch`、member未読は`componentEvidenceUnread`です。手動改名・移動と別worldでのID衝突を区別しません。`context`の`storedId`、`recordedPath`、`observedName`、`observedPath`、`reason`を確認し、所有Slotだと確認できた場合は記録された名前と親に戻してください。それ以外はcheckpointを保持してstateを明示的に修復・置換します。未検証のIDを採用したり、stateを無条件に捨てて再applyしたりしないでください
-- STABLE_COMPONENT_AMBIGUOUS（終了コード6）: 所有Slot上に型・member名・identity値・管理参照で区別できないComponent候補が複数あります。保存ID集合が完全でも、候補の個別の同一性を証明できなければ停止します。`candidateIds`を観測してstateを保持し、所有と各候補を確認してから明示的に復旧してください。既存checkpointへmanifestの`identityFields`を追加するだけでは保存済み証拠は補われません。新規制作では名前付きprovider Slotへ分けるか、作成時に不変の`identityFields`値か一意に絞れる管理参照を記録します
+- STABLE_COMPONENT_AMBIGUOUS（終了コード6）: 所有Slot上に型・member名・identity値・管理参照で区別できないComponent候補が複数あります。保存ID集合が完全でも、候補の個別の同一性を証明できなければ停止します。`candidateIds`を観測してstateを保持し、所有と各候補を確認してから明示的に復旧してください。入替えの失敗後にこの停止へ至った場合の手順は「古い driver が新しい driver の参照を妨げる入替え」の節にあります。保存済みComponentが自身の参照証拠と矛盾する場合は、同型の無管理siblingが宣言先を指していても所有を移さず、書込み前に`APPLY_STORED_ID_UNVERIFIED`で停止します。既存checkpointへmanifestの`identityFields`を追加するだけでは保存済み証拠は補われません。新規制作では名前付きprovider Slotへ分けるか、作成時に不変の`identityFields`値か一意に絞れる管理参照を記録します
 - COMPONENT_TYPE_NOT_FOUND: type searchの完全な結果を使う
 - COMPONENT_DEFINITION_UNREADABLE（終了コード7）: 型は型一覧に存在するが、ResoniteLinkがそのComponent型のmember定義を読めない（例: `GradientStripTexture`）。「不在」ではなく「不明」です。`type describe COMPONENT`（`--member` なし）は型情報（TypeInfo）に `membersAvailable: false`、`membersUnavailableCode`、`membersUnavailableReason` を加えて成功し、Componentのmemberを必要とする操作（`component add`/`set`、`apply`、`type describe --member`）はこのコードで拒否されます。`type query`/`type check` は拒否せず、当該型を `status: "unknown"`（`differences` に `TYPE_DEFINITION_UNAVAILABLE`）として報告します。実Componentのmember値は `inspect --members` で読めることがあります
 - TYPE_SEARCH_INCOMPLETE（終了コード7）: 型一覧が空または不完全で、型が存在するか判定できない（「不明」）。`COMPONENT_TYPE_NOT_FOUND` にはなりません。world読み込み完了後に再試行してください。`type describe` は型情報を返し `membersAvailable: false` を付けます
@@ -535,7 +535,7 @@ v3 の操作 ID は state の `pending[].operationId` です。v1/v2 の空 ID �
 
 ### 同じ URL の書込みと保留を project 間で調整する
 
-直結の書込みは、session を観測してから session lock、project state lock の順に取得し、再観測して計画します。競合は待ち続けずに失敗し、handle は finally/Dispose で解放します。session lock の鍵は `ApplySessionObservation.NormalizeUrl` による正規化 URL です。host の大小文字、末尾ドット、loopback の localhost/127.0.0.1/::1、既定 port は正規化し、path/query は保持します。project と作業 directory に関係なく `<LocalApplicationData>/ResoLoop/write-locks/<URL の SHA-256>.lock` の排他的 file handle を一つ使います。cache 清掃の対象ではありません。
+直結の書込みは、session を観測してから session lock、project state lock の順に取得し、再観測して計画します。競合は待ち続けずに失敗し、handle は finally/Dispose で解放します。session lock の鍵は `ApplySessionObservation.NormalizeUrl` による正規化 URL です。scheme と host は小文字にし、IDN の host は ASCII 形にして末尾ドットを除きます。loopback アドレス（`localhost`、`127.0.0.0/8` 全体の `127.0.0.1`・`127.0.0.2` など、`::1`）は同じ `localhost` として扱い、既定 port は省略と同じ鍵になります。scheme・port・path・query が違えば別の鍵です。loopback 以外の host 名は、同じ Resonite へ届いても別の鍵になります。別の鍵が実際に同じ world へ届くかは実機で検証していません。project と作業 directory に関係なく `<LocalApplicationData>/ResoLoop/write-locks/<URL の SHA-256>.lock` の排他的 file handle を一つ使います。cache 清掃の対象ではありません。
 
 参加する入口は apply（asset import を含む）、直接の Slot create/set/delete、Component add/set/remove、画像 capture の一時カメラ作成から後片付けまで、`test --probe` の実行と復元です。読取り、offline SVG capture、`--discard-pending` は session lock を取りません。破棄は project state lock だけを使います。Flux deploy/watch の書込みはこの lock の対象外で、Workbench の操作も変更していません。
 
@@ -555,7 +555,19 @@ Slot の削除前は各 Slot の直下 children/components を読み、部分木
 
 削除は保留を保存してから送り、正確な ID の不在を一度 readback します。不在と認めるのは `SLOT_NOT_FOUND` / `COMPONENT_NOT_FOUND` だけです。ほかのエラーでは対応を外さず保留を残します。応答を失った削除は、不在だけを根拠に成功と断定せず、新しい apply も重複作成・二重削除を送りません。
 
-古い driver が新しい driver の参照を妨げる入替えは、最初の readback 不一致で停止し、一回の apply では完了しません。先に古い driver を宣言から外し、`diff --deletes-only` で正確な対象を確認して `apply --prune --yes` で削除します。不在を inspect で確かめてから新しい driver を宣言に追加して apply してください。この二段階の手順は offline test で確認済みです。すでに失敗した入替えでは、保留の確認と候補の曖昧さの解消が先に必要です。同型候補を ordinal で選んだり、state を消して回収したりしないでください。
+古い driver が新しい driver の参照を妨げる入替えは、最初の readback 不一致で停止し、一回の apply では完了しません。先に古い driver を宣言から外し、`diff --deletes-only` で正確な対象を確認して `apply --prune --yes` で削除します。不在を inspect で確かめてから新しい driver を宣言に追加して apply してください。この二段階の手順は offline test で確認済みです。
+
+すでに失敗した入替えが、後の apply で保留が確定し `STABLE_COMPONENT_AMBIGUOUS`（pending なし）で止まった場合の出口は、既存コマンドと state の手動編集だけで行います。新しい復旧コマンドや引数はありません。同型候補を ordinal で選んだり、ID を推測で上書きしたり、state を消して回収したりしないでください。手順は次の順です。
+
+1. 書込み側（この CLI、同じ endpoint の他 project、人、外部ツール）を止めます。同じ選択 session で現在の ID を読み直します。別 session や過去の ID は使いません。
+2. 所有 Slot を `inspect OWNER_SLOT_ID --members`、各 ID を `component inspect ID` で確認し、旧 driver ID と失敗で作られた ID の型・親 Slot・参照先を照合します。旧 driver が意図した target を参照し、失敗した側が参照を持たない（または別の値）ことを確かめます。確認できない場合はここで止めます。state に残る失敗側の記録は確定済みの記録で、所有の証明ではありません。
+3. state ファイルを byte 単位でコピーして退避します。手順の最後まで変更しません。
+4. 失敗側だけを `resoloop component remove FAILED_ID --yes` で削除します。直接の正確な ID 削除で、apply の所有検証は入りません。続けて `component inspect FAILED_ID` が `COMPONENT_NOT_FOUND` であることを確認します。
+5. 不在を確認した後にだけ、state の `components[新 driver の key]` を手で一件削除します。`schemaVersion`、`ownershipKey`、`sessionId`、slots、assets、他の component の対応、空の `pending` は退避と照合して変えません。旧 driver の記録には触れません。
+6. 両方の driver を宣言から外した中間宣言で `resoloop diff INTERMEDIATE --state STATE --require-state --deletes-only --json` を実行し、確認済みの旧 driver の削除だけが出ることを確かめます。次に `resoloop apply INTERMEDIATE --state STATE --require-state --prune --yes` を実行し、`component inspect OLD_ID` が `COMPONENT_NOT_FOUND` であることを確認します。
+7. 新しい driver を宣言へ戻して `resoloop apply FILE --state STATE --require-state` を実行し、新 ID・所有 Slot・参照、pending が空であること、他の対応と退避が変わっていないことを確かめます。
+
+保存済み ID と参照の矛盾で `APPLY_STORED_ID_UNVERIFIED`（`componentEvidenceMismatch`）が書込み前に止めた場合は、state を保持したままです。記録された target と実際の参照を各 ID で調べ、失敗で作られたと確認できた Component だけに上の手順 4 と 5 を使えます。それ以外が絡む場合は編集せず停止して報告してください。この手順は readback 後の保持、原子性、他の writer の排他を保証せず、実機では検証していません。詳細は Skill の `apply-recovery.md` にも同じ内容があります。
 
 ### 保証の範囲
 

@@ -45,7 +45,7 @@ resoloop apply FILE --state STATE --discard-pending OPERATION_ID --yes
 
 この操作は接続せず、世界へ書きません。確定済みの対応は残ります。作成の候補を採用することはなく、実機で作成済みなら次の apply で重複する可能性があります。更新・削除の保留を破棄しても、確定済みの対応は管理対象として残るため、実機確認と再計画が必要です。
 
-直結の書込みは、正規化 URL を鍵に `<LocalApplicationData>/ResoLoop/write-locks/<hash>.lock` の排他的 handle を共有します。別 project でも host の大文字小文字、localhost/127.0.0.1、既定 port の表記ゆれは同じ鍵です。apply とその asset import、直接の Slot/Component 編集・削除、画像 capture の一時カメラ、`test --probe` が参加します。読取りと offline SVG capture は lock を取りません。Flux deploy は対象外です。`APPLY_SESSION_BUSY`（終了コード7）は同じ URL の書込み競合、`APPLY_STATE_BUSY` は一つの project state の競合です。動いている writer が保持する lock を削除・奪取しないでください。
+直結の書込みは、正規化 URL を鍵に `<LocalApplicationData>/ResoLoop/write-locks/<hash>.lock` の排他的 handle を共有します。別 project でも host の大文字小文字、loopback アドレス（localhost、127.0.0.0/8 の 127.0.0.2 など、::1）、既定 port の表記ゆれは同じ鍵です。scheme・port・path・query が違えば別の鍵で、別の鍵が同じ world へ届くかは検証していません。apply とその asset import、直接の Slot/Component 編集・削除、画像 capture の一時カメラ、`test --probe` が参加します。読取りと offline SVG capture は lock を取りません。Flux deploy は対象外です。`APPLY_SESSION_BUSY`（終了コード7）は同じ URL の書込み競合、`APPLY_STATE_BUSY` は一つの project state の競合です。動いている writer が保持する lock を削除・奪取しないでください。
 
 次の holder は最後の書込み元 state を確認します。ファイルまたは directory が無いと正確に分かれば、別 project の書込みも続行します。アクセス拒否は不在と扱いません。保留あり・読取り不能、または lock の所在情報が壊れている場合は `APPLY_WRITE_UNVERIFIED` で止め、context に `stateFile` と `lockFile` を返します。その state を直すか、元の project の宣言と state で保留を解決してください。指定保留を破棄する場合は、先に正確な対象を実機で確かめます。state を恒久的に失った場合は、ResoLoop の書込みが動いていないことと実機の状態を確かめたうえで、報告された `lockFile` を削除してください。cache 清掃で lock や保留は消えません。
 
