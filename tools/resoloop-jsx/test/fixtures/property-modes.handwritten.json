@@ -1,0 +1,13 @@
+{
+  "schemaVersion": "1",
+  "ownership": { "key": "modes" },
+  "slot": { "name": "Modes", "key": "modes" },
+  "components": [{
+    "type": "Test.Modes",
+    "key": "values",
+    "fields": { "Config": 2, "Runtime": 3, "Driven": 4 },
+    "initialFields": { "Seed": 1 },
+    "propertyModes": { "Config": "config", "Seed": "initial", "Runtime": "runtime", "Driven": "driver-owned" }
+  }],
+  "children": []
+}

@@ -510,6 +510,23 @@
           "copy": "Copy",
           "checkFinite": false,
           "suggestCandidate": true
+        },
+        {
+          "name": "propertyModes",
+          "type": "Record\u003Cstring, string\u003E",
+          "nullable": true,
+          "constructorRequired": false,
+          "jsonRequired": false,
+          "jsxRequired": false,
+          "outputRequired": false,
+          "hasDefault": true,
+          "default": null,
+          "ignoreCondition": null,
+          "length": 0,
+          "choices": null,
+          "copy": "Copy",
+          "checkFinite": true,
+          "suggestCandidate": true
         }
       ]
     },

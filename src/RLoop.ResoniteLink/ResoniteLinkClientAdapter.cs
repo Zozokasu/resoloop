@@ -7,9 +7,33 @@ using Link = ResoniteLink;
 
 namespace RLoop.ResoniteLink;
 
-public sealed class ResoniteLinkClientAdapter : IResoniteClient, IResoniteClientDiagnostics, IReflectionMetadataClient
+public sealed class ResoniteLinkClientAdapter : IResoniteClient, IResoniteClientDiagnostics, IReflectionMetadataClient, IApplySessionObservation, IApplyConnectionGuard
 {
     private readonly Link.LinkInterface _link = new();
+    private readonly AsyncLocal<string?> _applyGeneration = new();
+    private IReadOnlyList<DiscoveredResoniteSession> _applyAnnouncements = [];
+    public void SetApplyAnnouncements(IReadOnlyList<DiscoveredResoniteSession> announcements) => _applyAnnouncements = announcements.ToArray();
+    public ApplySessionObservation ObserveApplySession() => ApplySessionObservation.Observe(_uri!.AbsoluteUri, _applyAnnouncements);
+    public ApplyConnectionObservation ObserveApplyConnection() => new(_meta.IsConnected, Volatile.Read(ref _generation));
+    public IDisposable GuardApplyWrites(string? plannedGeneration)
+    {
+        var previous = _applyGeneration.Value;
+        _applyGeneration.Value = plannedGeneration;
+        return new ApplyGuardScope(() => _applyGeneration.Value = previous);
+    }
+    private sealed class ApplyGuardScope(Action dispose) : IDisposable { public void Dispose() => dispose(); }
+    internal Action? BeforeApplyWriteBoundaryForTests;
+    private void CheckApplyWriteBoundary(CancellationToken ct)
+    {
+        if (_applyGeneration.Value is null) return;
+        BeforeApplyWriteBoundaryForTests?.Invoke();
+        ct.ThrowIfCancellationRequested();
+        if (_applyGeneration.Value is { } expected) EnsureGeneration(expected);
+        if (_applyGeneration.Value is not null && !_meta.IsConnected)
+            throw new RLoopException("APPLY_PRECONDITION_FAILED", "The planned apply connection is no longer connected.", ExitCodes.ValidationFailed,
+                new Dictionary<string, object?> { ["reason"] = "generationChanged" });
+        EnsureConnected();
+    }
     private readonly IMetadataLink _meta;
     private readonly Func<Link.GetSlot, Task<Link.SlotData>> _getSlotData;
     private readonly Func<Link.GetComponent, Task<Link.ComponentData>> _getComponentData;
@@ -68,6 +92,7 @@ public sealed class ResoniteLinkClientAdapter : IResoniteClient, IResoniteClient
         {
             InsideReconnectLockForTests?.Invoke();
             Volatile.Write(ref _generation, null);
+            _applyAnnouncements = [];
             ClearReflectionMemory();
             _diskCache = null;
             _cacheSession = null;
@@ -153,6 +178,7 @@ public sealed class ResoniteLinkClientAdapter : IResoniteClient, IResoniteClient
             Rotation = request.Rotation is null ? null : new Link.Field_floatQ { Value = ToLink(request.Rotation) },
             Scale = request.Scale is null ? null : new Link.Field_float3 { Value = ToLink(request.Scale) }
         };
+        CheckApplyWriteBoundary(cancellationToken);
         var response = await Wait(_link.AddSlot(new Link.AddSlot { Data = slot }), "slot.add", cancellationToken);
         EnsureSuccess(response, "SLOT_CREATE_FAILED", new Dictionary<string, object?> { ["parentId"] = request.ParentId, ["name"] = request.Name });
         return response.EntityId;
@@ -170,6 +196,7 @@ public sealed class ResoniteLinkClientAdapter : IResoniteClient, IResoniteClient
             Rotation = request.Rotation is null ? null : new Link.Field_floatQ { Value = ToLink(request.Rotation) },
             Scale = request.Scale is null ? null : new Link.Field_float3 { Value = ToLink(request.Scale) }
         };
+        CheckApplyWriteBoundary(cancellationToken);
         var response = await Wait(_link.UpdateSlot(new Link.UpdateSlot { Data = slot }), "slot.update", cancellationToken);
         EnsureSuccess(response, "SLOT_UPDATE_FAILED", new Dictionary<string, object?> { ["slotId"] = request.Id });
     }
@@ -177,6 +204,7 @@ public sealed class ResoniteLinkClientAdapter : IResoniteClient, IResoniteClient
     public async Task DeleteSlotAsync(string id, CancellationToken cancellationToken = default)
     {
         EnsureConnected();
+        CheckApplyWriteBoundary(cancellationToken);
         var response = await Wait(_link.RemoveSlot(new Link.RemoveSlot { SlotID = id }), "slot.remove", cancellationToken);
         EnsureSuccess(response, "SLOT_DELETE_FAILED", new Dictionary<string, object?> { ["slotId"] = id });
     }
@@ -189,6 +217,7 @@ public sealed class ResoniteLinkClientAdapter : IResoniteClient, IResoniteClient
         var definition = await GetComponentDefinitionCachedAsync(componentType, cancellationToken);
         var resolvedType = definition.Type.FullTypeName;
 
+        CheckApplyWriteBoundary(cancellationToken);
         var response = await Wait(_link.AddComponent(new Link.AddComponent
         {
             ContainerSlotId = slotId,
@@ -222,6 +251,7 @@ public sealed class ResoniteLinkClientAdapter : IResoniteClient, IResoniteClient
         EnsureConnected();
         if (fields.Count == 0) return;
         var members = await ParseMembersAsync(componentType, fields, cancellationToken);
+        CheckApplyWriteBoundary(cancellationToken);
         var response = await Wait(_link.UpdateComponent(new Link.UpdateComponent
         {
             Data = new Link.Component { ID = componentId, Members = members }
@@ -234,6 +264,7 @@ public sealed class ResoniteLinkClientAdapter : IResoniteClient, IResoniteClient
     public async Task RemoveComponentAsync(string componentId, CancellationToken cancellationToken = default)
     {
         EnsureConnected();
+        CheckApplyWriteBoundary(cancellationToken);
         var response = await Wait(_link.RemoveComponent(new Link.RemoveComponent { ComponentID = componentId }), "component.remove", cancellationToken);
         EnsureSuccess(response, "COMPONENT_REMOVE_FAILED", new Dictionary<string, object?> { ["componentId"] = componentId });
     }
@@ -385,6 +416,7 @@ public sealed class ResoniteLinkClientAdapter : IResoniteClient, IResoniteClient
         CancellationToken cancellationToken = default)
     {
         EnsureConnected();
+        CheckApplyWriteBoundary(cancellationToken);
         Link.AssetData response = asset.Kind.ToLowerInvariant() switch
         {
             "texture" or "texture2d" => await Wait(_link.ImportTexture(new Link.ImportTexture2DFile { FilePath = resolvedSource }), "asset.texture.import", cancellationToken),
@@ -399,6 +431,7 @@ public sealed class ResoniteLinkClientAdapter : IResoniteClient, IResoniteClient
     private async Task<Link.AssetData> ImportMeshJson(string path, CancellationToken cancellationToken)
     {
         var request = MeshImportDocument.Parse(await File.ReadAllTextAsync(path, cancellationToken));
+        CheckApplyWriteBoundary(cancellationToken);
         if (MeshImportDocument.ToRawStatic(request) is { } raw)
             return await Wait(_link.ImportMesh(raw), "asset.mesh.import", cancellationToken);
         return await Wait(_link.ImportMesh(request), "asset.mesh.import", cancellationToken);

@@ -11,10 +11,22 @@ namespace RLoop.Cli;
 /// </summary>
 public static class ResoniteClientFactory
 {
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<Uri, IReadOnlyList<DiscoveredResoniteSession>> announcements = new();
+    private sealed class RecordingDiscovery : IResoniteSessionDiscovery
+    {
+        public IReadOnlyList<DiscoveredResoniteSession> Sessions { get; private set; } = [];
+        public async Task<IReadOnlyList<DiscoveredResoniteSession>> DiscoverAsync(TimeSpan duration, CancellationToken ct = default) =>
+            Sessions = await new ResoniteSessionDiscovery().DiscoverAsync(duration, ct);
+    }
     /// <summary>Resolves the ResoniteLink WebSocket URL for the "link" backend (--url, discovery).</summary>
-    public static Task<Uri> ResolveConnectionUrlAsync(ParsedArguments args, RLoopConfig config, CancellationToken cancellationToken) =>
-        SessionDiscovery.ResolveUrlAsync(config, new ResoniteSessionDiscovery(),
+    public static async Task<Uri> ResolveConnectionUrlAsync(ParsedArguments args, RLoopConfig config, CancellationToken cancellationToken)
+    {
+        var discovery = new RecordingDiscovery();
+        var uri = await SessionDiscovery.ResolveUrlAsync(config, discovery,
             args.IntOption("discovery-seconds", SessionDiscovery.DefaultSeconds, 1, 60), args.Option("session"), cancellationToken);
+        announcements.Add(uri, discovery.Sessions);
+        return uri;
+    }
 
     /// <summary>
     /// Creates and connects a client for <see cref="RLoopConfig.Backend"/>. Pass
@@ -49,6 +61,8 @@ public static class ResoniteClientFactory
         try
         {
             await link.ConnectAsync(uri, timeout, cancellationToken);
+            if (link is ResoniteLinkClientAdapter adapter && announcements.TryGetValue(uri, out var evidence))
+                adapter.SetApplyAnnouncements(evidence);
             return link;
         }
         catch (Exception connectFailure)

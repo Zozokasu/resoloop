@@ -201,7 +201,8 @@ public sealed record ApplyComponentSpec(
     [property: ApplyShape(JsxRequired = true, Copy = ApplyCopyPolicy.Identity)] string? Key = null,
     [property: ApplyShape(Copy = ApplyCopyPolicy.ComponentMigration)] string? MigrateFrom = null,
     [property: ApplyShape(Copy = ApplyCopyPolicy.ScopeValue, CheckFinite = true)] IReadOnlyDictionary<string, JsonElement>? InitialFields = null,
-    IReadOnlyList<string>? IdentityFields = null);
+    IReadOnlyList<string>? IdentityFields = null,
+    [property: ApplyShape(CheckFinite = true)] IReadOnlyDictionary<string, string>? PropertyModes = null);
 
 [ApplySourceProperty("$scope", "string")]
 public sealed record ApplyNodeSpec(
@@ -432,6 +433,14 @@ public static class ApplyDocumentValidator
                         Issue("APPLY_MIGRATION_SELF_REFERENCE", "component.migrateFrom must differ from component.key.", componentPath + ".migrateFrom");
                     else if (!componentMigrations.TryAdd(component.MigrateFrom, (component.Key, componentPath)))
                         Issue("APPLY_MIGRATION_SOURCE_DUPLICATE", $"Stable Component key '{component.MigrateFrom}' is used by multiple migrations.", componentPath + ".migrateFrom");
+                }
+                foreach (var mode in component.PropertyModes ?? new Dictionary<string, string>())
+                {
+                    if (string.IsNullOrWhiteSpace(mode.Key) || mode.Value is not ("config" or "initial" or "runtime" or "driver-owned"))
+                        Issue("APPLY_COMPONENT_FIELD_POLICY_CONFLICT", "propertyModes requires a member name and config/initial/runtime/driver-owned.", componentPath + ".propertyModes");
+                    else if (mode.Value == "config" && component.InitialFields?.ContainsKey(mode.Key) == true ||
+                             mode.Value == "initial" && component.Fields?.ContainsKey(mode.Key) == true)
+                        Issue("APPLY_COMPONENT_FIELD_POLICY_CONFLICT", $"propertyModes conflicts with the declaration of '{mode.Key}'.", componentPath + ".propertyModes");
                 }
                 var duplicateInitial = (component.InitialFields?.Keys ?? []).Intersect(component.Fields?.Keys ?? [], StringComparer.Ordinal).ToArray();
                 if (duplicateInitial.Length > 0)

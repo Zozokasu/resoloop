@@ -46,6 +46,7 @@ export interface ApplyComponentSpec {
   migrateFrom?: string;
   initialFields?: Record<string, JsonValue>;
   identityFields?: string[];
+  propertyModes?: Record<string, string>;
 }
 
 export interface ApplyDocument {
@@ -125,4 +126,5 @@ export interface ComponentScalarProps {
   migrateFrom?: string;
   initialFields?: Record<string, JsonValue>;
   identityFields?: string[];
+  propertyModes?: Record<string, string>;
 }

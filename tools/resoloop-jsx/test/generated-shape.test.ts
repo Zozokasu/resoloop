@@ -29,6 +29,7 @@ test("generated copies every declared scalar using independently chosen values",
   };
   const componentValues: Record<string, any> = {
     fields: { Enabled: false, Empty: null }, migrateFrom: "previous", initialFields: { Seed: 23 }, identityFields: ["Seed"],
+    propertyModes: { Enabled: "config", Seed: "initial", Clock: "runtime", Driven: "driver-owned" },
   };
   // The reflection manifest checks coverage; it is never used to construct expected values.
   const manifest = JSON.parse(fs.readFileSync(path.join(packageRoot, "src/generated/apply-shape.json"), { encoding: "utf8" }));

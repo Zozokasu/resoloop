@@ -203,6 +203,12 @@ export function evaluate(
     const key = resolveKey("component", props, type, parentKey, siblingIndex, path, el.scope ?? "");
     registerKey(componentKeys, key, "component", path);
     const spec = copyComponent(props, key, path, el.scope ?? "", false, { assertFiniteNumbers, scopeValue });
+    for (const [member, mode] of Object.entries(spec.propertyModes ?? {})) {
+      if (!member.trim() || !["config", "initial", "runtime", "driver-owned"].includes(mode) ||
+          mode === "config" && Object.hasOwn(spec.initialFields ?? {}, member) ||
+          mode === "initial" && Object.hasOwn(spec.fields ?? {}, member))
+        throw new BuildError("APPLY_COMPONENT_FIELD_POLICY_CONFLICT", `Invalid propertyModes declaration at ${path}.propertyModes.${member}`);
+    }
     bindIr(el, spec);
     return spec;
   }

@@ -479,6 +479,8 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
             document.BuildBundle?.VerifyInputs();
             firstWriteChecked = true;
         }
+        using var connectionGuard = (client as IApplyConnectionGuard)?.GuardApplyWrites(prepared.Session.ConnectionGeneration);
+        var safety = prepared.Safety!;
         var counts = new ApplyCounts();
         var updatedComponents = new HashSet<string>(StringComparer.Ordinal);
         var completed = 0;
@@ -493,6 +495,7 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
                 else
                 {
                     BeforeFirstWrite();
+                    await safety.CheckConnectionAsync(asset.Key, cancellationToken);
                     asset.Url = await client.ImportAssetAsync(asset.Spec, asset.ResolvedSource, cancellationToken);
                 }
                 if (asset.Action == "create") counts.AssetsImported++;
@@ -520,6 +523,7 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
                         prepared.State.Slots[node.StableKey] = new ApplyStateSlot(string.Empty, node.Path, node.Spec.RuntimeRelocatable, node.PathSegments);
                         Checkpoint(prepared);
                         BeforeFirstWrite();
+                        await safety.CheckConnectionAsync(node.StableKey, cancellationToken);
                         node.Id = await client.CreateSlotAsync(new SlotCreateRequest(parentId, node.Spec.Name,
                             node.Spec.Position?.ToVector3("position"), node.Spec.Rotation?.ToQuaternion("rotation"),
                             node.Spec.Scale?.ToVector3("scale")), cancellationToken);
@@ -528,7 +532,10 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
                     case "update":
                         node.Id = node.Existing!.Id;
                         BeforeFirstWrite();
-                        await client.UpdateSlotAsync(CreateSlotUpdate(node, prepared.ParentId), cancellationToken);
+                        var update = CreateSlotUpdate(node, prepared.ParentId);
+                        await safety.CheckSlotAsync(node, update, cancellationToken);
+                        await client.UpdateSlotAsync(update, cancellationToken);
+                        safety.SlotSucceeded(update);
                         counts.SlotsUpdated++;
                         break;
                     default:
@@ -565,6 +572,7 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
                     prepared.State.Components[component.StableKey] = CreateComponentState(component, string.Empty);
                     Checkpoint(prepared);
                     BeforeFirstWrite();
+                    await safety.CheckConnectionAsync(component.StableKey, cancellationToken);
                     var created = await client.AddComponentAsync(component.Node.Id!, component.Spec.Type, initialFields, cancellationToken);
                     component.Id = created.Id;
                     component.ResolvedType = created.Type;
@@ -573,6 +581,11 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
                 if (!string.IsNullOrWhiteSpace(component.Spec.Key)) byKey[component.Spec.Key!] = component;
                 prepared.State.Components[component.StableKey] = CreateComponentState(component, component.Id!);
                 Checkpoint(prepared);
+                if (component.Existing is null)
+                {
+                    await safety.ObserveCreatedAsync(component, cancellationToken);
+                    safety.ComponentSucceeded(component, component.AppliedOnCreate ?? new Dictionary<string, string>());
+                }
                 completed++;
                 options.Progress?.Invoke(new ApplyProgress("components", completed, total, component.Path,
                     component.Existing is null ? "created Component" : "resolved Component"));
@@ -581,7 +594,7 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
             foreach (var component in prepared.Components)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                var desiredFields = component.Existing is null ? MergeCreateFields(component.Spec) : component.Spec.Fields;
+                var desiredFields = component.Existing is null ? MergeCreateFields(component.Spec) : ManagedFields(component.Spec);
                 var fields = await ResolveFieldsAsync(desiredFields, byKey, slotsByKey, assetUrls, cancellationToken);
                 var changed = fields.Where(field => component.AppliedOnCreate is null ||
                                                     !component.AppliedOnCreate.TryGetValue(field.Key, out var applied) || applied != field.Value)
@@ -591,7 +604,9 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
                 if (changed.Count > 0)
                 {
                     BeforeFirstWrite();
+                    await safety.CheckComponentAsync(component, changed.Keys, cancellationToken);
                     await client.SetComponentMembersAsync(component.Id!, component.ResolvedType ?? component.Spec.Type, changed, cancellationToken);
+                    safety.ComponentSucceeded(component, changed);
                     if (component.Existing is not null) { counts.ComponentsUpdated++; updatedComponents.Add(component.Id!); }
                 }
                 else if (component.Existing is not null)
@@ -601,6 +616,7 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
                 if (component.RelocationSource is not null && component.RelocationSource.Id != component.Id)
                 {
                     BeforeFirstWrite();
+                    await safety.CheckConnectionAsync(component.StableKey, cancellationToken);
                     await client.RemoveComponentAsync(component.RelocationSource.Id, cancellationToken);
                     counts.ComponentsDeleted++;
                     component.RelocationSource = null;
@@ -618,7 +634,10 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 BeforeFirstWrite();
-                await client.UpdateSlotAsync(CreateSlotUpdate(node, prepared.ParentId), cancellationToken);
+                var update = CreateSlotUpdate(node, prepared.ParentId);
+                await safety.CheckSlotAsync(node, update, cancellationToken);
+                await client.UpdateSlotAsync(update, cancellationToken);
+                safety.SlotSucceeded(update);
                 counts.SlotsUpdated++;
                 prepared.State.Slots[node.StableKey] = new ApplyStateSlot(node.Id!, node.Path, node.Spec.RuntimeRelocatable, node.PathSegments);
                 Checkpoint(prepared);
@@ -632,6 +651,7 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
                 {
                     cancellationToken.ThrowIfCancellationRequested();
                     BeforeFirstWrite();
+                    await safety.CheckConnectionAsync(deletion.Key, cancellationToken);
                     await client.RemoveComponentAsync(deletion.Id, cancellationToken);
                     prepared.State.Components.Remove(deletion.Key);
                     counts.ComponentsDeleted++;
@@ -645,6 +665,7 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
                     if (deletion.Id.Equals("Root", StringComparison.OrdinalIgnoreCase))
                         throw new RLoopException("DELETE_ROOT_FORBIDDEN", "The Root Slot can never be pruned.", ExitCodes.ValidationFailed);
                     BeforeFirstWrite();
+                    await safety.CheckConnectionAsync(deletion.Key, cancellationToken);
                     await client.DeleteSlotAsync(deletion.Id, cancellationToken);
                     foreach (var componentKey in deletion.CoveredComponentKeys ?? [])
                         prepared.State.Components.Remove(componentKey);
@@ -661,7 +682,7 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
             if (counts.ComponentsAdded + counts.ComponentsUpdated + counts.ComponentsDeleted + counts.SlotsUpdated + counts.SlotsDeleted > 0)
             foreach (var component in prepared.Components)
             {
-                var desired = component.Existing is null ? MergeCreateFields(component.Spec) : component.Spec.Fields;
+                var desired = component.Existing is null ? MergeCreateFields(component.Spec) : ManagedFields(component.Spec);
                 var referenceFields = (desired ?? new Dictionary<string, JsonElement>())
                     .Where(field => ContainsWorldReference(field.Value)).ToDictionary(pair => pair.Key, pair => pair.Value);
                 if (referenceFields.Count == 0) continue;
@@ -670,7 +691,11 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
                 var missing = fields.Where(field => !current.Members.TryGetValue(field.Key, out var observed) ||
                     !MemberMatchesRaw(observed, field.Value)).ToDictionary(pair => pair.Key, pair => pair.Value);
                 if (missing.Count == 0) continue;
+                // Preserve the legacy reconciliation observation boundary; I2 changes resend semantics.
+                safety.PlanReconciliation(component, current, missing.Keys);
+                await safety.CheckComponentAsync(component, missing.Keys, cancellationToken);
                 await client.SetComponentMembersAsync(component.Id!, component.ResolvedType ?? component.Spec.Type, missing, cancellationToken);
+                safety.ComponentSucceeded(component, missing);
                 if (component.Existing is not null && updatedComponents.Add(component.Id!))
                 {
                     counts.ComponentsUpdated++;
@@ -705,7 +730,8 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
         }
         catch (RLoopException ex)
         {
-            var context = new Dictionary<string, object?>(ex.Context, StringComparer.Ordinal)
+            var detailed = safety.DecorateBoundaryFailure(ex);
+            var context = new Dictionary<string, object?>(detailed.Context, StringComparer.Ordinal)
             {
                 ["stateFile"] = prepared.StatePath,
                 ["completed"] = completed,
@@ -723,7 +749,9 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
             };
             var suggestions = ex.Suggestions.Concat(["Re-run the same apply command after resolving the error; completed operations are checkpointed."])
                 .Distinct(StringComparer.Ordinal).ToArray();
-            throw new RLoopException(ex.Code, ex.Message, ex.ExitCode, context, suggestions, ex);
+            var failure = new RLoopException(ex.Code, ex.Message, ex.ExitCode, context, suggestions, detailed);
+            ApplyDiagnostics.CopyFailure(detailed, failure);
+            throw failure;
         }
 
         stopwatch.Stop();
@@ -735,11 +763,13 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
         var profile = options.Profile ? new ApplyProfile(stopwatch.Elapsed.TotalMilliseconds, metrics,
             prepared.Entries.Count, mutations, noOps) : null;
         var root = prepared.Nodes[0];
-        return new ApplyResult(root.Id!, root.SlotAction == "create", counts.ComponentsAdded, counts.ComponentsUpdated,
+        var result = new ApplyResult(root.Id!, root.SlotAction == "create", counts.ComponentsAdded, counts.ComponentsUpdated,
             counts.SlotsCreated, counts.SlotsUpdated, counts.SlotsUnchanged, counts.ComponentsUnchanged,
             prepared.StatePath, prepared.Session.UniqueSessionId, profile, counts.ComponentsDeleted, counts.SlotsDeleted,
             false, $"Operations are non-atomic. Re-run the same apply command to converge from checkpoint {prepared.StatePath}.",
             counts.AssetsImported, counts.AssetsUnchanged);
+        ApplyDiagnostics.AttachRuntime(result, safety.Diagnostics);
+        return result;
     }
 
     public async Task<ApplyTestReport> TestAsync(ApplyDocument document, ApplyOptions? options = null,
@@ -1073,6 +1103,7 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
         var resolvedTypes = prepared.Components.Where(x => x.Existing is not null)
             .GroupBy(x => x.Spec.Type, StringComparer.Ordinal)
             .ToDictionary(group => group.Key, group => group.First().Existing!.Type, StringComparer.Ordinal);
+        prepared.Safety = new ApplySafety(client, prepared);
         var strictValidation = await ApplyDocumentValidator.ValidateAsync(document, client, cancellationToken, resolvedTypes);
         ApplyDocumentValidator.ThrowIfInvalid(strictValidation);
         return prepared;
@@ -1183,9 +1214,12 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
                 ? $"stable key '{component.StableKey}' moves the Component to Slot '{component.Node.StableKey}'"
                 : component.Existing is null ? "managed Component does not exist" : "Component and fields already match";
             var diffs = new List<ApplyMemberDiff>();
+            foreach (var mode in component.Spec.PropertyModes ?? new Dictionary<string, string>())
+                if (mode.Value is "runtime" or "driver-owned")
+                    diffs.Add(new ApplyMemberDiff(mode.Key, "preserve", Reason: mode.Value + ": ordinary apply does not write this member, including creation"));
             if (component.Existing is not null)
             {
-                foreach (var field in component.Spec.Fields ?? new Dictionary<string, JsonElement>())
+                foreach (var field in ManagedFields(component.Spec))
                 {
                     var resolvable = TryResolveRawForPlan(field.Value, existingByKey, slotsByKey, assetUrls, out var raw);
                     MemberValue? current = null;
@@ -1373,8 +1407,14 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
         var result = new Dictionary<string, JsonElement>(StringComparer.Ordinal);
         foreach (var field in component.InitialFields ?? new Dictionary<string, JsonElement>()) result[field.Key] = field.Value;
         foreach (var field in component.Fields ?? new Dictionary<string, JsonElement>()) result[field.Key] = field.Value;
-        return result;
+        return result.Where(f => WritesProperty(component, f.Key)).ToDictionary(StringComparer.Ordinal);
     }
+
+    private static bool WritesProperty(ApplyComponentSpec spec, string member) =>
+        spec.PropertyModes?.GetValueOrDefault(member) is not ("runtime" or "driver-owned");
+
+    private static IReadOnlyDictionary<string, JsonElement> ManagedFields(ApplyComponentSpec spec) =>
+        (spec.Fields ?? new Dictionary<string, JsonElement>()).Where(f => WritesProperty(spec, f.Key)).ToDictionary(StringComparer.Ordinal);
 
     private static bool ContainsWorldReference(JsonElement value) => value.ValueKind switch
     {
@@ -2175,6 +2215,7 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
         public IReadOnlyDictionary<string, string> SlotMigrations { get; } = slotMigrations;
         public IReadOnlyDictionary<string, string> ComponentMigrations { get; } = componentMigrations;
         public IReadOnlyList<SlotInfo> SnapshotSlots { get; } = snapshots.SelectMany(snapshot => Flatten(snapshot.Slot, snapshot.Path)).ToArray();
+        public ApplySafety? Safety { get; set; }
         public List<NodeRuntime> Nodes { get; } = [];
         public List<ComponentRuntime> Components { get; } = [];
         public List<ApplyPlanEntry> Entries { get; } = [];

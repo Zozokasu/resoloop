@@ -1463,6 +1463,8 @@ public sealed partial class ApplyWorkflowTests : IDisposable
         public string? TargetClaimedBy { get; set; }
         public CancellationTokenSource? Cancellation { get; set; }
         public string SessionId { get; set; } = "session-1";
+        public string? Generation { get; set; }
+        public bool Connected { get; set; } = true;
         public string EngineVersion { get; set; } = "test";
         public string LinkVersion { get; set; } = "test";
         public Action? OnDescribe { get; set; }
@@ -1486,7 +1488,7 @@ public sealed partial class ApplyWorkflowTests : IDisposable
 
         public Task ConnectAsync(Uri uri, TimeSpan timeout, CancellationToken cancellationToken = default) => Task.CompletedTask;
         public Task<SessionInfo> GetSessionInfoAsync(CancellationToken cancellationToken = default) =>
-            Task.FromResult(Read(new SessionInfo("ws://fake", true, EngineVersion, LinkVersion, SessionId)));
+            Task.FromResult(Read(new SessionInfo("ws://fake", Connected, EngineVersion, LinkVersion, SessionId, Generation)));
 
         public Task<SlotInfo> GetSlotAsync(string id, int depth, bool includeComponentData, CancellationToken cancellationToken = default)
         {
@@ -1726,7 +1728,7 @@ public sealed partial class ApplyWorkflowTests : IDisposable
         public sealed class FakeComponent(string id, string type)
         {
             public string Id { get; } = id;
-            public string Type { get; } = type;
+            public string Type { get; set; } = type;
             public Dictionary<string, MemberValue> Members { get; } = new(StringComparer.Ordinal);
         }
     }

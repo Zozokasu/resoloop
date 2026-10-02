@@ -50,7 +50,7 @@ export function copySlot(props: Record<string, any>, key: string, path: string, 
   return spec;
 }
 
-export const COMPONENT_SCALAR_PROPS = ["fields", "migrateFrom", "initialFields", "identityFields"] as const;
+export const COMPONENT_SCALAR_PROPS = ["fields", "migrateFrom", "initialFields", "identityFields", "propertyModes"] as const;
 
 export function copyComponent(props: Record<string, any>, key: string, path: string, scope: string, isRoot: boolean, helpers: CopyHelpers): ApplyComponentSpec {
   const spec: ApplyComponentSpec = { type: props.type, key };
@@ -67,6 +67,10 @@ export function copyComponent(props: Record<string, any>, key: string, path: str
   }
   if (props.identityFields !== undefined) {
     spec.identityFields = props.identityFields;
+  }
+  if (props.propertyModes !== undefined) {
+    helpers.assertFiniteNumbers(props.propertyModes, `${path}.propertyModes`);
+    spec.propertyModes = props.propertyModes;
   }
   return spec;
 }
