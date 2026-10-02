@@ -4,6 +4,7 @@
   </PropertyGroup>
   <ItemGroup>
     <InternalsVisibleTo Include="RLoop.Tests" />
+    <InternalsVisibleTo Include="RLoop.IntegrationTests" />
     <InternalsVisibleTo Include="resoloop" />
     <EmbeddedResource Include="../../skills/codex/resonite-uix/SKILL.md" LogicalName="RLoop.Core.Skills.resonite-uix.SKILL.md" />
     <EmbeddedResource Include="../../skills/codex/resonite-uix/references/*.md" LogicalName="RLoop.Core.Skills.resonite-uix.references.%(Filename)%(Extension)" />
