@@ -5,6 +5,7 @@ using RLoop.ResoniteLink;
 
 namespace RLoop.IntegrationTests;
 
+[Collection("Live world writes")]
 public sealed class UixDriverMigrationIntegrationTests
 {
     [Fact]
