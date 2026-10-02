@@ -2,6 +2,19 @@
 
 # resoloop
 
+## Component カタログと TypeScript 補助
+
+通常のCLI作業では、Reflectionで正確なComponentの完全型名を確認し、JSON配列 `component-types.json` に記録します。既存のResoniteLink URL設定を利用して、読み取り専用のカタログを取得し、TypeScript用宣言を生成できます。
+
+```powershell
+resoloop catalog capture --types component-types.json --output catalog.json --url ws://localhost:<現在のport>
+resoloop catalog types catalog.json
+resoloop-jsx build content/main.tsx -o build/main.json
+resoloop validate build/main.json --catalog catalog.json --json
+```
+
+`--url`を省略すると、CLIの既存のURL・設定選択を使います。取得はLink backendで行い、sessionのwrite lockを取らず、実機へ書き込みません。取得前後のversionを照合し、入力型名512件・再帰依存を含む取得型512件・2分の上限を設けています。`catalog types`はoffline処理です。synthetic catalogと取得不完全なcatalogは拒否します。既定出力先は最寄りの `.resoloop.json` があるprojectの `.resoloop/catalog-types.d.ts` です。projectがなければ現在のdirectoryを基準にします。既定出力先は現在のdirectory基準で、`resoloop-jsx build` が自動で読むのは `.resoloop.json` のあるproject（または `--project-root`）の `.resoloop/` だけなので、そのproject内で実行するか `--output` を指定してください。生成宣言は `CatalogComponentRegistry` を拡張します。通常の `tsc` では `include` に指定するか、TypeScriptファイルから `/// <reference path="../.resoloop/catalog-types.d.ts" />` で参照してください。`resoloop-jsx build` はこの標準ファイルがあれば自動で読み込みます。TypeScriptの診断は編集時の補助です。生成される型が付くのは `<Component type="…">` の `fields` と `initialFields` だけです。`<Field>` は緩い型（JsonValue）のままで、member名と値はTypeScriptでは検査されません（存在しないmember名も `tsc` を通ります）。合否はC#のcatalog照合（`COMPONENT_MEMBER_NOT_FOUND` など）が決めます。最終的なcatalog判定はC#の `ApplyCatalogValidator` が行います。カタログ取得や型宣言だけではruntime動作を検証したことになりません。
+
 ## UIX制作の効率化
 
 新規制作では `children` に `{"$recipe":"button","$with":{"key":"accept","rect":{}}}` と直接記述できます。include/export不要で、生成キーは `uix-button--accept` を接頭辞にします。既存prototypeのキーは変わりません。適用済み宣言の移行にはキー変更の確認が必要です。

@@ -80,7 +80,7 @@ JSONではalias先を`fields`、`initialFields`または`propertyModes`にも宣
 
 上の型名とmember名は例示用placeholderです。実行前にruntime Reflectionで確認した値へ置き換えてください。
 
-TSXでは`<Component>`内に`<Field name="REFLECTION_VERIFIED_LIGHT_MEMBER" value={2} key="brightness" />`を置けます。`mode`を省くと、そのmemberの`propertyModes`があれば従い、なければ`config`です。`initial`は`initialFields`相当です。`runtime`と`driver-owned`の値は作成時も書かれません。valueを省いたFieldも使えます。`runtime`または`driver-owned`ならmemberを`propertyModes`へ登録し、`key`は必要な場合だけaliasとして指定します。同じmemberを通常fieldとFieldで重ねて指定しないでください。
+TSXでは`<Component>`内に`<Field name="REFLECTION_VERIFIED_LIGHT_MEMBER" value={2} key="brightness" />`を置けます。`mode`を省くと、そのmemberの`propertyModes`があれば従い、なければ`config`です。`initial`は`initialFields`相当です。`runtime`と`driver-owned`の値は作成時も書かれません。valueを省いたFieldも使えます。`runtime`または`driver-owned`ならmemberを`propertyModes`へ登録し、`key`は必要な場合だけaliasとして指定します。同じmemberを通常fieldとFieldで重ねて指定しないでください。生成される型が付くのは `<Component type="…">` の `fields` と `initialFields` だけです。`<Field>` は緩い型（JsonValue）のままで、member名と値はTypeScriptでは検査されません（存在しないmember名も `tsc` を通ります）。合否はC#のcatalog照合（`COMPONENT_MEMBER_NOT_FOUND` など）が決めます。
 
 | 診断 | 意味 |
 | --- | --- |
@@ -93,7 +93,7 @@ TSXでは`<Component>`内に`<Field name="REFLECTION_VERIFIED_LIGHT_MEMBER" valu
 
 modeとのpolicy衝突には既存の`APPLY_COMPONENT_FIELD_POLICY_CONFLICT`を使います。JSON入力はJSON path、TSX bundleはsource rangeで診断します。詳細は[TSX authoring](../tools/resoloop-jsx/README.md)を参照してください。
 
-Slotの任意`tag`を省略するとplanに差分を作らず既存Tagを保持します。明示した空文字列はTagを消去します。Tag書込みはS3 pre-send check、pending記録、readbackを通ります。Workbench backendはSlot書込みを受け付けません。実機でのTag書込みとruntime Reflectionは未検証です。
+Slotの任意`tag`を省略するとplanに差分を作らず既存Tagを保持します。明示した空文字列はTagを消去します。Tag書込みはS3 pre-send check、pending記録、readbackを通ります。Workbench backendはSlot書込みを受け付けません。実機（Resonite 2026.9.18.82、ResoniteLink 0.13.1.0）で2026-10-03に、tagを宣言したSlotの作成と更新が反映され読み直しと一致すること、tagを宣言から外しても実機の値を変えないこと、`tag: ""`が空文字として読み戻り保留が残らないこと（未設定のTagはnullで返る）を確認しました。runtime Reflectionは未検証です。
 
 ## Transform管理とstable key migration
 
