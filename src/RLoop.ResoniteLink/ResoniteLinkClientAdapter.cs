@@ -166,12 +166,24 @@ public sealed class ResoniteLinkClientAdapter : IResoniteClient, IResoniteClient
         EnsureConnected();
         var response = await Wait(_getSlotData(new Link.GetSlot { SlotID = id, Depth = 1, IncludeComponentData = true }), "slot.get", cancellationToken);
         EnsureSuccess(response, IsSlotNotFound(id, response.ErrorInfo) ? "SLOT_NOT_FOUND" : "RESONITE_OPERATION_FAILED");
-        var raw = response.Data;
-        // Pinned SDK: depth 1 returns immediate children. Live s3-0: an actual leaf's
-        // Children is null. Only a full requested Slot at that returned depth may use it as empty.
-        var full = response.Depth == 1 && !raw.IsReferenceOnly && raw.ID == id;
-        return new(ModelMapper.MapSlot(raw), full,
-            full && raw.Components is not null && raw.Components.All(c => !c.IsReferenceOnly && !string.IsNullOrWhiteSpace(c.ID)));
+        var raw = response.Data ?? throw new RLoopException("RESONITE_OPERATION_FAILED",
+            "ResoniteLink returned a successful slot.get without Slot data.", ExitCodes.OperationFailed);
+        // Coverage is judged on the raw SDK objects, because the mapped model drops the
+        // per-component reference-only flag. SlotData.Depth is NOT evidence: live record
+        // TestResults/S3-LIVE/executor-v3b/ResoLoop_Test_DriverSwap_TwoStage_e8c680baa2bf4fe2ba1e8aa231072dcc/
+        // driver-swap-raw-getslot.json (Resonite 2026.9.18.82 / ResoniteLink 0.13.1.0) shows it is 0
+        // for requested depths 0, 1 and 2 alike. The same record shows what does carry the signal:
+        // children are reference-only when the request depth did not reach them and full when it
+        // did; components are reference-only unless IncludeComponentData was requested.
+        var full = !raw.IsReferenceOnly && raw.ID == id;
+        // Live s3-0 (.ccg/tasks/resoloop-slimming, s3-0-live): an actual leaf's Children is null,
+        // so null on a full, exact Slot means no children. A listed child counts only when it is
+        // itself full and identified; one reference-only or unidentified child leaves it unknown.
+        var children = full && (raw.Children is null ||
+            raw.Children.All(c => c is not null && !c.IsReferenceOnly && !string.IsNullOrWhiteSpace(c.ID)));
+        var components = full && raw.Components is not null &&
+            raw.Components.All(c => c is not null && !c.IsReferenceOnly && !string.IsNullOrWhiteSpace(c.ID));
+        return new(ModelMapper.MapSlot(raw), children, components);
     }
 
     // Read-only live record c04-live/raw-getslot.txt (2026-10-01): Resonite 2026.9.18.82,

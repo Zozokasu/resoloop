@@ -1528,9 +1528,12 @@ public sealed partial class ApplyWorkflowTests : IDisposable
         public bool DeletionChildrenObserved { get; set; } = true;
         public bool DeletionComponentsObserved { get; set; } = true;
         public Action<string>? BeforeDeletionObservation { get; set; }
+        /// <summary>Routes deletion coverage through another observer (the real adapter over raw fixtures).</summary>
+        public IApplyDeletionObservation? DeletionObserver { get; set; }
         public async Task<ApplyDeletionObservation> ObserveDeletionSlotAsync(string id, CancellationToken cancellationToken = default)
         {
             BeforeDeletionObservation?.Invoke(id);
+            if (DeletionObserver is not null) return await DeletionObserver.ObserveDeletionSlotAsync(id, cancellationToken);
             return new(await GetSlotAsync(id, 1, true, cancellationToken),
                 DeletionChildrenObserved && SlotIdsOmittedFromChildren.Count == 0,
                 DeletionComponentsObserved && UnreadComponentIds.Count == 0);
