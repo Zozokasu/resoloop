@@ -7,7 +7,7 @@ using Link = ResoniteLink;
 
 namespace RLoop.ResoniteLink;
 
-public sealed class ResoniteLinkClientAdapter : IResoniteClient, IResoniteClientDiagnostics, IReflectionMetadataClient, IApplySessionObservation, IApplyConnectionGuard, IApplySendEvidence
+public sealed class ResoniteLinkClientAdapter : IResoniteClient, IResoniteClientDiagnostics, IReflectionMetadataClient, IApplySessionObservation, IApplyConnectionGuard, IApplySendEvidence, IApplyDeletionObservation
 {
     private readonly Link.LinkInterface _link = new();
     private readonly AsyncLocal<string?> _applyGeneration = new();
@@ -158,6 +158,19 @@ public sealed class ResoniteLinkClientAdapter : IResoniteClient, IResoniteClient
         EnsureSuccess(response, IsSlotNotFound(id, response.ErrorInfo) ? "SLOT_NOT_FOUND" : "RESONITE_OPERATION_FAILED",
             new Dictionary<string, object?> { ["slotId"] = id, ["errorInfo"] = response.ErrorInfo });
         return ModelMapper.MapSlot(response.Data);
+    }
+
+    public async Task<ApplyDeletionObservation> ObserveDeletionSlotAsync(string id, CancellationToken cancellationToken = default)
+    {
+        EnsureConnected();
+        var response = await Wait(_getSlotData(new Link.GetSlot { SlotID = id, Depth = 1, IncludeComponentData = true }), "slot.get", cancellationToken);
+        EnsureSuccess(response, IsSlotNotFound(id, response.ErrorInfo) ? "SLOT_NOT_FOUND" : "RESONITE_OPERATION_FAILED");
+        var raw = response.Data;
+        // Pinned SDK: depth 1 returns immediate children. Live s3-0: an actual leaf's
+        // Children is null. Only a full requested Slot at that returned depth may use it as empty.
+        var full = response.Depth == 1 && !raw.IsReferenceOnly && raw.ID == id;
+        return new(ModelMapper.MapSlot(raw), full,
+            full && raw.Components is not null && raw.Components.All(c => !c.IsReferenceOnly && !string.IsNullOrWhiteSpace(c.ID)));
     }
 
     // Read-only live record c04-live/raw-getslot.txt (2026-10-01): Resonite 2026.9.18.82,

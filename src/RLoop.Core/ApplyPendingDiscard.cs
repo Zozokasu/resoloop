@@ -30,11 +30,20 @@ public static class ApplyPendingDiscard
         // Candidate bindings are deliberately never copied into confirmed dictionaries.
         ApplyStateStore.Save(path, next);
         return new(path, operationId, discarded.Kind, discarded.Key, discarded.Id,
-            "This target is outside management after discarding its pending evidence; confirmed bindings remain unchanged. " +
-            "If creation succeeded in the world, the next apply will create the same object again. " +
+            WarningFor(discarded.Kind) + " " +
             "First inspect the world (inspect EXACT_SLOT_ID --members or component inspect EXACT_COMPONENT_ID); " +
             "delete unwanted objects only by their exact IDs with --yes. An unknown ID must be located and inspected manually.");
     }
+
+    internal static string WarningFor(string kind) => kind switch
+    {
+        "createSlot" or "addComponent" or "legacyCreateSlot" or "legacyAddComponent" =>
+            "Discarding creation evidence does not adopt the candidate binding; confirmed bindings remain unchanged. An unconfirmed created target is outside management. If creation succeeded, the next apply may create the same object again (a duplicate).",
+        "deleteSlot" or "removeComponent" =>
+            "Discarding deletion evidence preserves confirmed bindings. The target may already be absent; inspect its exact ID and re-plan before any further deletion.",
+        "importAsset" => "Discarding import evidence preserves confirmed asset bindings. A completed unconfirmed import may be repeated by the next apply.",
+        _ => "Discarding update evidence preserves confirmed bindings. The world may contain some or all of the attempted values; inspect the exact target and re-plan before further writes.",
+    };
 
     internal static IEnumerable<ApplyPendingWrite> LegacyPending(ApplyState state)
     {

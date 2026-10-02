@@ -47,6 +47,7 @@ public sealed partial class WorldService
     private async Task ExecutePendingAsync(PreparedApply prepared, ApplyPendingWrite pending,
         Func<Task> check, Func<Task> send, CancellationToken ct)
     {
+        prepared.SessionWriter?.RecordState(prepared.StatePath);
         var intent = ApplyStateStore.Copy(prepared.State);
         intent.Pending.Add(pending);
         try { ApplyStateStore.Save(prepared.StatePath, intent); }
@@ -347,7 +348,7 @@ public sealed partial class WorldService
             ExitCodes.OperationFailed, PendingContext(path, p, reason),
             [PendingSuggestion(path, p)], inner), path, p);
     private static string PendingSuggestion(string path, ApplyPendingWrite p) =>
-        $"Inspect exact target ID {p.Id ?? "unknown"} ({p.Kind}, key '{p.Key}') and state '{path}'. After inspection, explicitly discard with: resoloop apply FILE --state \"{path}\" --discard-pending \"{p.OperationId}\" --yes. Discarding leaves this target outside management; a successful creation may be duplicated by the next apply. Delete unwanted objects only by their exact IDs with --yes.";
+        $"Inspect exact target ID {p.Id ?? "unknown"} ({p.Kind}, key '{p.Key}') and state '{path}'. After inspection, explicitly discard with: resoloop apply FILE --state \"{path}\" --discard-pending \"{p.OperationId}\" --yes. {ApplyPendingDiscard.WarningFor(p.Kind)} Delete unwanted objects only by their exact IDs with --yes.";
     private static RLoopException WithPendingEvidence(RLoopException e, string path, ApplyPendingWrite p)
     {
         var context = new Dictionary<string, object?>(e.Context);

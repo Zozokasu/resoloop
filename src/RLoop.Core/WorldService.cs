@@ -464,10 +464,15 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
         var statePath = document.ResolveStatePath(options.StateFile);
         if (options.RequireState && !File.Exists(statePath))
             throw new RLoopException("APPLY_STATE_NOT_FOUND", $"World state file '{statePath}' does not exist.", ExitCodes.NotFound);
+        using var sessionWriter = await SessionWriteLock.AcquireAsync(client, statePath, cancellationToken);
         using var writer = CheckpointFiles.AcquireWriter(statePath);
         if (client is IResoniteClientDiagnostics diagnostics) diagnostics.ResetMetrics();
         options.Progress?.Invoke(new ApplyProgress("validate", 0, 1, document.SourcePath, "Validating and planning before mutation."));
         var prepared = await PrepareAsync(document, options, cancellationToken, statePath, reconcilePending: true);
+        if (sessionWriter is not null && sessionWriter.NormalizedUrl != ApplySessionObservation.NormalizeUrl(prepared.Session.Url))
+            throw new RLoopException("APPLY_PRECONDITION_FAILED", "The connection URL changed after acquiring its lock.", ExitCodes.ValidationFailed,
+                new Dictionary<string, object?> { ["reason"] = "sessionUrlChanged" });
+        prepared.SessionWriter = sessionWriter;
         if (options.Prune && !options.ConfirmDeletes)
             throw new RLoopException("CONFIRMATION_REQUIRED", "apply --prune is destructive and requires --yes.", ExitCodes.ValidationFailed,
                 new Dictionary<string, object?> { ["deleteCandidates"] = prepared.Deletions.Count, ["stateFile"] = prepared.StatePath });
@@ -640,7 +645,7 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
                     BeforeFirstWrite();
                     var removal = Pending(prepared, "removeComponent", component.StableKey, component.RelocationSource.Id,
                         type: component.RelocationSource.Type);
-                    await ExecutePendingAsync(prepared, removal, () => safety.CheckConnectionAsync(component.StableKey, cancellationToken),
+                    await ExecutePendingAsync(prepared, removal, () => CheckComponentDeletionAsync(prepared, removal, cancellationToken),
                         () => client.RemoveComponentAsync(component.RelocationSource.Id, cancellationToken), cancellationToken);
                     counts.ComponentsDeleted++;
                     component.RelocationSource = null;
@@ -681,7 +686,7 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
                     BeforeFirstWrite();
                     var removal = Pending(prepared, "removeComponent", deletion.Key, deletion.Id);
                     removal.RemoveComponents.Add(deletion.Key);
-                    await ExecutePendingAsync(prepared, removal, () => safety.CheckConnectionAsync(deletion.Key, cancellationToken),
+                    await ExecutePendingAsync(prepared, removal, () => CheckComponentDeletionAsync(prepared, removal, cancellationToken),
                         () => client.RemoveComponentAsync(deletion.Id, cancellationToken), cancellationToken);
                     counts.ComponentsDeleted++;
                     options.Progress?.Invoke(new ApplyProgress("prune", counts.ComponentsDeleted + counts.SlotsDeleted,
@@ -696,7 +701,7 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
                     var removal = Pending(prepared, "deleteSlot", deletion.Key, deletion.Id);
                     removal.RemoveComponents = [.. deletion.CoveredComponentKeys ?? []];
                     removal.RemoveSlots = [.. deletion.CoveredSlotKeys ?? [deletion.Key]];
-                    await ExecutePendingAsync(prepared, removal, () => safety.CheckConnectionAsync(deletion.Key, cancellationToken),
+                    await ExecutePendingAsync(prepared, removal, () => CheckSlotDeletionAsync(prepared, removal, cancellationToken),
                         () => client.DeleteSlotAsync(deletion.Id, cancellationToken), cancellationToken);
                     counts.SlotsDeleted++;
                     options.Progress?.Invoke(new ApplyProgress("prune", counts.ComponentsDeleted + counts.SlotsDeleted,
@@ -768,6 +773,7 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
     public async Task<ApplyTestReport> TestAsync(ApplyDocument document, ApplyOptions? options = null,
         bool allowProbe = false, CancellationToken cancellationToken = default)
     {
+        using var sessionWriter = allowProbe ? await SessionWriteLock.AcquireAsync(client, null, cancellationToken) : null;
         options ??= new ApplyOptions();
         if (document.Tests is null || document.Tests.Count == 0)
             throw new RLoopException("APPLY_TESTS_MISSING", "The apply document does not declare any tests.", ExitCodes.ValidationFailed);
@@ -2218,6 +2224,8 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
         public ApplyDocument Document { get; } = document;
         public ApplyOptions Options { get; } = options;
         public ApplyState State { get; set; } = state;
+        public ApplyState DeletionState { get; } = ApplyStateStore.Copy(state);
+        public SessionWriteLock? SessionWriter { get; set; }
         public string StatePath { get; } = statePath;
         public SessionInfo Session { get; } = session;
         public string ParentId { get; } = parentId;

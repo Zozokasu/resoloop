@@ -55,16 +55,25 @@ public sealed partial class WorldService
             activeKey = key;
             ct.ThrowIfCancellationRequested();
             ApplyConnectionObservation observed;
+            string? observedUrl = null;
             if (client is IApplyConnectionGuard guard) observed = guard.ObserveApplyConnection();
             else
             {
                 var session = await client.GetSessionInfoAsync(ct);
+                observedUrl = session.Url;
                 observed = new(session.Connected, session.ConnectionGeneration);
             }
             if (!observed.Connected || observed.Generation != prepared.Session.ConnectionGeneration)
                 Fail("generationChanged", "connection", key, null,
                     new ApplyConnectionObservation(true, prepared.Session.ConnectionGeneration), observed,
                     observed.Generation != prepared.Session.ConnectionGeneration ? "CONNECTION_GENERATION_CHANGED" : "APPLY_PRECONDITION_FAILED");
+            if (prepared.SessionWriter is { } writer)
+            {
+                var url = (client as IApplySessionObservation)?.ObserveApplySession().NormalizedUrl ??
+                    ApplySessionObservation.NormalizeUrl(observedUrl ?? (await client.GetSessionInfoAsync(ct)).Url);
+                if (writer.NormalizedUrl != ApplySessionObservation.NormalizeUrl(url))
+                    Fail("sessionUrlChanged", "connection", key, null, writer.NormalizedUrl, url);
+            }
             Evidence("connection", key);
         }
 

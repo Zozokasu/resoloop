@@ -1449,7 +1449,7 @@ public sealed partial class ApplyWorkflowTests : IDisposable
         if (Directory.Exists(_root)) Directory.Delete(_root, true);
     }
 
-    private sealed class FakeResoniteClient : IResoniteClient, IResoniteClientDiagnostics, IApplySessionObservation, IApplySendEvidence
+    private sealed class FakeResoniteClient : IResoniteClient, IResoniteClientDiagnostics, IApplySessionObservation, IApplySendEvidence, IApplyDeletionObservation
     {
         private int _nextSlot = 1;
         private int _nextComponent = 1;
@@ -1466,6 +1466,7 @@ public sealed partial class ApplyWorkflowTests : IDisposable
         public string? TargetClaimedBy { get; set; }
         public CancellationTokenSource? Cancellation { get; set; }
         public string SessionId { get; set; } = "session-1";
+        public string SessionUrl { get; set; } = "ws://fake";
         public string? DiscoverId { get; set; }
         public bool ApplySendStarted { get; private set; }
         public bool ApplyResponseReceived { get; set; }
@@ -1473,7 +1474,7 @@ public sealed partial class ApplyWorkflowTests : IDisposable
         public Action? BeforeWriteBoundary { get; set; }
         public string? RejectKind { get; set; }
         public void BeginApplySend() { ApplySendStarted = false; ApplyResponseReceived = false; ApplyResponseAccepted = false; }
-        public ApplySessionObservation ObserveApplySession() => new("ws://fake/", DiscoverId, DiscoverId is null ? "unknown" : "matched");
+        public ApplySessionObservation ObserveApplySession() => new(ApplySessionObservation.NormalizeUrl(SessionUrl), DiscoverId, DiscoverId is null ? "unknown" : "matched");
         public Action<string, string>? AfterMutation { get; set; }
         public Action<string>? BeforeComponentRead { get; set; }
         public Action<string, int, bool>? BeforeSlotRead { get; set; }
@@ -1503,7 +1504,7 @@ public sealed partial class ApplyWorkflowTests : IDisposable
 
         public Task ConnectAsync(Uri uri, TimeSpan timeout, CancellationToken cancellationToken = default) => Task.CompletedTask;
         public Task<SessionInfo> GetSessionInfoAsync(CancellationToken cancellationToken = default) =>
-            Task.FromResult(Read(new SessionInfo("ws://fake", Connected, EngineVersion, LinkVersion, SessionId, Generation)));
+            Task.FromResult(Read(new SessionInfo(SessionUrl, Connected, EngineVersion, LinkVersion, SessionId, Generation)));
 
         public Task<SlotInfo> GetSlotAsync(string id, int depth, bool includeComponentData, CancellationToken cancellationToken = default)
         {
@@ -1513,6 +1514,17 @@ public sealed partial class ApplyWorkflowTests : IDisposable
             if (SlotReadFailures.TryGetValue(id, out var failure)) throw failure;
             if (!_slots.TryGetValue(id, out var slot)) throw new RLoopException("SLOT_NOT_FOUND", id, ExitCodes.NotFound);
             return Task.FromResult(Map(slot, depth, includeComponentData, UnreadComponentIds, SlotIdsOmittedFromChildren));
+        }
+
+        public bool DeletionChildrenObserved { get; set; } = true;
+        public bool DeletionComponentsObserved { get; set; } = true;
+        public Action<string>? BeforeDeletionObservation { get; set; }
+        public async Task<ApplyDeletionObservation> ObserveDeletionSlotAsync(string id, CancellationToken cancellationToken = default)
+        {
+            BeforeDeletionObservation?.Invoke(id);
+            return new(await GetSlotAsync(id, 1, true, cancellationToken),
+                DeletionChildrenObserved && SlotIdsOmittedFromChildren.Count == 0,
+                DeletionComponentsObserved && UnreadComponentIds.Count == 0);
         }
 
         public Task<ComponentInfo> GetComponentAsync(string id, CancellationToken cancellationToken = default)

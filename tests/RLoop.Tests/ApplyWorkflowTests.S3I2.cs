@@ -515,8 +515,11 @@ public sealed partial class ApplyWorkflowTests
         await service.ApplyAsync(document, new(path));
         var saved = ApplyStateStore.Load(path, document.Ownership!.Key);
         var id = kind == "slot" ? saved.Slots["child"].Id : saved.Components["c"].Id;
-        if (kind == "slot") client.SlotReadFailures[id] = new RLoopException("RESONITE_OPERATION_FAILED", "not an exact absence", ExitCodes.OperationFailed);
-        else client.BeforeComponentRead = readId => { if (readId == id) throw new RLoopException("RESONITE_OPERATION_FAILED", "not an exact absence", ExitCodes.OperationFailed); };
+        client.AfterMutation = (operation, _) =>
+        {
+            if (operation == "deleteSlot") client.SlotReadFailures[id] = new RLoopException("RESONITE_OPERATION_FAILED", "not an exact absence", ExitCodes.OperationFailed);
+            if (operation == "removeComponent") client.BeforeComponentRead = readId => { if (readId == id) throw new RLoopException("RESONITE_OPERATION_FAILED", "not an exact absence", ExitCodes.OperationFailed); };
+        };
         var desired = document with { Components = [], Children = [] };
         var error = await Assert.ThrowsAsync<RLoopException>(() => service.ApplyAsync(desired, new(path, Prune: true, ConfirmDeletes: true)));
         Assert.Equal("RESONITE_OPERATION_FAILED", error.Code);

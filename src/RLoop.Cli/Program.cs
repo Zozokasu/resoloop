@@ -314,6 +314,8 @@ public static class Program
             if (applyInput?.GetBundleCatalog() is not null)
                 applyInput.VerifyBundleSession(await client.GetSessionInfoAsync(commandToken), CatalogMapper.ClientPackageVersion);
             var world = new WorldService(client, GeneratedContentMetadata.SourceForVersion(ProductVersion()));
+            using var sessionWriter = IsDirectWrite(parsed) && !string.Equals(resolution.Config.Backend, "workbench", StringComparison.Ordinal)
+                ? await SessionWriteLock.AcquireAsync(client, null, commandToken) : null;
             await RunResonite(parsed, output, client, world, commandToken, applyInput, validationCatalog);
             return ExitCodes.Success;
         }
@@ -337,7 +339,7 @@ public static class Program
             var error = new RLoopException("COMMAND_TIMEOUT",
                 "The apply command exceeded its configured deadline; completed operations were checkpointed.",
                 ExitCodes.Timeout, ex.Context,
-                ["Re-run the same apply command to resume, or increase --command-timeout after checking Resonite responsiveness."], ex);
+                ["Inspect the state, pending evidence and exact targets before reconciling or explicitly discarding a pending operation. Increase --command-timeout only after checking responsiveness."], ex);
             output.Error(error);
             return error.ExitCode;
         }
@@ -913,6 +915,10 @@ public static class Program
             (truncation?.ExcludedUserRoots is { } excluded ? $" | {excluded} user root(s) excluded" : string.Empty) +
             (truncation?.Continuation is null ? string.Empty : $" | --cursor {truncation.Continuation}"));
     }
+
+    internal static bool IsDirectWrite(ParsedArguments args) => args.Positionals.Count >= 2 &&
+        (args.Positionals[0].ToLowerInvariant(), args.Positionals[1].ToLowerInvariant()) is
+            ("slot", "create" or "set" or "delete") or ("component", "add" or "set" or "remove");
 
     private static async Task RunSlot(ParsedArguments args, OutputWriter output, IResoniteClient client, WorldService world, CancellationToken ct)
     {
