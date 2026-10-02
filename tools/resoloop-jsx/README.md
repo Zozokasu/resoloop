@@ -325,10 +325,14 @@ Writers to the same normalized URL share an exclusive handle under
 Apply (including imports), direct Slot/Component mutations, raster capture and authorized
 probes participate; reads, offline SVG and Flux deployment do not. Contention returns
 `APPLY_SESSION_BUSY` (exit 7); `APPLY_STATE_BUSY` remains a separate state-file lock.
-The lock records the last writer's state location before pending persistence. Pending or
-unreadable state blocks other projects with `APPLY_WRITE_UNVERIFIED` and that state's path.
-Reconcile using that project's document/state, or inspect and explicitly discard its chosen
-pending operation. Never delete/steal a held lock or clear state/cache to bypass this stop.
+The lock records the last writer's state location before pending persistence. A confirmed
+missing file or directory allows writing to continue; access denial is not absence. Pending
+or unreadable state, or a corrupt lock record, blocks other projects with `APPLY_WRITE_UNVERIFIED`.
+Failure context includes `stateFile` and `lockFile`; a corrupt record can leave `stateFile` unknown.
+Repair the state or resolve pending evidence using the original project's document/state;
+inspect exact targets before explicitly discarding its chosen operation. If the state is
+permanently lost, verify that no ResoLoop writes are running and inspect the live world before
+deleting the reported `lockFile`. Never delete or steal a lock held by an active writer.
 
 Prune needs `--prune --yes`. Both prune and relocation-source removal recheck stable key,
 exact ID and owner before deletion. Slot deletion requires complete subtree child/component

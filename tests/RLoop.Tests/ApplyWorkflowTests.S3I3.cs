@@ -39,9 +39,12 @@ public sealed partial class ApplyWorkflowTests
     [Theory]
     [InlineData("pending")]
     [InlineData("invalid")]
-    [InlineData("missing")]
     [InlineData("legacy")]
     [InlineData("nullOwnership")]
+    [InlineData("missingOwnership")]
+    [InlineData("unsupportedVersion")]
+    [InlineData("locked")]
+    [InlineData("accessDenied")]
     public async Task S3PreviousStateBlocksAnotherProjectAndDirectWrites(string fault)
     {
         var doc = Document("first", "[]");
@@ -51,8 +54,14 @@ public sealed partial class ApplyWorkflowTests
         var path = Path.Combine(_root, "first.state.json");
         await Assert.ThrowsAsync<RLoopException>(() => new WorldService(client).ApplyAsync(doc, new(path)));
         if (fault == "invalid") File.WriteAllText(path, "{");
-        if (fault == "missing") File.Delete(path);
         if (fault == "nullOwnership") File.WriteAllText(path, "{\"schemaVersion\":3,\"ownershipKey\":null}");
+        if (fault == "missingOwnership") File.WriteAllText(path, "{\"schemaVersion\":3}");
+        if (fault == "unsupportedVersion") File.WriteAllText(path, "{\"schemaVersion\":99,\"ownershipKey\":\"first\"}");
+        if (fault == "accessDenied")
+        {
+            File.Delete(path);
+            Directory.CreateDirectory(path); // Opening a directory as a state file is denied, not missing.
+        }
         if (fault == "legacy")
         {
             var state = new ApplyState { OwnershipKey = "first", Slots = new() { ["root"] = new("", "Root/Managed") } };
@@ -60,14 +69,50 @@ public sealed partial class ApplyWorkflowTests
         }
         var other = new FakeResoniteClient();
         SessionLockTestIsolation.Share(other, directory);
+        string lockFile;
+        using (var lease = SessionWriteLock.Acquire("ws://fake", directory)) lockFile = lease.Path;
+        using var inaccessible = fault == "locked" ? new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None) : null;
         var desired = Document("second", "[]", "Second");
         var e = await Assert.ThrowsAsync<RLoopException>(() => new WorldService(other).ApplyAsync(desired, new(Path.Combine(_root, "second.state.json"))));
         Assert.Equal("APPLY_WRITE_UNVERIFIED", e.Code);
         Assert.Equal(path, e.Context["stateFile"]);
+        Assert.Equal(lockFile, e.Context["lockFile"]);
         Assert.Equal(fault is "pending" or "legacy" ? "previousStatePending" : "previousStateUnreadable", e.Context["reason"]);
+        if (fault == "accessDenied") Assert.IsType<UnauthorizedAccessException>(e.InnerException);
         Assert.Equal(0, other.Writes);
-        await Assert.ThrowsAsync<RLoopException>(() => SessionWriteLock.AcquireAsync(other, null, CancellationToken.None));
+        var direct = await Assert.ThrowsAsync<RLoopException>(() => SessionWriteLock.AcquireAsync(other, null, CancellationToken.None));
+        Assert.Equal(lockFile, direct.Context["lockFile"]);
+        Assert.Equal(path, direct.Context["stateFile"]);
         Assert.Equal(0, other.Writes);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task S3MissingPreviousStateAllowsAnotherProjectToSend(bool missingDirectory)
+    {
+        var client = new FakeResoniteClient { LoseNextSlotCreateResponse = true };
+        var directory = Path.Combine(_root, "locks");
+        SessionLockTestIsolation.Share(client, directory);
+        var project = Path.Combine(_root, "previous-project");
+        var path = Path.Combine(project, "first.state.json");
+        await Assert.ThrowsAsync<RLoopException>(() => new WorldService(client).ApplyAsync(Document("first", "[]"), new(path)));
+        Assert.Single(ApplyStateStore.Load(path, "first").Pending);
+        File.Delete(path);
+        if (missingDirectory) Directory.Move(project, Path.Combine(_root, "moved-project"));
+
+        var other = new FakeResoniteClient();
+        SessionLockTestIsolation.Share(other, directory);
+        // Direct writers without a project state can also acquire the released lock.
+        using (await SessionWriteLock.AcquireAsync(other, null, CancellationToken.None)) { }
+        var secondPath = Path.Combine(_root, "second.state.json");
+        var result = await new WorldService(other).ApplyAsync(Document("second", "[]", "Second"), new(secondPath));
+        Assert.Equal(1, result.SlotsCreated);
+        Assert.True(other.Writes > 0);
+        Assert.Empty(ApplyStateStore.Load(secondPath, "second").Pending);
+        string lockFile;
+        using (var lease = SessionWriteLock.Acquire("ws://fake", directory)) lockFile = lease.Path;
+        Assert.Equal(System.Text.Json.JsonSerializer.Serialize(secondPath), File.ReadAllText(lockFile));
     }
 
     [Fact]

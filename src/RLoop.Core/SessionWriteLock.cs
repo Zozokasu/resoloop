@@ -57,15 +57,20 @@ internal sealed class SessionWriteLock : IDisposable
             previous = JsonSerializer.Deserialize<string>(content);
             if (string.IsNullOrWhiteSpace(previous) || !System.IO.Path.IsPathFullyQualified(previous)) throw new JsonException("Invalid state location.");
             if (currentState is not null && string.Equals(previous, System.IO.Path.GetFullPath(currentState), StringComparison.OrdinalIgnoreCase)) return;
-            var json = JsonDocument.Parse(CheckpointFiles.Read(previous));
-            using (json)
+            try
             {
-                var root = json.RootElement;
-                var ownership = root.GetProperty("ownershipKey").GetString();
+                using var json = JsonDocument.Parse(CheckpointFiles.Read(previous));
+                var ownership = json.RootElement.GetProperty("ownershipKey").GetString();
                 if (string.IsNullOrWhiteSpace(ownership)) throw new JsonException("Missing state ownership.");
                 var state = ApplyStateStore.Load(previous, ownership, requireState: true);
                 if (state.Pending.Count > 0 || ApplyPendingDiscard.LegacyPending(state).Any())
                     throw Blocked(previous, "previousStatePending");
+            }
+            catch (Exception e) when (e is FileNotFoundException or DirectoryNotFoundException ||
+                e is RLoopException { Code: "APPLY_STATE_NOT_FOUND", InnerException: FileNotFoundException or DirectoryNotFoundException })
+            {
+                // Only a missing file/directory permits continuation. File.Exists also hides access errors.
+                return;
             }
         }
         catch (RLoopException e) when (e.Code == "APPLY_WRITE_UNVERIFIED") { throw; }
@@ -93,10 +98,10 @@ internal sealed class SessionWriteLock : IDisposable
         { throw PersistenceFailure(statePath, e); }
     }
 
-    private static RLoopException Blocked(string? state, string reason, Exception? inner = null) => new(
+    private RLoopException Blocked(string? state, string reason, Exception? inner = null) => new(
         "APPLY_WRITE_UNVERIFIED", "The previous writer's state must be inspected before new writes to this URL.", ExitCodes.OperationFailed,
-        new Dictionary<string, object?> { ["reason"] = reason, ["stateFile"] = state },
-        ["Use that project's document and state to reconcile pending evidence, or inspect the exact targets before --discard-pending OPERATION_ID --yes. Do not repair another project's state automatically."], inner);
+        new Dictionary<string, object?> { ["reason"] = reason, ["stateFile"] = state, ["lockFile"] = Path },
+        ["Repair that state or resolve pending evidence in the original project; inspect the exact targets before --discard-pending OPERATION_ID --yes. If the state is permanently lost, verify that no ResoLoop writes are running and inspect the live world before deleting the lock file reported in lockFile. Never delete or steal a lock held by an active writer. Do not repair another project's state automatically."], inner);
     private static RLoopException PersistenceFailure(string path, Exception e) => new("APPLY_STATE_WRITE_FAILED",
         "Could not persist the session lock or its state location; no new write is allowed.", ExitCodes.OperationFailed,
         new Dictionary<string, object?> { ["path"] = path, ["reason"] = "sessionLockPersistenceFailed" }, innerException: e);

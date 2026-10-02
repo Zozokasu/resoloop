@@ -41,6 +41,7 @@ public sealed class SessionWriteLockTests(ITestOutputHelper output) : IDisposabl
     [InlineData("!")]
     [InlineData("\"partial")]
     [InlineData("null")]
+    [InlineData("\"relative-state.json\"")]
     public void S3TornLocationRecordBlocksNewWrites(string content)
     {
         string path;
@@ -50,6 +51,31 @@ public sealed class SessionWriteLockTests(ITestOutputHelper output) : IDisposabl
         var e = Assert.Throws<RLoopException>(() => next.CheckPreviousState(null));
         Assert.Equal("APPLY_WRITE_UNVERIFIED", e.Code);
         Assert.Equal("previousStateUnreadable", e.Context["reason"]);
+        Assert.Equal(path, e.Context["lockFile"]);
+        Assert.True(e.Context.ContainsKey("stateFile"));
+        var suggestion = Assert.Single(e.Suggestions);
+        Assert.Contains("Repair that state or resolve pending evidence in the original project", suggestion);
+        Assert.Contains("permanently lost", suggestion);
+        Assert.Contains("no ResoLoop writes are running", suggestion);
+        Assert.Contains("inspect the live world", suggestion);
+        Assert.Contains("lockFile", suggestion);
+        Assert.Contains("active writer", suggestion);
+    }
+
+    [Theory]
+    [InlineData("pending")]
+    [InlineData("invalid")]
+    [InlineData("missing")]
+    public void S3OwnPreviousStateRemainsAvailableForProjectRecovery(string fault)
+    {
+        var path = Path.Combine(root, "own.state.json");
+        using var lease = SessionWriteLock.Acquire("ws://localhost", root);
+        ApplyStateStore.Save(path, new ApplyState { OwnershipKey = "own", Pending = [new() { Kind = "createSlot", Key = "root", OwnershipKey = "own" }] });
+        lease.RecordState(path);
+        if (fault == "invalid") File.WriteAllText(path, "{");
+        if (fault == "missing") File.Delete(path);
+        // The owning project retains responsibility for validating/reconciling its own state.
+        lease.CheckPreviousState(path);
     }
 
     [Fact]

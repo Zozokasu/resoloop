@@ -539,9 +539,11 @@ v3 の操作 ID は state の `pending[].operationId` です。v1/v2 の空 ID �
 
 参加する入口は apply（asset import を含む）、直接の Slot create/set/delete、Component add/set/remove、画像 capture の一時カメラ作成から後片付けまで、`test --probe` の実行と復元です。読取り、offline SVG capture、`--discard-pending` は session lock を取りません。破棄は project state lock だけを使います。Flux deploy/watch の書込みはこの lock の対象外で、Workbench の操作も変更していません。
 
-`APPLY_SESSION_BUSY`（exit 7）は同じ URL の別 writer が handle を保持している状態です。`APPLY_STATE_BUSY` は従来どおり、一つの state の writer 競合です。ファイルの存在や PID の古さで stale 判定しません。保持中のファイルを削除・奪取せず、holder の終了を待ってください。プロセス終了で OS が handle を解放すれば次の取得が可能です。
+`APPLY_SESSION_BUSY`（exit 7）は同じ URL の別 writer が handle を保持している状態です。`APPLY_STATE_BUSY` は従来どおり、一つの state の writer 競合です。ファイルの存在や PID の古さで stale 判定しません。動いている writer が保持する lock を削除・奪取せず、holder の終了を待ってください。プロセス終了で OS が handle を解放すれば次の取得が可能です。
 
-lock ファイルには最後に書込みをした state の絶対パスを保存します。保留の複製ではありません。所在の保存を保留作成より先に完了し、保存できなければ送信しません。次の holder はその state 本体を確認し、別 project の保留・旧形式の空 ID・読取り不能があれば `APPLY_WRITE_UNVERIFIED`（exit 7）で止まります。`context.reason` は `previousStatePending` / `previousStateUnreadable`、`stateFile` は確認すべき state です。壊れた所在情報の場合はパスも不明になり得ます。前の project の宣言と state で保留を照合するか、正確な対象を確かめて `--discard-pending OPERATION_ID --yes` を使ってください。別 project が自動でその保留を直すことはありません。消えた・壊れた state は検証済み backup を復元して確認し、lock を消して迂回しないでください。
+lock ファイルには最後に書込みをした state の絶対パスを保存します。保留の複製ではありません。所在の保存を保留作成より先に完了し、保存できなければ送信しません。次の holder はその state 本体を確認します。ファイルまたは directory が無いと正確に分かれば、別 project の書込みも続行します。アクセス拒否、壊れた JSON、未対応 version、所有 key の欠落は読取り不能として扱います。別 project の保留・旧形式の空 ID・読取り不能、または lock の所在情報の破損があれば `APPLY_WRITE_UNVERIFIED`（exit 7）で止まります。`context.reason` は `previousStatePending` / `previousStateUnreadable`、`stateFile` は確認すべき state、`lockFile` は session lock のパスです。壊れた所在情報の場合は state のパスも不明になり得ます。
+
+その state を直すか、元の project の宣言と state で保留を解決してください。指定保留を破棄する場合は、正確な対象を実機で確かめてから `--discard-pending OPERATION_ID --yes` を使います。別 project が自動でその保留を直すことはありません。state を恒久的に失った場合は、ResoLoop の書込みが動いていないことと実機の状態を確かめたうえで、報告された `lockFile` を削除してください。動いている writer が保持する lock は削除・奪取しないでください。
 
 lock の URL は session identity の証明ではありません。保留の identity は、選択した URL と discovery の `S-` ID を照合できたときだけ matched と記録します。明示の `--url` 接続は追加 discovery を行わず、identity unknown になります。新規の書込みは許可しますが、その接続で中断した保留は自動で確定しません。discovery 経由で接続し、保留と今の照合済み identity が一致する場合にだけ自動照合します。接続連番 `UniqueSessionId` は identity に使いません。
 

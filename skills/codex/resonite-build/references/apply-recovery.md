@@ -48,14 +48,19 @@ cache cleanup does not touch them. Apply/imports, direct Slot/Component mutation
 capture's temporary camera and authorized `test --probe` participate. Reads and offline SVG
 do not; Flux deployment is outside this lock. `APPLY_STATE_BUSY` is a separate lock on one
 project state. Wait for the active holder; never infer staleness from a filename or PID and
-never delete/steal its lock. OS handle release after process exit permits the next acquisition.
+never delete or steal a lock held by an active writer. OS handle release after process exit
+permits the next acquisition.
 
-The lock stores the last writer's state location before any pending save. Pending or
+The lock stores the last writer's state location before any pending save. A confirmed missing
+file or directory allows writing to continue; access denial is not absence. Pending or
 unreadable previous state blocks other projects with `APPLY_WRITE_UNVERIFIED`, reason
-`previousStatePending`/`previousStateUnreadable` and that `stateFile`. Read that project's
-document/state and exact targets; reconcile there, or inspect and explicitly discard its
-chosen operation. Never automatically repair another project's journal. Missing/corrupt
-state needs a verified backup and inspection, not removal of the lock pointer.
+`previousStatePending`/`previousStateUnreadable`, `stateFile` and `lockFile`. Corrupt lock records
+also stop with `previousStateUnreadable` and `lockFile`; the state path may be unknown.
+Repair the state or resolve pending evidence in the original project using its document/state
+and exact targets. Inspect before explicitly discarding its chosen operation. Never
+automatically repair another project's journal. If the state is permanently lost, verify
+that no ResoLoop writes are running and inspect the live world before deleting the reported
+`lockFile`. Never delete or steal a lock held by an active writer.
 
 Before prune, review `diff --deletes-only` and use `--prune --yes` only for the intended
 owned targets. Prune and relocation-source deletion recheck stable key, exact ID and owner
