@@ -6,6 +6,7 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="../../tools/RLoop.ContractGen/ContractGenerator.cs" Link="ContractGenerator.cs" />
+    <Compile Include="../../tools/RLoop.CatalogExport/SdkProbe.cs" Link="SdkProbe.cs" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" />
     <PackageReference Include="xunit" />
     <PackageReference Include="xunit.runner.visualstudio"><PrivateAssets>all</PrivateAssets></PackageReference>
