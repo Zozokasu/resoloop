@@ -13,6 +13,28 @@ resoloop automatically adds `FrooxEngine.AI_GeneratedContent` to the root of the
 > [!NOTE]
 > resoloop is currently in preview. ResoniteLink is also in Beta, so updates may change its behavior.
 
+## Applying changes safely
+
+Apply checks the planned values, types and connection again before each write. Observed changes or a possible writer referencing the target field stop that write with `APPLY_PRECONDITION_FAILED` (exit 6). Writer coverage outside the observation is `unknown`; this permits writing and does not prove that no writer exists. Each response is followed by one readback of the values sent. A mismatch stops with pending evidence and `APPLY_WRITE_UNVERIFIED` (exit 7), without a reference replay at the end.
+
+Component `propertyModes` maps member names to `config`, `initial`, `runtime` or `driver-owned`. Omitted members retain `fields` configuration and creation-only `initialFields` behavior. Runtime and driver-owned members are never written by ordinary apply, including creation; the declaration does not prove a driver's ownership.
+
+Keep the reported state file. State v3 stores confirmed bindings and pending operations; v1/v2 can be read, saves use v3, and older CLIs reject v3. Explicit server rejection clears the pending operation. A later apply can reconcile an accepted result with matching discovery identity and exact target/owner evidence: confirmed values commit, known mismatches clear and planning uses the current observation. Unknown creation IDs, unproven acceptance or identity remain pending; names, types and order are never used to recover a lost creation. Explicit `--url` connections have unknown identity and cannot automatically settle interrupted pending operations; a discovery-selected connection can supply matching identity evidence.
+
+On failure, read `context.reason`, `stateFile`, `operationId`, confirmed results and completeness; inspect the exact Slot/Component IDs before deciding how to continue. After inspecting the world, clear only a chosen operation with:
+
+```powershell
+resoloop apply FILE --state STATE --discard-pending OPERATION_ID --yes
+```
+
+This is an offline state operation, not a world write. It preserves confirmed bindings. Discarded creation candidates are not adopted and may be duplicated by a later apply; discarded updates/deletions retain their confirmed correspondence and require inspection and a new plan.
+
+ResoniteLink writers share an exclusive handle at `<LocalApplicationData>/ResoLoop/write-locks/<normalized-URL-hash>.lock`. Host case, loopback aliases and default ports normalize to the same key across projects. Apply, asset imports within apply, direct Slot/Component edits and deletions, raster capture's temporary camera and `test --probe` participate. Reads and offline SVG capture take no lock; Flux deploy is outside this lock. `APPLY_SESSION_BUSY` (exit 7) means an active holder; `APPLY_STATE_BUSY` still means contention on one project state. Never remove or steal a held lock. The next holder checks the last writer's state location: pending or unreadable state stops other projects with `APPLY_WRITE_UNVERIFIED`. Use that project's document/state to reconcile, or inspect and discard its chosen pending operation. Preserve missing/unreadable state and restore a verified backup before continuing; cache cleanup does not clear these locks or journals.
+
+Prune requires `--prune --yes`. Prune and relocation-source deletion recheck stable key, exact ID and owner Slot immediately before deletion. Slot deletion requires complete child/component observation and rejects unmanaged descendants, including automatically added components without ownership evidence. Absence readback uses only exact `SLOT_NOT_FOUND` / `COMPONENT_NOT_FOUND`. Direct `slot delete` / `component remove` retain their existing exact-target/`--yes` protections and Root refusal. To replace a driver whose old owner prevents a new reference from sticking, first remove the old driver from the declaration, review diff and apply with `--prune --yes`; inspect its absence, then add the new driver and apply. One apply cannot perform that replacement through a failed readback.
+
+These checks detect observed conflicts and coordinate this and later cooperating ResoLoop versions on the same PC and OS user. Operations remain `atomic:false`; there is no rollback or exclusion of older CLIs, other PCs/users, people, external tools or ProtoFlux. Changes outside observation or between checking and sending remain possible. Readback does not guarantee future value retention. See [failure recovery and deletion details](README-DETAILS.md#apply-の停止後は保留と実機を確認する).
+
 ## Installation
 
 Requirements:

@@ -262,7 +262,7 @@ TSX builder は入口の named export `export const ownership = { key: "house-wo
 
 新しい再利用部分木は TSX の `<Scope instanceKey="left">` で明示的に囲み、内部の明示 local key `body` を `left::body` に展開します。JSON source では node の `"$scope":"left"` が同じ規則です。nested scope は `outer::inner::local`、instance/local segment は空白のみと `:` を禁止します。兄弟順序は使わず、同名兄弟の禁止は従来どおりです。scope 内の fields/initialFields（配列・object 内も含む）の短い `$slot:` / `$component:` / `$ref:` / `$member:` / `$slot-member:` は現在 scope だけで解決し、親 scope/global に fallback しません。外からは `$member:left::state.Value` や `ref.component(ref.key("left","state"))` の完全 key を使います。完全 key は内部から別 scope を参照する場合にも使えます。`migrateFrom` も同じ scope 規則です。
 
-既存の unscoped key と state の実効 key はそのままです。Scope の追加による自動移行・再採番はせず、展開 key が旧 key と衝突すれば TSX build の `DUPLICATE_KEY` または C# の既存 key 衝突エラーで停止します。新しい segment の不正は `APPLY_SCOPE_INVALID`（終了コード6）。`--draft` の旧 index 由来 key は従来の文字列を出力しますが、source guard `"$draftKeys":true` を付け、validate/diff/plan/apply は `APPLY_DRAFT_KEY_UNSTABLE`（終了コード6）で停止します。意図した実効 key を明示 props に写して再buildしてください。scope 内は draft でも明示 key が必須です。展開後 document schema `"1"`・state schema v2・CLI selector の文字列完全一致規則は変わりません。
+既存の unscoped key と state の実効 key はそのままです。Scope の追加による自動移行・再採番はせず、展開 key が旧 key と衝突すれば TSX build の `DUPLICATE_KEY` または C# の既存 key 衝突エラーで停止します。新しい segment の不正は `APPLY_SCOPE_INVALID`（終了コード6）。`--draft` の旧 index 由来 key は従来の文字列を出力しますが、source guard `"$draftKeys":true` を付け、validate/diff/plan/apply は `APPLY_DRAFT_KEY_UNSTABLE`（終了コード6）で停止します。意図した実効 key を明示 props に写して再buildしてください。scope 内は draft でも明示 key が必須です。展開後 document schema `"1"`・state schema v3・CLI selector の文字列完全一致規則は変わりません。
 
 生成JSONの任意top-level `authoring` は `{"projectRoot":"C:/projects/house","source":"content/main.tsx","ownershipSource":"entry-export"}` の形です。build時に一度だけ、明示 `--project-root` > 作者TSXの最寄り `.resoloop.json` のdirectory > TSXのdirectory、の順でprojectRootを決めます。projectRootは絶対パス、sourceはproject相対、ownershipSourceは診断情報（未指定exportでは `root-key`）です。生成JSONの出力先・コピー先はstate基準を変えません。project全体を移動したら再buildしてください。新しいmetadataを読むには対応CLIが必要です。
 
@@ -270,13 +270,13 @@ TSX build の受渡しは、呼出し側が毎回 build **前**に作る新規 I
 
 bundle は `kind`、`bundleVersion`、`buildId`、`completion`、`buildStages`、`inputs`、`ir`、`map`、`usedTypes`、`catalog` を持ちます。IR/map/catalog の `text` の UTF-8 bytes hash と、source/catalog の絶対 path・raw bytes hash を記録します。同じ directory の一時ファイルを close・入力再確認後に rename して公開します。TypeScript Program の全 source（宣言・標準 library を含む）と静的 local import が対象で、project 外 source、動的 import/require、Node 組込み、authoring runtime 以外の外部 package は確定できません。文・呼出し先は解析せず、環境変数・時刻等は検出不能で保証対象外です。map は version/buildId/IR hash/sources/entries を持ち、追跡できる元 AST の位置は known range、追跡できない位置は明示 `unknown` です。位置が unknown だけの旧 map も受け付けます。
 
-CLI は拡張子ではなく内容で識別し、bundle 経路から通常 JSON へ fallback しません。要求 R、確定 stage、全 payload、map/source 整合、共有 IR/catalog 検証、使用型完全名の集合を接続前に検査します。保持した入力 snapshot を準備後と最初の実機 mutation 直前に再確認し、変更・削除・読取り不能なら書込み 0 で停止します。内包 catalog 原本だけを使い、外部 `--catalog` の併用は拒否します。接続ありの diff/plan/apply と validate --strict は synthetic を拒否し、既存 strict と同じ session/client version 照合をします。未確認 catalog は既存 `APPLY_CATALOG_UNAVAILABLE`、bundle 不正は `APPLY_BUILD_BUNDLE_INVALID`（exit 6、`context.reason`: requestMismatch/uncommitted/mixed/inputChanged/inputUnknown）。bundle に ID がない／通常 JSON に ID がある場合は既存引数エラー（exit 2）、Workbench は `BACKEND_UNSUPPORTED`。手書き／従来生成 JSON の直接経路・validate JSON・schema `"1"`・state v2 は維持し、警告は増やしません。内包 authoring の project/state 基準と `--state`/`--require-state` も従来どおりです。
+CLI は拡張子ではなく内容で識別し、bundle 経路から通常 JSON へ fallback しません。要求 R、確定 stage、全 payload、map/source 整合、共有 IR/catalog 検証、使用型完全名の集合を接続前に検査します。保持した入力 snapshot を準備後と最初の実機 mutation 直前に再確認し、変更・削除・読取り不能なら書込み 0 で停止します。内包 catalog 原本だけを使い、外部 `--catalog` の併用は拒否します。接続ありの diff/plan/apply と validate --strict は synthetic を拒否し、既存 strict と同じ session/client version 照合をします。未確認 catalog は既存 `APPLY_CATALOG_UNAVAILABLE`、bundle 不正は `APPLY_BUILD_BUNDLE_INVALID`（exit 6、`context.reason`: requestMismatch/uncommitted/mixed/inputChanged/inputUnknown）。bundle に ID がない／通常 JSON に ID がある場合は既存引数エラー（exit 2）、Workbench は `BACKEND_UNSUPPORTED`。手書き／従来生成 JSON の直接経路・validate JSON・schema `"1"`・state のパス解決は維持し、警告は増やしません。内包 authoring の project/state 基準と `--state`/`--require-state` も従来どおりです。
 
 保証は bundle 制作手順に限ります。R と確定印は署名ではなく producer との契約で、手動の ID 再利用や偽造を検出できません。最終確認後の競合・書込み開始後の変更、precondition/lock/応答喪失は S3 です。`--diagnostics NEW_FILE.json` は元 TSX の位置と詳細な証拠を別 JSON に出します。位置を追跡できない場合は unknown、catalog の成功だけでは runtime は未検証です。実 catalog と live は別途検証が必要です。[完全な手順・形式](tools/resoloop-jsx/README.md)。
 
 Coreはcontextを検証して保持し、stateパスをwriter lock・Prepare・結果・captureのselectorで共有します。authoring不正時は生成JSONの場所へfallbackしません。authoringのない手書きJSONはJSONのdirectoryから最寄りconfigを探し、無ければそのdirectoryを使う従来経路（Node不要）です。明示 `--state` は常に最優先でcwd相対です。authoring付きdocumentのlocal asset検証・取り込み、mesh bounds、camera bookmarkの相対出力は作者sourceのdirectory基準です。明示出力はcwd基準、手書きJSONの相対資源は従来基準、JSON includeは各JSON基準、Flux各パスはmanifest基準、接続設定の探索はcwd起点を維持します。
 
-既存制作物の `diff/plan/apply --require-state` は、選んだstateが無ければ `APPLY_STATE_NOT_FOUND`（終了コード5）で停止し、stateを作りません。指定なしの初回作成は従来どおりです。state v1/v2読込・v2保存、flat key、filenameのSanitize（禁止文字と空白を `_` に置換し端の `_` を除去）、ownershipKeyの完全一致検証は変わりません。Sanitizeで同じfilenameになってもownership不一致は拒否します。ownershipやsessionIdの一致だけでlive IDを再利用せず、現在worldの所有証拠を引き続き検証します。
+既存制作物の `diff/plan/apply --require-state` は、選んだstateが無ければ `APPLY_STATE_NOT_FOUND`（終了コード5）で停止し、stateを作りません。指定なしの初回作成は従来どおりです。state v1/v2読込・v3保存、flat key、filenameのSanitize（禁止文字と空白を `_` に置換し端の `_` を除去）、ownershipKeyの完全一致検証は変わりません。Sanitizeで同じfilenameになってもownership不一致は拒否します。ownershipやsessionIdの一致だけでlive IDを再利用せず、現在worldの所有証拠を引き続き検証します。
 
 JSON→TSX移行（現在JSXで表せるSlot/Component subsetのみ）: ①旧diffのstateパス・ownership・全keyを記録しstateをbackup、②同じ値でTSXを作成し、旧JSONのkey省略箇所はstateの実効keyを明示（Component既定keyは `slotKey/component:normalizedType:ordinal`）、③build後に `resoloop diff OUTPUT.json --state OLD_STATE.json --require-state --json` で差分0を確認、④ `resoloop apply OUTPUT.json --state OLD_STATE.json --require-state --json` 後にIDと再diffを確認します。既定パスが異なる場合はbuilderの `--project-root` で旧基準を固定するか、検証済みcheckpointを明示的にコピーします。stateの自動探索・移動やownership書換えは行いません。
 
@@ -488,7 +488,7 @@ strict validationはadapterの書込み変換を実行し、Nullable enumを含�
 ## Known limitations
 
 - ResoniteLink 0.13.1自体がBetaで、breaking changeの可能性があります。
-- applyはschema v1のJSONのみです。operationは非atomicでrollbackはできませんが、操作単位のcheckpointと再実行手順を返します。
+- applyはschema v1のJSONのみです。operationは非atomicでrollbackはできませんが、操作単位の保留・readback証拠と、停止後に確認すべき対象を返します。
 - List更新は公開API上whole-member replacementです。`diff`は要素added/removedを表示してから一括更新します。SyncObject要素は子memberを含む構造値へ正規化して比較します。
 - `capture --output capture.jpg` / `.png` は専用のInteractiveCameraでゲーム内画像を撮影し、ローカルの写真書き出しを読み取ります。Resoniteのレンダラーと写真保存先へのアクセスが必要です。`.svg` は引き続きオフライン投影で、`screenshotAvailable: false` です。
 - logsはLink protocolからのstreamではなく、明示されたローカルlog fileのtailです。
@@ -509,9 +509,15 @@ Component/member の取得範囲、完全名と確認済み alias、base/interfa
 catalog 成功だけでは `Strict=true` にしません。`--catalog --strict` は先に offline catalog preflight、次に既存 live strict と session/client version 照合を行います。Workbench backend の対応は追加しません。通常 CLI に生成コマンドは追加せず、[開発用 tool](tools/RLoop.CatalogExport/README.md) で snapshot の export と catalog import を行います。旧 cache は取得 identity がなく受け入れません。catalog 未指定の既存経路は維持します。V11 の fixture は合成で、実 catalog・live capture の検証は別途必要です。
 
 For source diagnosis, add `--diagnostics NEW_FILE.json` to `validate|diff|plan|apply`. This separate JSON has `diagnosticVersion: "1"` and structured key/member/IR path, known/unknown source, expected/observed evidence and completeness; a known null is distinct from unknown. Bundle map v1 stores original TS/TSX UTF-16 AST offsets and one-based, end-exclusive line/column ranges bound to source hashes. Fix TSX using that location, then create a fresh bundle/request; generated JSON lines are not an authoring location. Unchanged function props forwarded directly preserve caller expressions; rewritten scalar or nested object props have unknown primary locations; Scope, fragments, map callbacks and selected conditional children retain original ranges. Spread/computed members and untracked value transfers have unknown primary locations with real expressions/calls as related evidence. Handwritten and legacy generated JSON also accept diagnostics, with unknown source. Legacy stdout/stderr JSON, context.issues and reports are unchanged. Diagnostics require a new file in an existing writable directory, distinct from the selected input/bundle, catalog and state paths (including missing files); writing failure is reported on stderr without changing validation/apply judgement or exit code. Catalog evidence never completes runtime verification.
+## apply の停止後は保留と実機を確認する
+
+apply は送信直前に、計画時の型・member 種類・値・接続を比較します。観測した変化や writer の可能性は `APPLY_PRECONDITION_FAILED`（exit 6、`context.reason`）で拒否します。writer の可能性は、対象 field ID を `IField<…>` として参照する観測済み Component から検出します。対象を持つ Component 自身と、今回 apply が管理して書く参照は除きます。読むだけの参照と駆動する参照は区別できないため、可能性として停止します。観測外は completeness に unknown と記録して書込みを進めます。unknown は writer がいないという証明ではありません。
+
 Component の任意の `propertyModes` は member 名を `config` / `initial` / `runtime` / `driver-owned` に対応させます。
 未指定なら従来どおり `fields` は config、`initialFields` は作成時だけの initial です。
 通常 apply は runtime と driver-owned の member を作成時にも書きません。driver-owned の宣言は writer の所有証明にはなりません。
+
+config は通常の設定更新、initial は作成時だけの初期値です。`fields` と initial、`initialFields` と config の矛盾は既存の `APPLY_COMPONENT_FIELD_POLICY_CONFLICT` で拒否します。
 
 apply の state は `schemaVersion: 3` です。v1/v2 は読めますが、安全確認後の最初の保存で v3 になり、保留が空でも v2 に戻りません。v3 に未対応の CLI は `APPLY_STATE_VERSION_UNSUPPORTED` で拒否します。state 本体の `pending` に操作 ID、session の観測、正確な対象 ID（不明なら null）、送信内容、応答と readback の証拠、確認できた部分を保存します。型 cache や生成 bundle とは別の記録です。
 
@@ -525,4 +531,32 @@ identity を証明できない、作成 ID が不明、受付の証拠が無い�
 
 v3 の操作 ID は state の `pending[].operationId` です。v1/v2 の空 ID は、停止時に表示する `legacy:slot:KEY` または `legacy:component:KEY` を使います。KEY は実効 key の URI エスケープ表記です（例: `child/a` → `legacy:slot:child%2Fa`）。旧形式では、その空 ID の未証明の対応だけを外します。破棄の成功 JSON は `stateFile`・`operationId`・`kind`・`key`・`id`（不明なら null）・`warning` を返します。人間向けの表示にも対象と注意事項を載せます。
 
-破棄した保留の対象は管理の外になります。作成が実機で成功していた場合、次の apply は同じものをもう一度作る可能性があります。先に実機を inspect で確かめ、不要なものは正確な ID と `--yes` で削除してください。ID 不明の作成は、実機で対象を見つけて確認する必要があります。
+作成の保留を破棄しても候補の対応は採用せず、未確定の作成物は管理の外になります。実機で作成済みなら次の apply で重複する可能性があります。更新・削除の保留を破棄した場合は、確定済みの対応が残ります。更新は実機の現在値、削除は正確な ID の存在・不在を確認してから再計画してください。先に実機を inspect で確かめ、不要なものは正確な ID と `--yes` で削除してください。ID 不明の作成は、実機で対象を見つけて確認する必要があります。
+
+### 同じ URL の書込みと保留を project 間で調整する
+
+直結の書込みは、session を観測してから session lock、project state lock の順に取得し、再観測して計画します。競合は待ち続けずに失敗し、handle は finally/Dispose で解放します。session lock の鍵は `ApplySessionObservation.NormalizeUrl` による正規化 URL です。host の大小文字、末尾ドット、loopback の localhost/127.0.0.1/::1、既定 port は正規化し、path/query は保持します。project と作業 directory に関係なく `<LocalApplicationData>/ResoLoop/write-locks/<URL の SHA-256>.lock` の排他的 file handle を一つ使います。cache 清掃の対象ではありません。
+
+参加する入口は apply（asset import を含む）、直接の Slot create/set/delete、Component add/set/remove、画像 capture の一時カメラ作成から後片付けまで、`test --probe` の実行と復元です。読取り、offline SVG capture、`--discard-pending` は session lock を取りません。破棄は project state lock だけを使います。Flux deploy/watch の書込みはこの lock の対象外で、Workbench の操作も変更していません。
+
+`APPLY_SESSION_BUSY`（exit 7）は同じ URL の別 writer が handle を保持している状態です。`APPLY_STATE_BUSY` は従来どおり、一つの state の writer 競合です。ファイルの存在や PID の古さで stale 判定しません。保持中のファイルを削除・奪取せず、holder の終了を待ってください。プロセス終了で OS が handle を解放すれば次の取得が可能です。
+
+lock ファイルには最後に書込みをした state の絶対パスを保存します。保留の複製ではありません。所在の保存を保留作成より先に完了し、保存できなければ送信しません。次の holder はその state 本体を確認し、別 project の保留・旧形式の空 ID・読取り不能があれば `APPLY_WRITE_UNVERIFIED`（exit 7）で止まります。`context.reason` は `previousStatePending` / `previousStateUnreadable`、`stateFile` は確認すべき state です。壊れた所在情報の場合はパスも不明になり得ます。前の project の宣言と state で保留を照合するか、正確な対象を確かめて `--discard-pending OPERATION_ID --yes` を使ってください。別 project が自動でその保留を直すことはありません。消えた・壊れた state は検証済み backup を復元して確認し、lock を消して迂回しないでください。
+
+lock の URL は session identity の証明ではありません。保留の identity は、選択した URL と discovery の `S-` ID を照合できたときだけ matched と記録します。明示の `--url` 接続は追加 discovery を行わず、identity unknown になります。新規の書込みは許可しますが、その接続で中断した保留は自動で確定しません。discovery 経由で接続し、保留と今の照合済み identity が一致する場合にだけ自動照合します。接続連番 `UniqueSessionId` は identity に使いません。
+
+### apply 内の削除は正確な所有と完全な観測を要する
+
+prune は引き続き `--prune --yes` が必要です。relocate の移動元 Component 削除には新しい引数を要求しません。どちらも直前に、計画時の stable key・正確な ID・型・所有 Slot とその鎖を再確認します。Root、所有 claim の衝突、曖昧な ID、所有の変化は拒否します。直接の `slot delete` と `component remove` には apply の所有証明を追加せず、既存の `--yes`・対象確認・Root 拒否に session lock だけを加えています。
+
+Slot の削除前は各 Slot の直下 children/components を読み、部分木を全てたどります。深度の打切り・reference-only・欠落・不明な一覧・10,000 Slot の観測上限を越える場合は `APPLY_PRECONDITION_FAILED` で止めます。子の一覧が null でも、要求した depth 1 の応答で正確な対象の完全 Slot が返った場合は、実機で確認した leaf の表現として子なしと扱います。Component 一覧が欠落している場合は空と扱いません。管理していない子孫や Component は巻き込みません。engine が自動追加した Component も、出現しただけでは所有物にしません。
+
+削除は保留を保存してから送り、正確な ID の不在を一度 readback します。不在と認めるのは `SLOT_NOT_FOUND` / `COMPONENT_NOT_FOUND` だけです。ほかのエラーでは対応を外さず保留を残します。応答を失った削除は、不在だけを根拠に成功と断定せず、新しい apply も重複作成・二重削除を送りません。
+
+古い driver が新しい driver の参照を妨げる入替えは、最初の readback 不一致で停止し、一回の apply では完了しません。先に古い driver を宣言から外し、`diff --deletes-only` で正確な対象を確認して `apply --prune --yes` で削除します。不在を inspect で確かめてから新しい driver を宣言に追加して apply してください。この二段階の手順は offline test で確認済みです。すでに失敗した入替えでは、保留の確認と候補の曖昧さの解消が先に必要です。同型候補を ordinal で選んだり、state を消して回収したりしないでください。
+
+### 保証の範囲
+
+観測した値・型・writer の可能性の競合を検出し、同じ PC・同じ OS ユーザーの、この版以降の ResoLoop 間で書込みを調整します。これにより別 project の未確定書込みを飛び越しません。
+
+操作は `atomic:false` です。全体の原子性や rollback、古い CLI・別 PC/ユーザー・人・外部ツール・ProtoFlux への排他、観測外や確認と送信の間の競合、readback 後の値の保持は保証しません。state の flush と atomic replacement は行いますが、電源断や filesystem 固有の耐久性も無条件には保証しません。同じコマンドの再実行だけで安全に収束すると判断せず、保留と実機の証拠から続行を決めてください。
