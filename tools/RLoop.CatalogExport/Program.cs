@@ -3,7 +3,11 @@ using RLoop.ResoniteLink;
 
 try
 {
-    if (args.Length == 3 && args[0] == "export")
+    if (args.Length == 2 && args[0] == "sdk-contract")
+        RLoop.CatalogExport.SdkContract.Save(args[1]);
+    else if (args.Length > 0 && args[0] == "probe")
+        return await RLoop.CatalogExport.SdkProbe.RunCommandAsync(args) ? ExitCodes.Success : ExitCodes.ValidationFailed;
+    else if (args.Length == 3 && args[0] == "export")
         CatalogMapper.Export(CatalogMapper.LoadSnapshot(args[1])).Save(args[2]);
     else if (args.Length == 3 && args[0] == "import")
     {
@@ -20,7 +24,7 @@ try
     }
     else
     {
-        Console.Error.WriteLine("Usage: export SNAPSHOT.json CATALOG.json | import CATALOG.json OUTPUT.json | capture --live --url ws://localhost:PORT --types FULL_NAMES.json SNAPSHOT.json");
+        Console.Error.WriteLine("Usage: export SNAPSHOT.json CATALOG.json | import CATALOG.json OUTPUT.json | capture --live --url ws://localhost:PORT --types FULL_NAMES.json SNAPSHOT.json | sdk-contract OUTPUT.json | probe --live --url ws://localhost:PORT --slot SLOT_ID [--depth N] OUTPUT.json");
         return ExitCodes.InvalidArguments;
     }
     return ExitCodes.Success;
