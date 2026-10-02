@@ -24,9 +24,11 @@ public static class ResoniteClientFactory
         var discovery = new RecordingDiscovery();
         var uri = await SessionDiscovery.ResolveUrlAsync(config, discovery,
             args.IntOption("discovery-seconds", SessionDiscovery.DefaultSeconds, 1, 60), args.Option("session"), cancellationToken);
-        announcements.Add(uri, discovery.Sessions);
+        RememberAnnouncements(uri, discovery.Sessions);
         return uri;
     }
+    internal static void RememberAnnouncements(Uri uri, IReadOnlyList<DiscoveredResoniteSession> evidence) =>
+        announcements.AddOrUpdate(uri, evidence);
 
     /// <summary>
     /// Creates and connects a client for <see cref="RLoopConfig.Backend"/>. Pass

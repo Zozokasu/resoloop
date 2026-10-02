@@ -68,12 +68,12 @@ public sealed partial class WorldService
             Evidence("connection", key);
         }
 
-        public async Task ObserveCreatedAsync(ComponentRuntime component, CancellationToken ct)
-        {
-            // New IDs have no planning-time instance. Observe after creation before any deferred field write.
-            var current = await client.GetComponentAsync(component.Id!, ct);
-            components[current.Id] = current with { Members = CloneMembers(current.Members)! };
-        }
+        public JsonNode? Expected(string? id) => id is null ? null :
+            components.TryGetValue(id, out var c) ? EvidenceNode(c) :
+            slots.TryGetValue(id, out var s) ? EvidenceNode(s) : null;
+        public SlotInfo? ObservedSlot(string id) => slots.GetValueOrDefault(id);
+        public IReadOnlyDictionary<string, string>? ObservedFields(string id) =>
+            components.TryGetValue(id, out var component) ? component.Members.ToDictionary(m => m.Key, m => MemberRaw(m.Value)) : null;
 
         public async Task CheckComponentAsync(ComponentRuntime component, IEnumerable<string> memberNames, CancellationToken ct)
         {
@@ -118,39 +118,28 @@ public sealed partial class WorldService
             await CheckConnectionAsync(node.StableKey, ct);
         }
 
-        public void SlotSucceeded(SlotUpdateRequest request)
+        public void AcceptReadback(SlotInfo? slot, ComponentInfo? component, IEnumerable<string> names, SlotUpdateRequest? sent)
         {
-            var old = slots[request.Id];
-            slots[request.Id] = old with { Name = request.Name ?? old.Name, ParentId = request.ParentId ?? old.ParentId,
-                Position = request.Position ?? old.Position, Rotation = request.Rotation ?? old.Rotation, Scale = request.Scale ?? old.Scale };
-        }
-
-        public void ComponentSucceeded(ComponentRuntime component, IReadOnlyDictionary<string, string> fields)
-        {
-            var old = components[component.Id!];
-            var next = old.Members.ToDictionary(StringComparer.Ordinal);
-            foreach (var field in fields)
-                if (next.TryGetValue(field.Key, out var before)) next[field.Key] = WithRaw(before, field.Value);
-            components[old.Id] = old with { Members = next };
-            foreach (var field in fields)
-                if ((component.Existing is null ? MergeCreateFields(component.Spec) : ManagedFields(component.Spec))
-                    .ContainsKey(field.Key) && next.TryGetValue(field.Key, out var member) &&
-                    Descendants(member).Any(m => m.Kind == "reference")) declaredReferences.Add((old.Id, field.Key));
-        }
-
-        public void PlanReconciliation(ComponentRuntime component, ComponentInfo current, IEnumerable<string> names)
-        {
-            var old = components[component.Id!];
-            if (old.Type != current.Type) Fail("typeChanged", "component", component.StableKey, null, old.Type, current.Type);
-            var members = old.Members.ToDictionary(StringComparer.Ordinal);
-            foreach (var name in names)
+            if (slot is not null)
             {
-                old.Members.TryGetValue(name, out var before);
-                current.Members.TryGetValue(name, out var now);
-                if (!SameShape(before, now)) Fail("typeChanged", "component", component.StableKey, name, before, now);
-                if (now is not null) members[name] = CloneMember(now);
+                if (slots.TryGetValue(slot.Id, out var old) && sent is not null)
+                    slots[slot.Id] = old with { Name = sent.Name is null ? old.Name : slot.Name,
+                        ParentId = sent.ParentId is null ? old.ParentId : slot.ParentId,
+                        Position = sent.Position is null ? old.Position : slot.Position,
+                        Rotation = sent.Rotation is null ? old.Rotation : slot.Rotation,
+                        Scale = sent.Scale is null ? old.Scale : slot.Scale };
+                else slots[slot.Id] = slot with { Members = CloneMembers(slot.Members) };
             }
-            components[old.Id] = old with { Members = members };
+            if (component is null) return;
+            var next = components.TryGetValue(component.Id, out var prior) ? prior.Members.ToDictionary(StringComparer.Ordinal) :
+                CloneMembers(component.Members)!.ToDictionary(StringComparer.Ordinal);
+            foreach (var name in names)
+                if (component.Members.TryGetValue(name, out var member))
+                {
+                    next[name] = CloneMember(member);
+                    if (Descendants(member).Any(m => m.Kind == "reference")) declaredReferences.Add((component.Id, name));
+                }
+            components[component.Id] = component with { Members = next };
         }
 
         private void CheckMember(string kind, string key, string name, MemberValue? before, MemberValue? now)
@@ -201,26 +190,13 @@ public sealed partial class WorldService
                 a.Members.Count == b.Members.Count && a.Members.All(p => b.Members.TryGetValue(p.Key, out var value) && equal(p.Value, value))) &&
             (a.Elements is null || b.Elements is null ? a.Elements is null && b.Elements is null :
                 a.Elements.Count == b.Elements.Count && a.Elements.Zip(b.Elements).All(p => equal(p.First, p.Second)));
-        private static MemberValue WithRaw(MemberValue member, string raw)
-        {
-            if (member.Kind == "reference") return member with { TargetId = raw == "null" ? null : raw };
-            if (member.Kind is "syncObject" or "dictionary" && JsonNode.Parse(raw) is JsonObject obj)
-                return member with { Members = member.Members?.ToDictionary(p => p.Key,
-                    p => obj.TryGetPropertyValue(p.Key, out var value) ? WithRaw(p.Value, Raw(value)) : p.Value, StringComparer.Ordinal) };
-            if (member.Kind == "list" && JsonNode.Parse(raw) is JsonArray array && member.Elements?.Count == array.Count)
-                return member with { Elements = member.Elements.Select((m, i) => WithRaw(m, Raw(array[i]))).ToArray() };
-            return member with { Value = IsStringLike(member.Type) ? JsonValue.Create(raw) :
-                MemberValueSyntax.NormalizeTupleOrJson(member.Type, raw) };
-        }
-        private static string Raw(JsonNode? value) => value is JsonValue scalar && scalar.TryGetValue<string>(out var text) ? text : value?.ToJsonString() ?? "null";
-
         private Dictionary<string, string> Completeness() => new()
         { ["identity"] = identity.IdentityStatus, ["connection"] = prepared.Session.ConnectionGeneration is null ? "unknown" : "complete",
             ["writer"] = "partial", ["writerOutsideObservation"] = "unknown", ["runtime"] = "partial" };
         private void Evidence(string kind, string key)
         {
             if (!evidenceKeys.Add(kind + ":" + key)) return;
-            Diagnostics.Add(ApplyDiagnostics.Unknown("APPLY_PRECONDITION_FAILED",
+            Diagnostics.Add(ApplyDiagnostics.Unknown("APPLY_EVIDENCE_INCOMPLETE",
                 "Session identity or writer evidence is incomplete; unknown evidence does not block this apply.", "apply", "warning") with
                 { EntityKind = kind, Key = key, Completeness = Completeness() });
         }

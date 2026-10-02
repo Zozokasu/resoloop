@@ -694,12 +694,13 @@ internal sealed record ApplyStateAsset(string Kind, string SourceHash, string Ur
 
 internal sealed class ApplyState
 {
-    public int SchemaVersion { get; set; } = 2;
+    public int SchemaVersion { get; set; } = 3;
     public string OwnershipKey { get; set; } = string.Empty;
     public string? SessionId { get; set; }
     public Dictionary<string, ApplyStateSlot> Slots { get; set; } = new(StringComparer.Ordinal);
     public Dictionary<string, ApplyStateComponent> Components { get; set; } = new(StringComparer.Ordinal);
     public Dictionary<string, ApplyStateAsset> Assets { get; set; } = new(StringComparer.Ordinal);
+    public List<ApplyPendingWrite> Pending { get; set; } = [];
 }
 
 internal static class ApplyStateStore
@@ -719,14 +720,14 @@ internal static class ApplyStateStore
         {
             var state = JsonSerializer.Deserialize<ApplyState>(CheckpointFiles.Read(path), Options)
                         ?? throw new JsonException("State was empty.");
-            if (state.SchemaVersion is not (1 or 2))
-                throw new RLoopException("APPLY_STATE_VERSION_UNSUPPORTED", $"State file '{path}' has unsupported schemaVersion {state.SchemaVersion}.", ExitCodes.ValidationFailed);
+            RequireSupportedVersion(state.SchemaVersion, path);
+
             if (!state.OwnershipKey.Equals(ownershipKey, StringComparison.Ordinal))
                 throw new RLoopException("APPLY_STATE_OWNERSHIP_MISMATCH", $"State file '{path}' belongs to '{state.OwnershipKey}', not '{ownershipKey}'.", ExitCodes.ValidationFailed);
             state.Slots = new Dictionary<string, ApplyStateSlot>(state.Slots, StringComparer.Ordinal);
             state.Components = new Dictionary<string, ApplyStateComponent>(state.Components, StringComparer.Ordinal);
             state.Assets = new Dictionary<string, ApplyStateAsset>(state.Assets ?? [], StringComparer.Ordinal);
-            state.SchemaVersion = 2;
+            state.Pending ??= [];
             return state;
         }
         catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException)
@@ -746,7 +747,10 @@ internal static class ApplyStateStore
     {
         try
         {
+            state.SchemaVersion = 3;
+            SaveFault.Value?.Invoke(path, state);
             CheckpointFiles.Write(path, JsonSerializer.Serialize(state, Options) + "\n");
+            AfterSaveFault.Value?.Invoke(path, state);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
@@ -754,6 +758,16 @@ internal static class ApplyStateStore
                 new Dictionary<string, object?> { ["stateFile"] = path }, innerException: ex);
         }
     }
+
+    // Per async execution, independent of client faults; tests can fail each persistence phase.
+    internal static readonly AsyncLocal<Action<string, ApplyState>?> SaveFault = new();
+    internal static readonly AsyncLocal<Action<string, ApplyState>?> AfterSaveFault = new();
+    internal static void RequireSupportedVersion(int version, string path, int maximumVersion = 3)
+    {
+        if (version < 1 || version > maximumVersion)
+            throw new RLoopException("APPLY_STATE_VERSION_UNSUPPORTED", $"State file '{path}' has unsupported schemaVersion {version}.", ExitCodes.ValidationFailed);
+    }
+    internal static ApplyState Copy(ApplyState state) => JsonSerializer.Deserialize<ApplyState>(JsonSerializer.Serialize(state, Options), Options)!;
 
     private static string Sanitize(string value)
     {

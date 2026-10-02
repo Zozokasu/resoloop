@@ -1,10 +1,24 @@
 using RLoop.Core;
+using RLoop.Cli;
 using RLoop.ResoniteLink;
 
 namespace RLoop.Tests;
 
 public sealed class ApplySessionObservationTests
 {
+    [Fact]
+    public async Task FactoryReusesSameUriInstanceAndReplacesAnnouncementEvidence()
+    {
+        var uri = new Uri("ws://localhost:47610");
+        ResoniteClientFactory.RememberAnnouncements(uri, [new("S-before", "before", uri.AbsoluteUri, DateTime.UtcNow)]);
+        ResoniteClientFactory.RememberAnnouncements(uri, [new("S-after", "after", uri.AbsoluteUri, DateTime.UtcNow)]);
+        var link = new ScriptedMetadataLink { Connected = false };
+        await using var adapter = new ResoniteLinkClientAdapter(link, TimeSpan.FromSeconds(2), new ReflectionCacheOptions("off"));
+        var connected = await ResoniteClientFactory.ConnectAsync(ParsedArguments.Parse(["status"]), new RLoopConfig(uri.AbsoluteUri),
+            new ReflectionCacheOptions("off"), CancellationToken.None, uri, null, () => adapter);
+        Assert.Same(adapter, connected);
+        Assert.Equal("S-after", adapter.ObserveApplySession().DiscoverSessionId);
+    }
     [Theory]
     [InlineData("WS://LOCALHOST:047610", "ws://localhost:47610/")]
     [InlineData("ws://127.0.0.1:47610/", "ws://localhost:47610/")]
@@ -58,6 +72,7 @@ public sealed class ApplySessionObservationTests
         await adapter.ConnectAsync(new("ws://localhost:47610"), TimeSpan.FromSeconds(2));
         using var cancellation = new CancellationTokenSource();
         using var guard = adapter.GuardApplyWrites(fault == "generation" ? "old-generation" : adapter.ObserveApplyConnection().Generation);
+        adapter.BeginApplySend();
         adapter.BeforeApplyWriteBoundaryForTests = () =>
         {
             if (fault == "disconnect") link.Connected = false;
@@ -72,5 +87,7 @@ public sealed class ApplySessionObservationTests
         }
         // SDK LinkInterface has no connection in this seam. A send would reach its failure path.
         Assert.Empty(link.RequestedSlots);
+        Assert.False(adapter.ApplySendStarted);
+        Assert.False(adapter.ApplyResponseReceived);
     }
 }

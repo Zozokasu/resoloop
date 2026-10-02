@@ -451,7 +451,7 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
             prepared.Entries.Count(x => x.Action == "no-op"),
             prepared.Entries.Count(x => x.Action == "rename"),
             prepared.Entries.Count(x => x.Action == "delete"), false,
-            $"Non-atomic preview. State checkpoint: {prepared.StatePath}. Re-run apply to converge; deletion requires --prune --yes.")
+            $"Non-atomic preview. State checkpoint: {prepared.StatePath}. Apply reconciles proven pending results or stops before new writes; deletion requires --prune --yes.")
             { Warnings = ComponentIdentityDiagnostics.Analyze(document) };
     }
 
@@ -467,7 +467,7 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
         using var writer = CheckpointFiles.AcquireWriter(statePath);
         if (client is IResoniteClientDiagnostics diagnostics) diagnostics.ResetMetrics();
         options.Progress?.Invoke(new ApplyProgress("validate", 0, 1, document.SourcePath, "Validating and planning before mutation."));
-        var prepared = await PrepareAsync(document, options, cancellationToken, statePath);
+        var prepared = await PrepareAsync(document, options, cancellationToken, statePath, reconcilePending: true);
         if (options.Prune && !options.ConfirmDeletes)
             throw new RLoopException("CONFIRMATION_REQUIRED", "apply --prune is destructive and requires --yes.", ExitCodes.ValidationFailed,
                 new Dictionary<string, object?> { ["deleteCandidates"] = prepared.Deletions.Count, ["stateFile"] = prepared.StatePath });
@@ -495,13 +495,21 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
                 else
                 {
                     BeforeFirstWrite();
-                    await safety.CheckConnectionAsync(asset.Key, cancellationToken);
-                    asset.Url = await client.ImportAssetAsync(asset.Spec, asset.ResolvedSource, cancellationToken);
+                    var pending = Pending(prepared, "importAsset", asset.Key);
+                    await ExecutePendingAsync(prepared, pending, () => safety.CheckConnectionAsync(asset.Key, cancellationToken), async () =>
+                    {
+                        asset.Url = await client.ImportAssetAsync(asset.Spec, asset.ResolvedSource, cancellationToken);
+                        pending.AssetBinding = new(asset.Spec.Kind, asset.SourceHash, asset.Url);
+                    }, cancellationToken);
                 }
                 if (asset.Action == "create") counts.AssetsImported++;
                 else counts.AssetsUnchanged++;
-                prepared.State.Assets[asset.Key] = new ApplyStateAsset(asset.Spec.Kind, asset.SourceHash, asset.Url);
-                Checkpoint(prepared);
+                if (asset.DirectUrl is not null || asset.Action == "no-op")
+                {
+                    var next = ApplyStateStore.Copy(prepared.State);
+                    next.Assets[asset.Key] = new ApplyStateAsset(asset.Spec.Kind, asset.SourceHash, asset.Url!);
+                    Checkpoint(prepared, next);
+                }
                 options.Progress?.Invoke(new ApplyProgress("assets", counts.AssetsImported + counts.AssetsUnchanged,
                     prepared.Assets.Count, "$assets/" + asset.Key, asset.Action == "create" ? "imported asset" : "reused asset"));
             }
@@ -518,24 +526,29 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
                 switch (node.SlotAction)
                 {
                     case "create":
-                        // Persist intent before the remote mutation. If the response is lost after Resonite
-                        // creates the Slot, the next run can bind the exact pending path without duplicating it.
-                        prepared.State.Slots[node.StableKey] = new ApplyStateSlot(string.Empty, node.Path, node.Spec.RuntimeRelocatable, node.PathSegments);
-                        Checkpoint(prepared);
                         BeforeFirstWrite();
-                        await safety.CheckConnectionAsync(node.StableKey, cancellationToken);
-                        node.Id = await client.CreateSlotAsync(new SlotCreateRequest(parentId, node.Spec.Name,
+                        var request = new SlotCreateRequest(parentId, node.Spec.Name,
                             node.Spec.Position?.ToVector3("position"), node.Spec.Rotation?.ToQuaternion("rotation"),
-                            node.Spec.Scale?.ToVector3("scale")), cancellationToken);
+                            node.Spec.Scale?.ToVector3("scale"));
+                        var creation = Pending(prepared, "createSlot", node.StableKey, parentId: parentId, type: "Slot");
+                        creation.SlotValues = new("", request.Name, request.Position, request.Rotation, request.Scale, parentId);
+                        creation.SlotBinding = new("", node.Path, node.Spec.RuntimeRelocatable, node.PathSegments);
+                        await ExecutePendingAsync(prepared, creation, () => safety.CheckConnectionAsync(node.StableKey, cancellationToken), async () =>
+                        {
+                            node.Id = await client.CreateSlotAsync(request, cancellationToken);
+                            creation.Id = node.Id;
+                        }, cancellationToken);
                         counts.SlotsCreated++;
                         break;
                     case "update":
                         node.Id = node.Existing!.Id;
                         BeforeFirstWrite();
                         var update = CreateSlotUpdate(node, prepared.ParentId);
-                        await safety.CheckSlotAsync(node, update, cancellationToken);
-                        await client.UpdateSlotAsync(update, cancellationToken);
-                        safety.SlotSucceeded(update);
+                        var slotWrite = Pending(prepared, "updateSlot", node.StableKey, node.Id, parentId, "Slot");
+                        slotWrite.SlotValues = update;
+                        slotWrite.SlotBinding = new(node.Id, node.Path, node.Spec.RuntimeRelocatable, node.PathSegments);
+                        await ExecutePendingAsync(prepared, slotWrite, () => safety.CheckSlotAsync(node, update, cancellationToken),
+                            () => client.UpdateSlotAsync(update, cancellationToken), cancellationToken);
                         counts.SlotsUpdated++;
                         break;
                     default:
@@ -543,8 +556,12 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
                         counts.SlotsUnchanged++;
                         break;
                 }
-                prepared.State.Slots[node.StableKey] = new ApplyStateSlot(node.Id, node.Path, node.Spec.RuntimeRelocatable, node.PathSegments);
-                Checkpoint(prepared);
+                if (node.SlotAction == "no-op")
+                {
+                    var next = ApplyStateStore.Copy(prepared.State);
+                    next.Slots[node.StableKey] = new ApplyStateSlot(node.Id!, node.Path, node.Spec.RuntimeRelocatable, node.PathSegments);
+                    Checkpoint(prepared, next);
+                }
                 completed++;
                 options.Progress?.Invoke(new ApplyProgress("slots", completed, total, node.Path, $"{node.SlotAction} Slot"));
             }
@@ -569,22 +586,24 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
                         initialFields = await ResolveFieldsAsync(createFields, byKey, slotsByKey, assetUrls, cancellationToken);
                         component.AppliedOnCreate = initialFields;
                     }
-                    prepared.State.Components[component.StableKey] = CreateComponentState(component, string.Empty);
-                    Checkpoint(prepared);
                     BeforeFirstWrite();
-                    await safety.CheckConnectionAsync(component.StableKey, cancellationToken);
-                    var created = await client.AddComponentAsync(component.Node.Id!, component.Spec.Type, initialFields, cancellationToken);
-                    component.Id = created.Id;
-                    component.ResolvedType = created.Type;
+                    var creation = Pending(prepared, "addComponent", component.StableKey, parentId: component.Node.Id, type: component.Spec.Type);
+                    creation.Members = initialFields.ToDictionary(StringComparer.Ordinal);
+                    creation.ComponentBinding = CreateComponentState(component, string.Empty);
+                    await ExecutePendingAsync(prepared, creation, () => safety.CheckConnectionAsync(component.StableKey, cancellationToken), async () =>
+                    {
+                        var created = await client.AddComponentAsync(component.Node.Id!, component.Spec.Type, initialFields, cancellationToken);
+                        component.Id = creation.Id = created.Id;
+                        component.ResolvedType = creation.Type = created.Type;
+                    }, cancellationToken);
                     counts.ComponentsAdded++;
                 }
                 if (!string.IsNullOrWhiteSpace(component.Spec.Key)) byKey[component.Spec.Key!] = component;
-                prepared.State.Components[component.StableKey] = CreateComponentState(component, component.Id!);
-                Checkpoint(prepared);
-                if (component.Existing is null)
+                if (component.Existing is not null)
                 {
-                    await safety.ObserveCreatedAsync(component, cancellationToken);
-                    safety.ComponentSucceeded(component, component.AppliedOnCreate ?? new Dictionary<string, string>());
+                    var next = ApplyStateStore.Copy(prepared.State);
+                    next.Components[component.StableKey] = CreateComponentState(component, component.Id!, safety.ObservedFields(component.Id!));
+                    Checkpoint(prepared, next);
                 }
                 completed++;
                 options.Progress?.Invoke(new ApplyProgress("components", completed, total, component.Path,
@@ -604,9 +623,12 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
                 if (changed.Count > 0)
                 {
                     BeforeFirstWrite();
-                    await safety.CheckComponentAsync(component, changed.Keys, cancellationToken);
-                    await client.SetComponentMembersAsync(component.Id!, component.ResolvedType ?? component.Spec.Type, changed, cancellationToken);
-                    safety.ComponentSucceeded(component, changed);
+                    var memberWrite = Pending(prepared, "setMembers", component.StableKey, component.Id, component.Node.Id,
+                        component.ResolvedType ?? component.Spec.Type);
+                    memberWrite.Members = changed;
+                    memberWrite.ComponentBinding = CreateComponentState(component, component.Id!, fields);
+                    await ExecutePendingAsync(prepared, memberWrite, () => safety.CheckComponentAsync(component, changed.Keys, cancellationToken),
+                        () => client.SetComponentMembersAsync(component.Id!, component.ResolvedType ?? component.Spec.Type, changed, cancellationToken), cancellationToken);
                     if (component.Existing is not null) { counts.ComponentsUpdated++; updatedComponents.Add(component.Id!); }
                 }
                 else if (component.Existing is not null)
@@ -616,13 +638,19 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
                 if (component.RelocationSource is not null && component.RelocationSource.Id != component.Id)
                 {
                     BeforeFirstWrite();
-                    await safety.CheckConnectionAsync(component.StableKey, cancellationToken);
-                    await client.RemoveComponentAsync(component.RelocationSource.Id, cancellationToken);
+                    var removal = Pending(prepared, "removeComponent", component.StableKey, component.RelocationSource.Id,
+                        type: component.RelocationSource.Type);
+                    await ExecutePendingAsync(prepared, removal, () => safety.CheckConnectionAsync(component.StableKey, cancellationToken),
+                        () => client.RemoveComponentAsync(component.RelocationSource.Id, cancellationToken), cancellationToken);
                     counts.ComponentsDeleted++;
                     component.RelocationSource = null;
                 }
-                prepared.State.Components[component.StableKey] = CreateComponentState(component, component.Id!, fields);
-                Checkpoint(prepared);
+                if (changed.Count == 0)
+                {
+                    var next = ApplyStateStore.Copy(prepared.State);
+                    next.Components[component.StableKey] = CreateComponentState(component, component.Id!, safety.ObservedFields(component.Id!));
+                    Checkpoint(prepared, next);
+                }
                 completed++;
                 options.Progress?.Invoke(new ApplyProgress("fields", completed, total, component.Path,
                     changed.Count == 0 ? "no field changes" : $"updated {changed.Count} field(s)"));
@@ -635,12 +663,12 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
                 cancellationToken.ThrowIfCancellationRequested();
                 BeforeFirstWrite();
                 var update = CreateSlotUpdate(node, prepared.ParentId);
-                await safety.CheckSlotAsync(node, update, cancellationToken);
-                await client.UpdateSlotAsync(update, cancellationToken);
-                safety.SlotSucceeded(update);
+                var relocation = Pending(prepared, "updateSlot", node.StableKey, node.Id, update.ParentId, "Slot");
+                relocation.SlotValues = update;
+                relocation.SlotBinding = new(node.Id!, node.Path, node.Spec.RuntimeRelocatable, node.PathSegments);
+                await ExecutePendingAsync(prepared, relocation, () => safety.CheckSlotAsync(node, update, cancellationToken),
+                    () => client.UpdateSlotAsync(update, cancellationToken), cancellationToken);
                 counts.SlotsUpdated++;
-                prepared.State.Slots[node.StableKey] = new ApplyStateSlot(node.Id!, node.Path, node.Spec.RuntimeRelocatable, node.PathSegments);
-                Checkpoint(prepared);
                 completed++;
                 options.Progress?.Invoke(new ApplyProgress("slots", completed, total, node.Path, "relocated Slot after parent preparation"));
             }
@@ -651,11 +679,11 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
                 {
                     cancellationToken.ThrowIfCancellationRequested();
                     BeforeFirstWrite();
-                    await safety.CheckConnectionAsync(deletion.Key, cancellationToken);
-                    await client.RemoveComponentAsync(deletion.Id, cancellationToken);
-                    prepared.State.Components.Remove(deletion.Key);
+                    var removal = Pending(prepared, "removeComponent", deletion.Key, deletion.Id);
+                    removal.RemoveComponents.Add(deletion.Key);
+                    await ExecutePendingAsync(prepared, removal, () => safety.CheckConnectionAsync(deletion.Key, cancellationToken),
+                        () => client.RemoveComponentAsync(deletion.Id, cancellationToken), cancellationToken);
                     counts.ComponentsDeleted++;
-                    Checkpoint(prepared);
                     options.Progress?.Invoke(new ApplyProgress("prune", counts.ComponentsDeleted + counts.SlotsDeleted,
                         prepared.Deletions.Count, deletion.Path, "deleted owned Component"));
                 }
@@ -665,57 +693,20 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
                     if (deletion.Id.Equals("Root", StringComparison.OrdinalIgnoreCase))
                         throw new RLoopException("DELETE_ROOT_FORBIDDEN", "The Root Slot can never be pruned.", ExitCodes.ValidationFailed);
                     BeforeFirstWrite();
-                    await safety.CheckConnectionAsync(deletion.Key, cancellationToken);
-                    await client.DeleteSlotAsync(deletion.Id, cancellationToken);
-                    foreach (var componentKey in deletion.CoveredComponentKeys ?? [])
-                        prepared.State.Components.Remove(componentKey);
-                    foreach (var slotKey in deletion.CoveredSlotKeys ?? [deletion.Key])
-                        prepared.State.Slots.Remove(slotKey);
+                    var removal = Pending(prepared, "deleteSlot", deletion.Key, deletion.Id);
+                    removal.RemoveComponents = [.. deletion.CoveredComponentKeys ?? []];
+                    removal.RemoveSlots = [.. deletion.CoveredSlotKeys ?? [deletion.Key]];
+                    await ExecutePendingAsync(prepared, removal, () => safety.CheckConnectionAsync(deletion.Key, cancellationToken),
+                        () => client.DeleteSlotAsync(deletion.Id, cancellationToken), cancellationToken);
                     counts.SlotsDeleted++;
-                    Checkpoint(prepared);
                     options.Progress?.Invoke(new ApplyProgress("prune", counts.ComponentsDeleted + counts.SlotsDeleted,
                         prepared.Deletions.Count, deletion.Path, "deleted owned Slot"));
                 }
             }
-            // An old driver can reject a replacement's reference while it still owns the field.
-            // Reconcile after removals, and never report success for a connection the runtime dropped.
-            if (counts.ComponentsAdded + counts.ComponentsUpdated + counts.ComponentsDeleted + counts.SlotsUpdated + counts.SlotsDeleted > 0)
-            foreach (var component in prepared.Components)
-            {
-                var desired = component.Existing is null ? MergeCreateFields(component.Spec) : ManagedFields(component.Spec);
-                var referenceFields = (desired ?? new Dictionary<string, JsonElement>())
-                    .Where(field => ContainsWorldReference(field.Value)).ToDictionary(pair => pair.Key, pair => pair.Value);
-                if (referenceFields.Count == 0) continue;
-                var fields = await ResolveFieldsAsync(referenceFields, byKey, slotsByKey, assetUrls, cancellationToken);
-                var current = await client.GetComponentAsync(component.Id!, cancellationToken);
-                var missing = fields.Where(field => !current.Members.TryGetValue(field.Key, out var observed) ||
-                    !MemberMatchesRaw(observed, field.Value)).ToDictionary(pair => pair.Key, pair => pair.Value);
-                if (missing.Count == 0) continue;
-                // Preserve the legacy reconciliation observation boundary; I2 changes resend semantics.
-                safety.PlanReconciliation(component, current, missing.Keys);
-                await safety.CheckComponentAsync(component, missing.Keys, cancellationToken);
-                await client.SetComponentMembersAsync(component.Id!, component.ResolvedType ?? component.Spec.Type, missing, cancellationToken);
-                safety.ComponentSucceeded(component, missing);
-                if (component.Existing is not null && updatedComponents.Add(component.Id!))
-                {
-                    counts.ComponentsUpdated++;
-                    counts.ComponentsUnchanged--;
-                }
-                current = await client.GetComponentAsync(component.Id!, cancellationToken);
-                var rejected = missing.Where(field => !current.Members.TryGetValue(field.Key, out var observed) ||
-                    !MemberMatchesRaw(observed, field.Value)).Select(field => field.Key).ToArray();
-                if (rejected.Length > 0)
-                    throw new RLoopException("APPLY_REFERENCE_NOT_RETAINED", "The runtime did not retain declared references after reconciliation. Inspect competing drivers and the saved checkpoint.",
-                        ExitCodes.OperationFailed, new Dictionary<string, object?> { ["stateFile"] = prepared.StatePath,
-                            ["componentKey"] = component.StableKey, ["componentId"] = component.Id, ["members"] = rejected },
-                        ["Inspect the exact targets and any obsolete field owner. If deletion is needed, review diff --deletes-only and use apply --prune --yes; no implicit pruning occurs."]);
-                Checkpoint(prepared);
-                options.Progress?.Invoke(new ApplyProgress("references", completed, total, component.Path, "reconciled references after removals"));
-            }
         }
         catch (OperationCanceledException ex)
         {
-            throw new RLoopException("APPLY_CANCELLED", "Apply was cancelled; completed operations were checkpointed and the same command can resume safely.",
+            throw new RLoopException("APPLY_CANCELLED", "Apply was cancelled; inspect confirmed results and pending evidence before continuing.",
                 ExitCodes.OperationFailed, new Dictionary<string, object?>
                 {
                     ["stateFile"] = prepared.StatePath,
@@ -725,8 +716,8 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
                     ["slotsCreated"] = counts.SlotsCreated,
                     ["componentsAdded"] = counts.ComponentsAdded,
                     ["atomic"] = false,
-                    ["recovery"] = $"Re-run the same apply command. Checkpoint: {prepared.StatePath}"
-                }, ["Re-run the same apply command after resolving the cancellation cause."], ex);
+                    ["recovery"] = $"Reconcile pending evidence before new writes; unresolved results stop apply. State: {prepared.StatePath}"
+                }, ["Inspect pending evidence and the exact IDs after resolving the cancellation cause."], ex);
         }
         catch (RLoopException ex)
         {
@@ -745,11 +736,12 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
                 ["slotsDeleted"] = counts.SlotsDeleted,
                 ["assetsImported"] = counts.AssetsImported,
                 ["atomic"] = false,
-                ["recovery"] = $"Re-run the same apply command. Checkpoint: {prepared.StatePath}"
+                ["recovery"] = $"Reconcile pending evidence before new writes; unresolved results stop apply. State: {prepared.StatePath}"
             };
-            var suggestions = ex.Suggestions.Concat(["Re-run the same apply command after resolving the error; completed operations are checkpointed."])
+            var suggestions = ex.Suggestions.Concat(["Inspect confirmed results and pending evidence; a subsequent apply reconciles proven results or stops."])
                 .Distinct(StringComparer.Ordinal).ToArray();
-            var failure = new RLoopException(ex.Code, ex.Message, ex.ExitCode, context, suggestions, detailed);
+            var failure = new RLoopException(ex.Code, ex.Message, ex.ExitCode, context, suggestions,
+                detailed.Code == "APPLY_CANCELLED" ? detailed.InnerException : detailed);
             ApplyDiagnostics.CopyFailure(detailed, failure);
             throw failure;
         }
@@ -766,7 +758,7 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
         var result = new ApplyResult(root.Id!, root.SlotAction == "create", counts.ComponentsAdded, counts.ComponentsUpdated,
             counts.SlotsCreated, counts.SlotsUpdated, counts.SlotsUnchanged, counts.ComponentsUnchanged,
             prepared.StatePath, prepared.Session.UniqueSessionId, profile, counts.ComponentsDeleted, counts.SlotsDeleted,
-            false, $"Operations are non-atomic. Re-run the same apply command to converge from checkpoint {prepared.StatePath}.",
+            false, $"Operations are non-atomic. A subsequent apply reconciles proven results or stops at unresolved evidence in {prepared.StatePath}.",
             counts.AssetsImported, counts.AssetsUnchanged);
         ApplyDiagnostics.AttachRuntime(result, safety.Diagnostics);
         return result;
@@ -1028,7 +1020,7 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
 
     private static string SymbolKey(string value) => value[(value.IndexOf(':') + 1)..].Split('.')[0];
 
-    private async Task<PreparedApply> PrepareAsync(ApplyDocument document, ApplyOptions options, CancellationToken cancellationToken, string? resolvedStatePath = null)
+    private async Task<PreparedApply> PrepareAsync(ApplyDocument document, ApplyOptions options, CancellationToken cancellationToken, string? resolvedStatePath = null, bool reconcilePending = false)
     {
         document = document with { ResolvedProjectContext = document.ProjectContext };
         document = GeneratedContentMetadata.AddToGeneratedRoots(document, generatedContentSource);
@@ -1038,6 +1030,12 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
         var state = ApplyStateStore.Load(statePath, document.Ownership!.Key, options.RequireState);
         var session = await client.GetSessionInfoAsync(cancellationToken);
         document.BuildBundle?.VerifySession(session);
+        if (state.Pending.Count > 0 || state.Slots.Values.Any(s => string.IsNullOrWhiteSpace(s.Id)) ||
+            state.Components.Values.Any(c => string.IsNullOrWhiteSpace(c.Id)))
+        {
+            if (reconcilePending) await ReconcilePendingAsync(statePath, state, session, cancellationToken);
+            else throw WriteUnverified(statePath, state.Pending.FirstOrDefault() ?? new ApplyPendingWrite { Kind = "legacyCreation" }, "pendingUnresolved");
+        }
         // SessionId is kept in state for compatibility only. UniqueSessionId is a per-connection counter,
         // so a match never authorizes reusing a stored live ID; every reuse is proven against the live world.
         state.SessionId = session.UniqueSessionId;
@@ -2129,10 +2127,11 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
         NearlyEqual(current.X, desired[0]) && NearlyEqual(current.Y, desired[1]) && NearlyEqual(current.Z, desired[2]) && NearlyEqual(current.W, desired[3]);
     private static bool NearlyEqual(float left, float right) => Math.Abs(left - right) <= 0.00001f * Math.Max(1, Math.Max(Math.Abs(left), Math.Abs(right)));
 
-    private static void Checkpoint(PreparedApply prepared)
+    private static void Checkpoint(PreparedApply prepared, ApplyState next)
     {
-        prepared.State.SessionId = prepared.Session.UniqueSessionId;
-        ApplyStateStore.Save(prepared.StatePath, prepared.State);
+        next.SessionId = prepared.Session.UniqueSessionId;
+        ApplyStateStore.Save(prepared.StatePath, next);
+        prepared.State = next;
     }
 
     private static int MaxDepth(IReadOnlyList<ApplyNodeSpec>? children) => children is null || children.Count == 0
@@ -2206,7 +2205,7 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
     {
         public ApplyDocument Document { get; } = document;
         public ApplyOptions Options { get; } = options;
-        public ApplyState State { get; } = state;
+        public ApplyState State { get; set; } = state;
         public string StatePath { get; } = statePath;
         public SessionInfo Session { get; } = session;
         public string ParentId { get; } = parentId;

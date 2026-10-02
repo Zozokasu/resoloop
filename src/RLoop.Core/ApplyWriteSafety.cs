@@ -22,6 +22,14 @@ public sealed record ApplySessionObservation(string NormalizedUrl, string? Disco
     }
 }
 public interface IApplySessionObservation { ApplySessionObservation ObserveApplySession(); }
+/// <summary>Local evidence of reaching the SDK mutation boundary, not server acceptance.</summary>
+public interface IApplySendEvidence
+{
+    void BeginApplySend();
+    bool ApplySendStarted { get; }
+    bool ApplyResponseReceived { get; }
+    bool ApplyResponseAccepted { get; }
+}
 public sealed record ApplyConnectionObservation(bool Connected, string? Generation);
 /// <summary>A local connection guard. This does not exclude external writers.</summary>
 public interface IApplyConnectionGuard

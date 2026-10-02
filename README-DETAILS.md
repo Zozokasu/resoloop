@@ -512,3 +512,7 @@ For source diagnosis, add `--diagnostics NEW_FILE.json` to `validate|diff|plan|a
 Component の任意の `propertyModes` は member 名を `config` / `initial` / `runtime` / `driver-owned` に対応させます。
 未指定なら従来どおり `fields` は config、`initialFields` は作成時だけの initial です。
 通常 apply は runtime と driver-owned の member を作成時にも書きません。driver-owned の宣言は writer の所有証明にはなりません。
+
+apply の state は `schemaVersion: 3` です。v1/v2 は読めますが、安全確認後の最初の保存で v3 になり、保留が空でも v2 に戻りません。v3 に未対応の CLI は `APPLY_STATE_VERSION_UNSUPPORTED` で拒否します。state 本体の `pending` に操作 ID、session の観測、正確な対象 ID（不明なら null）、送信内容、応答と readback の証拠、確認できた部分を保存します。型 cache や生成 bundle とは別の記録です。
+
+送信前に保留を保存し、応答後に送った属性・member を一度だけ readback します。確認できた結果の保存後に対応を確定し、不一致・欠落は `APPLY_WRITE_UNVERIFIED`（exit 7）で停止します。cancel・timeout・state 保存失敗は従来のコードを保ち、後続の送信を止めます。次の apply は、URL と照合済み S-ID が一致し、受付・所有・型・親・値を正確な ID で確認できる保留だけを確定します。identity 不明や作成の応答喪失で ID が不明な保留は、名前で回収したり再送したりしません。失敗 context と `--diagnostics` の `operationId`、`sendStatus`、`pending`、`confirmed`、`confirmedBindings`、`evidencePersistence` を使って、実機で調べる ID と未確定部分を確認してください。保留を手動解除するコマンドはありません。

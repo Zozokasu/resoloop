@@ -22,7 +22,15 @@ public sealed record ApplyDiagnosticValue(string Status, object? Value)
 public sealed record ApplyDiagnostic(string DiagnosticVersion, string Code, string Severity, string Message,
     string Phase, string? BuildId, string? EntityKind, string? Key, string? Member, string? JsonPath,
     IReadOnlyList<object>? PathSegments, ApplyDiagnosticSource Source, IReadOnlyList<ApplyDiagnosticSource> Related,
-    ApplyDiagnosticValue Expected, ApplyDiagnosticValue Observed, IReadOnlyDictionary<string, string> Completeness);
+    ApplyDiagnosticValue Expected, ApplyDiagnosticValue Observed, IReadOnlyDictionary<string, string> Completeness)
+{
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public string? OperationId { get; init; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public string? SendStatus { get; init; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public object? Pending { get; init; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public IReadOnlyList<string>? Confirmed { get; init; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public object? EvidencePersistence { get; init; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public object? ConfirmedBindings { get; init; }
+}
 public sealed record ApplyDiagnosticReport(string DiagnosticVersion, IReadOnlyList<ApplyDiagnostic> Diagnostics);
 public sealed record ApplyDetailedValidation(ApplyValidationResult Result, IReadOnlyList<ApplyDiagnostic> Diagnostics);
 

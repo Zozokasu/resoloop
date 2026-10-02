@@ -17,7 +17,7 @@ internal static class CheckpointFiles
         }
     }
 
-    // Readers keep the old complete snapshot open while Windows atomically replaces its name.
+    // Readers share delete access so a snapshot can remain open during replacement.
     internal static string Read(string path)
     {
         var timer = Stopwatch.StartNew();
@@ -53,7 +53,12 @@ internal static class CheckpointFiles
         var temporary = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
         try
         {
-            File.WriteAllText(temporary, content, new UTF8Encoding(false));
+            using (var stream = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+            {
+                var bytes = new UTF8Encoding(false).GetBytes(content);
+                stream.Write(bytes);
+                stream.Flush(flushToDisk: true);
+            }
             if (File.Exists(path)) File.Replace(temporary, path, null);
             else File.Move(temporary, path);
         }

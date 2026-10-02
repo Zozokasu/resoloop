@@ -120,6 +120,7 @@ public sealed partial class ApplyWorkflowTests
         var result = await service.ApplyAsync(desired);
         Assert.Equal(1, client.Writes);
         var diagnostic = ApplyDiagnostics.ForRuntime(result).Diagnostics.Last();
+        Assert.Equal("APPLY_EVIDENCE_INCOMPLETE", diagnostic.Code);
         Assert.Equal("unknown", diagnostic.Completeness["writerOutsideObservation"]);
         Assert.Equal("unknown", diagnostic.Completeness["identity"]);
     }

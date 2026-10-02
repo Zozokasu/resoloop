@@ -1,0 +1,316 @@
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
+using System.Text.Json.Nodes;
+
+namespace RLoop.Core;
+
+public sealed partial class WorldService
+{
+    private static readonly JsonSerializerOptions EvidenceJson = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase, PropertyNameCaseInsensitive = true };
+    private static JsonNode? EvidenceNode(object value) => JsonSerializer.SerializeToNode(value, EvidenceJson);
+    private ApplyPendingWrite Pending(PreparedApply prepared, string kind, string key, string? id = null,
+        string? parentId = null, string? type = null)
+    {
+        if (parentId is null && id is not null)
+            parentId = prepared.Safety!.ObservedSlot(id)?.ParentId ??
+                prepared.SnapshotSlots.FirstOrDefault(s => s.Components.Any(c => c.Id == id))?.Id;
+        var pending = new ApplyPendingWrite
+        {
+            Kind = kind, Key = key, Id = id, ParentId = parentId, Type = type,
+            OwnershipKey = prepared.State.OwnershipKey,
+            Session = (client as IApplySessionObservation)?.ObserveApplySession() ?? ApplySessionObservation.Observe(prepared.Session.Url),
+            ConnectionGeneration = prepared.Session.ConnectionGeneration,
+            BuildId = prepared.Document.BuildBundle?.BuildId,
+            BuildIrHash = prepared.Document.BuildBundle is { } bundle ? Hash(bundle.Ir) : null,
+            CatalogHash = prepared.Document.BuildBundle is { } catalogBundle ? Hash(JsonSerializer.Serialize(catalogBundle.Catalog)) : null,
+            InputHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(prepared.Document)))),
+            Precondition = prepared.Safety!.Expected(id),
+            Completeness = new() { ["identity"] = "unknown", ["writer"] = "partial", ["writerOutsideObservation"] = "unknown", ["readback"] = "unknown" },
+        };
+        pending.Completeness["identity"] = pending.Session.IdentityStatus;
+        // Preserve exact ownership observations, never recover by name or ordinal.
+        var cursor = parentId;
+        var visited = new HashSet<string>();
+        while (cursor is not null && cursor != "Root" && visited.Add(cursor))
+        {
+            var slot = prepared.Safety!.ObservedSlot(cursor) ?? prepared.SnapshotSlots.FirstOrDefault(s => s.Id == cursor);
+            if (slot is null) break;
+            pending.OwnershipSlots[cursor] = new(slot.Id, slot.Name, slot.ParentId);
+            cursor = slot.ParentId;
+        }
+        return pending;
+    }
+    private static string Hash(string text) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(text)));
+
+    private async Task ExecutePendingAsync(PreparedApply prepared, ApplyPendingWrite pending,
+        Func<Task> check, Func<Task> send, CancellationToken ct)
+    {
+        var intent = ApplyStateStore.Copy(prepared.State);
+        intent.Pending.Add(pending);
+        try { ApplyStateStore.Save(prepared.StatePath, intent); }
+        catch (RLoopException error)
+        {
+            pending.SendStatus = "notSentProven";
+            throw WithPendingEvidence(error, prepared.StatePath, pending);
+        }
+        prepared.State = intent;
+        var enteredSend = false;
+        var boundary = client as IApplySendEvidence;
+        try
+        {
+            await check();
+            ct.ThrowIfCancellationRequested();
+            boundary?.BeginApplySend();
+            enteredSend = true;
+            await send();
+            pending.ResponseReceived = true;
+            pending.ResponseAccepted = true;
+            pending.SendStatus = "responseReceived";
+            // Store response evidence before readback, including the exact returned ID/type.
+            ApplyStateStore.Save(prepared.StatePath, prepared.State);
+            var readback = await ReadbackPendingAsync(pending, ct);
+            await prepared.Safety!.CheckConnectionAsync(pending.Key, ct);
+            CommitReadback(prepared.StatePath, prepared.State, pending, readback);
+            if (!readback.Complete) throw WriteUnverified(prepared.StatePath, pending, "readbackMismatch");
+            prepared.Safety!.AcceptReadback(readback.Slot, readback.Component, pending.Members.Keys, pending.SlotValues);
+        }
+        catch (Exception ex)
+        {
+            if (!pending.ResponseReceived && boundary?.ApplyResponseReceived == true)
+            {
+                pending.ResponseReceived = true;
+                pending.ResponseAccepted = boundary.ApplyResponseAccepted;
+                pending.SendStatus = "responseReceived";
+                try { ApplyStateStore.Save(prepared.StatePath, prepared.State); }
+                catch (RLoopException saveError) { throw WithPendingEvidence(saveError, prepared.StatePath, pending); }
+            }
+            if (!enteredSend || boundary is not null && !boundary.ApplySendStarted && !pending.ResponseReceived)
+            {
+                // This process proved that the client mutation entry point was never reached.
+                pending.SendStatus = "notSentProven";
+                var cleared = ApplyStateStore.Copy(prepared.State);
+                cleared.Pending.RemoveAll(p => p.OperationId == pending.OperationId);
+                try { ApplyStateStore.Save(prepared.StatePath, cleared); }
+                catch (RLoopException saveError) { throw WithPendingEvidence(saveError, prepared.StatePath, pending); }
+                prepared.State = cleared;
+            }
+            if (ex is RLoopException error)
+                throw WithPendingEvidence(error, prepared.StatePath, pending);
+            if (ex is OperationCanceledException && ct.IsCancellationRequested)
+                throw WithPendingEvidence(new RLoopException("APPLY_CANCELLED", "Apply was cancelled; inspect confirmed results and pending evidence before continuing.",
+                    ExitCodes.OperationFailed, innerException: ex), prepared.StatePath, pending);
+            if (ex is TimeoutException)
+                throw WithPendingEvidence(new RLoopException("REQUEST_TIMEOUT", "The write or readback timed out; its result remains pending.",
+                    ExitCodes.Timeout, innerException: ex), prepared.StatePath, pending);
+            throw WriteUnverified(prepared.StatePath, pending, pending.ResponseReceived ? "readbackIncomplete" : "responseLost", ex);
+        }
+    }
+
+    private sealed record PendingReadback(bool Complete, bool TargetConfirmed, SlotInfo? Slot = null, ComponentInfo? Component = null);
+
+    private async Task<PendingReadback> ReadbackPendingAsync(ApplyPendingWrite p, CancellationToken ct, bool resuming = false)
+    {
+        p.Confirmed.Clear();
+        p.Completeness["readback"] = "unknown";
+        if (p.Kind == "importAsset")
+        {
+            // Import has no world target/member read API. Only the completed import response supplies its URL.
+            var complete = p.ResponseReceived && p.ResponseAccepted && p.AssetBinding is not null;
+            p.Completeness["readback"] = "notApplicable";
+            return new(complete, complete);
+        }
+        if (string.IsNullOrWhiteSpace(p.Id)) return new(false, false);
+        if (p.Kind is "deleteSlot" or "removeComponent")
+        {
+            try
+            {
+                p.Observed = p.Kind == "deleteSlot"
+                    ? EvidenceNode(await client.GetSlotAsync(p.Id, 0, false, ct))
+                    : EvidenceNode(await client.GetComponentAsync(p.Id, ct));
+                p.Completeness["readback"] = "complete";
+                return new(false, false);
+            }
+            catch (RLoopException e) when (e.Code == (p.Kind == "deleteSlot" ? "SLOT_NOT_FOUND" : "COMPONENT_NOT_FOUND"))
+            {
+                p.Observed = JsonValue.Create("absent");
+                p.Confirmed.Add("absence");
+                p.Completeness["readback"] = "complete";
+                return new(true, true);
+            }
+        }
+        if (p.Kind is "createSlot" or "updateSlot")
+        {
+            var slot = await client.GetSlotAsync(p.Id, 0, false, ct);
+            var values = p.SlotValues!;
+            var attributes = new Dictionary<string, object?>();
+            if (values.Name is not null) attributes["name"] = slot.Name;
+            if (values.ParentId is not null) attributes["parent"] = slot.ParentId;
+            if (values.Position is not null) attributes["position"] = slot.Position;
+            if (values.Rotation is not null) attributes["rotation"] = slot.Rotation;
+            if (values.Scale is not null) attributes["scale"] = slot.Scale;
+            p.Observed = EvidenceNode(new { slot.Id, type = "Slot", slot.ParentId, attributes });
+            var target = slot.Id == p.Id && !slot.IsReferenceOnly;
+            bool Check(string name, bool same) { if (same && target) p.Confirmed.Add(name); return same; }
+            var complete = target;
+            if (values.Name is not null) complete &= Check("name", slot.Name == values.Name);
+            if (values.ParentId is not null) complete &= Check("parent", slot.ParentId == values.ParentId);
+            if (values.Position is not null) complete &= Check("position", VectorEquals(slot.Position, [values.Position.X, values.Position.Y, values.Position.Z]));
+            if (values.Rotation is not null) complete &= Check("rotation", QuaternionEquals(slot.Rotation, [values.Rotation.X, values.Rotation.Y, values.Rotation.Z, values.Rotation.W]));
+            if (values.Scale is not null) complete &= Check("scale", VectorEquals(slot.Scale, [values.Scale.X, values.Scale.Y, values.Scale.Z]));
+            if (resuming && values.ParentId is null && p.ParentId is not null) target &= slot.ParentId == p.ParentId;
+            p.Completeness["readback"] = "complete";
+            var bindingConfirmed = target && (values.Name is null || p.Confirmed.Contains("name")) &&
+                (values.ParentId is null || p.Confirmed.Contains("parent"));
+            return new(complete && target, bindingConfirmed, slot);
+        }
+        var component = await client.GetComponentAsync(p.Id, ct);
+        var parentConfirmed = true;
+        var checkParent = p.Kind == "addComponent" || resuming;
+        if (checkParent)
+        {
+            // Membership is structural evidence; do not request other Components' member data.
+            var parent = await client.GetSlotAsync(p.ParentId!, 0, false, ct);
+            var matches = parent.Components.Where(c => c.Id == p.Id).ToArray();
+            parentConfirmed = !parent.IsReferenceOnly && matches.Length == 1 && TypeNamesEquivalent(matches[0].Type, component.Type);
+        }
+        p.Completeness["parent"] = checkParent ? parentConfirmed ? "complete" : "unknown" : "notChecked";
+        p.Observed = EvidenceNode(new { component.Id, component.Type,
+            parentId = checkParent && parentConfirmed ? p.ParentId : null,
+            parentConfirmed = checkParent ? (bool?)parentConfirmed : null,
+            members = component.Members.Where(m => p.Members.ContainsKey(m.Key)).ToDictionary() });
+        var targetConfirmed = parentConfirmed && component.Id == p.Id && TypeNamesEquivalent(component.Type, p.Type!) &&
+            (p.Kind != "addComponent" || TypeNamesEquivalent(component.Type, p.ComponentBinding!.Type));
+        foreach (var member in p.Members)
+            if (targetConfirmed && component.Members.TryGetValue(member.Key, out var actual) &&
+                MemberMatchesRaw(actual, member.Value))
+                p.Confirmed.Add(member.Key);
+        p.Completeness["readback"] = p.Members.Keys.All(component.Members.ContainsKey) ? "complete" : "partial";
+        return new(targetConfirmed && p.Confirmed.Count == p.Members.Count, targetConfirmed, Component: component);
+    }
+
+    private static void CommitReadback(string path, ApplyState state, ApplyPendingWrite p, PendingReadback readback)
+    {
+        var next = ApplyStateStore.Copy(state);
+        if (readback.TargetConfirmed)
+        {
+            if (p.SlotBinding is not null) next.Slots[p.Key] = p.SlotBinding with { Id = p.Id! };
+            if (p.ComponentBinding is not null)
+            {
+                var binding = p.ComponentBinding with { Id = p.Id!, Type = p.Type! };
+                // Only readback-confirmed identity fields enter the confirmed correspondence.
+                if (binding.IdentityValues is not null)
+                    binding = binding with { IdentityValues = binding.IdentityValues.Where(v => !p.Members.ContainsKey(v.Key) || p.Confirmed.Contains(v.Key))
+                        .ToDictionary(v => v.Key, v => readback.Component!.Members.TryGetValue(v.Key, out var m) ? MemberRaw(m) : v.Value) };
+                if (binding.ReferenceSelectors is not null && p.Kind == "addComponent")
+                    binding = binding with { ReferenceSelectors = binding.ReferenceSelectors.Where(v => p.Confirmed.Contains(v.Key)).ToDictionary() };
+                next.Components[p.Key] = binding;
+            }
+            if (p.AssetBinding is not null) next.Assets[p.Key] = p.AssetBinding;
+        }
+        if (readback.Complete)
+        {
+            foreach (var key in p.RemoveSlots) next.Slots.Remove(key);
+            foreach (var key in p.RemoveComponents) next.Components.Remove(key);
+            next.Pending.RemoveAll(item => item.OperationId == p.OperationId);
+        }
+        ApplyStateStore.Save(path, next);
+        // The confirmed in-memory snapshot changes only after persistence succeeded.
+        state.SchemaVersion = next.SchemaVersion;
+        state.Slots = next.Slots; state.Components = next.Components; state.Assets = next.Assets; state.Pending = next.Pending;
+    }
+
+    private async Task ReconcilePendingAsync(string path, ApplyState state, SessionInfo session, CancellationToken ct)
+    {
+        foreach (var legacy in state.Slots.Where(s => string.IsNullOrWhiteSpace(s.Value.Id)))
+            throw WriteUnverified(path, new ApplyPendingWrite { Kind = "legacyCreateSlot", Key = legacy.Key, OwnershipKey = state.OwnershipKey,
+                SlotBinding = legacy.Value }, "pendingUnresolved");
+        foreach (var legacy in state.Components.Where(c => string.IsNullOrWhiteSpace(c.Value.Id)))
+            throw WriteUnverified(path, new ApplyPendingWrite { Kind = "legacyAddComponent", Key = legacy.Key, OwnershipKey = state.OwnershipKey,
+                ComponentBinding = legacy.Value }, "pendingUnresolved");
+        var identity = (client as IApplySessionObservation)?.ObserveApplySession() ?? ApplySessionObservation.Observe(session.Url);
+        foreach (var p in state.Pending.ToArray())
+        {
+            if (p.Session?.IdentityStatus != "matched" || identity.IdentityStatus != "matched" ||
+                string.IsNullOrWhiteSpace(p.Session.DiscoverSessionId) || p.Session.DiscoverSessionId != identity.DiscoverSessionId ||
+                p.Session.NormalizedUrl != identity.NormalizedUrl)
+                throw WriteUnverified(path, p, "identityUnproven");
+            if (!p.ResponseReceived || !p.ResponseAccepted || (p.Kind != "importAsset" && string.IsNullOrWhiteSpace(p.Id)))
+                throw WriteUnverified(path, p, "pendingUnresolved");
+            try
+            {
+                if (p.OwnershipKey != state.OwnershipKey) throw WriteUnverified(path, p, "pendingUnresolved");
+                if (p.SlotBinding is not null && state.Slots.Any(s => s.Key != p.Key && s.Value.Id == p.Id) ||
+                    p.ComponentBinding is not null && state.Components.Any(c => c.Key != p.Key && c.Value.Id == p.Id))
+                    throw WriteUnverified(path, p, "pendingUnresolved");
+                foreach (var evidence in p.OwnershipSlots.Values)
+                {
+                    var slot = await client.GetSlotAsync(evidence.Id, 0, false, ct);
+                    if (slot.Id != evidence.Id || slot.IsReferenceOnly || slot.Name != evidence.Name || slot.ParentId != evidence.ParentId)
+                        throw WriteUnverified(path, p, "pendingUnresolved");
+                }
+                // A managed non-Root parent must have an exact observation in the journal.
+                if (p.ParentId is not null && p.ParentId != "Root" && !p.OwnershipSlots.ContainsKey(p.ParentId))
+                    throw WriteUnverified(path, p, "pendingUnresolved");
+                var readback = await ReadbackPendingAsync(p, ct, resuming: true);
+                var current = await client.GetSessionInfoAsync(ct);
+                var now = (client as IApplySessionObservation)?.ObserveApplySession() ?? ApplySessionObservation.Observe(current.Url);
+                if (now != identity || !current.Connected || current.ConnectionGeneration != session.ConnectionGeneration)
+                    throw WriteUnverified(path, p, "identityUnproven");
+                CommitReadback(path, state, p, readback);
+                if (!readback.Complete) throw WriteUnverified(path, p, "pendingUnresolved");
+            }
+            catch (RLoopException e) when (e.Code is not ("APPLY_WRITE_UNVERIFIED" or "APPLY_STATE_WRITE_FAILED" or "CONNECTION_GENERATION_CHANGED" or "REQUEST_TIMEOUT"))
+            { throw WriteUnverified(path, p, "pendingUnresolved", e); }
+            catch (RLoopException e) { throw WithPendingEvidence(e, path, p); }
+            catch (OperationCanceledException e)
+            { throw WithPendingEvidence(new RLoopException("APPLY_CANCELLED", "Pending reconciliation was cancelled; no new write was sent.", ExitCodes.OperationFailed, innerException: e), path, p); }
+            catch (TimeoutException e)
+            { throw WithPendingEvidence(new RLoopException("REQUEST_TIMEOUT", "Pending reconciliation timed out; no new write was sent.", ExitCodes.Timeout, innerException: e), path, p); }
+            catch (Exception e) { throw WriteUnverified(path, p, "pendingUnresolved", e); }
+        }
+    }
+
+    private static Dictionary<string, object?> PendingContext(string path, ApplyPendingWrite p, string reason) => new()
+    {
+        ["stateFile"] = path, ["reason"] = reason, ["operationId"] = p.OperationId, ["sendStatus"] = p.SendStatus,
+        ["pending"] = p, ["confirmed"] = p.Confirmed, ["expected"] = new { p.Id, p.Type, p.ParentId, p.SlotValues, p.Members },
+        ["observed"] = p.Observed, ["completeness"] = p.Completeness,
+    };
+    private static RLoopException WriteUnverified(string path, ApplyPendingWrite p, string reason, Exception? inner = null) =>
+        WithPendingEvidence(new RLoopException("APPLY_WRITE_UNVERIFIED", $"Write '{p.OperationId}' remains unverified ({reason}); no replay was attempted.",
+            ExitCodes.OperationFailed, PendingContext(path, p, reason),
+            ["Inspect the exact IDs and pending evidence in the state file. A subsequent apply only reconciles proven results; unresolved writes stop before new mutations."], inner), path, p);
+    private static RLoopException WithPendingEvidence(RLoopException e, string path, ApplyPendingWrite p)
+    {
+        var context = new Dictionary<string, object?>(e.Context);
+        foreach (var pair in PendingContext(path, p, e.Context.GetValueOrDefault("reason")?.ToString() ??
+            (p.SendStatus == "notSentProven" ? "notSent" : p.ResponseReceived ? "pendingUnresolved" : "responseLost"))) context.TryAdd(pair.Key, pair.Value);
+        object persistence = "unknown";
+        object bindings = "unknown";
+        try
+        {
+            var persisted = ApplyStateStore.Load(path, p.OwnershipKey);
+            var saved = persisted.Pending.FirstOrDefault(item => item.OperationId == p.OperationId);
+            persistence = new { pendingSaved = saved is not null, responseEvidenceSaved = saved?.ResponseReceived == true,
+                readbackEvidenceSaved = saved?.Observed is not null };
+            bindings = new { persisted.Slots, persisted.Components, persisted.Assets };
+        }
+        catch (RLoopException) { }
+        context["evidencePersistence"] = persistence;
+        context["confirmedBindings"] = bindings;
+        var result = new RLoopException(e.Code, e.Message, e.ExitCode, context, e.Suggestions, e.InnerException ?? e);
+        var earlier = ApplyDiagnostics.ForException(e, "apply").Diagnostics;
+        var diagnostic = (earlier.LastOrDefault() ?? ApplyDiagnostics.Unknown(e.Code, e.Message, "apply")) with
+        {
+            BuildId = earlier.LastOrDefault()?.BuildId ?? p.BuildId,
+            Key = p.Key, Member = context.GetValueOrDefault("member")?.ToString(), Expected = ApplyDiagnosticValue.Known(context["expected"]),
+            Observed = ApplyDiagnosticValue.Known(context["observed"]),
+            Completeness = context["completeness"] as IReadOnlyDictionary<string, string> ?? p.Completeness,
+            OperationId = p.OperationId, SendStatus = p.SendStatus, Pending = p, Confirmed = p.Confirmed,
+            EvidencePersistence = persistence, ConfirmedBindings = bindings,
+        };
+        ApplyDiagnostics.AttachRuntime(result, [.. earlier.Take(Math.Max(0, earlier.Count - 1)), diagnostic]);
+        return result;
+    }
+}
