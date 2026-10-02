@@ -72,6 +72,8 @@ public sealed partial class WorldService
             // Store response evidence before readback, including the exact returned ID/type.
             ApplyStateStore.Save(prepared.StatePath, prepared.State);
             var readback = await ReadbackPendingAsync(pending, ct);
+            readback = readback with { ReferenceTargets = PendingReferenceTargets(pending,
+                selector => ResolveCheckpointReferenceId(prepared, selector)) };
             await prepared.Safety!.CheckConnectionAsync(pending.Key, ct);
             CommitReadback(prepared.StatePath, prepared.State, pending, readback);
             if (!readback.Complete) throw WriteUnverified(prepared.StatePath, pending, "readbackMismatch");
@@ -124,7 +126,58 @@ public sealed partial class WorldService
         }
     }
 
-    private sealed record PendingReadback(bool Complete, bool TargetConfirmed, SlotInfo? Slot = null, ComponentInfo? Component = null);
+    private sealed record PendingReadback(bool Complete, bool TargetConfirmed, SlotInfo? Slot = null, ComponentInfo? Component = null,
+        IReadOnlyDictionary<string, string>? ReferenceTargets = null);
+
+    private static IReadOnlyDictionary<string, string> PendingReferenceTargets(ApplyPendingWrite p, Func<string, string?> resolve)
+    {
+        var targets = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var reference in p.ComponentBinding?.ReferenceSelectors ?? new Dictionary<string, string>())
+            if (!p.Members.ContainsKey(reference.Key) && resolve(reference.Value) is { } target)
+                targets[reference.Key] = target;
+        return targets;
+    }
+
+    private async Task<PendingReadback> VerifyResumedReferenceTargetsAsync(string path, ApplyState state,
+        ApplyPendingWrite p, PendingReadback readback, CancellationToken ct)
+    {
+        if (!readback.TargetConfirmed || readback.Component is null) return readback;
+        var targets = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var reference in p.ComponentBinding?.ReferenceSelectors ?? new Dictionary<string, string>())
+        {
+            if (p.Members.ContainsKey(reference.Key) ||
+                state.Components.GetValueOrDefault(p.Key)?.ReferenceSelectors?.GetValueOrDefault(reference.Key) != reference.Value) continue;
+            // Old journals may contain declaration-only selectors. An unchanged precondition target is
+            // not proof of that selector: resolve it through verified current ownership before committing.
+            // This member was never sent, so it cannot keep a pending write with a known result (F9): a selector
+            // that no longer resolves or no longer matches is left out and CommitReadback drops it. The exact
+            // recorded ID stays the owner; nothing is replayed or written.
+            string targetId;
+            try
+            {
+                targetId = (await ResolveStableReferenceCoreAsync(path, reference.Value, null,
+                    new HashSet<string>(StringComparer.Ordinal), ct)).Id;
+            }
+            catch (RLoopException e) when (ReferenceSelectorUnresolved(e)) { continue; }
+            if (readback.Component.Members.TryGetValue(reference.Key, out var actual) &&
+                actual.Kind == "reference" && actual.TargetId == targetId)
+                targets[reference.Key] = targetId;
+        }
+        return readback with { ReferenceTargets = targets };
+    }
+
+    // Only outcomes proving that the selector does not identify one verified target right now. Cancellation,
+    // timeout, transport, connection and state-file failures are not listed and still stop reconciliation.
+    private static bool ReferenceSelectorUnresolved(RLoopException e) => e.Code switch
+    {
+        // A stored Slot ID whose read failed is a transport result, not evidence about the selector.
+        "APPLY_STORED_ID_UNVERIFIED" => e.Context.GetValueOrDefault("reason") as string != "storedIdReadFailed",
+        "STABLE_SELECTOR_INVALID" or "STABLE_SLOT_NOT_FOUND" or "STABLE_COMPONENT_NOT_FOUND" or "STABLE_COMPONENT_AMBIGUOUS" or
+        "STABLE_RELOCATABLE_EVIDENCE_MISSING" or "STABLE_RELOCATABLE_SLOT_NOT_FOUND" or "STABLE_RELOCATABLE_SLOT_AMBIGUOUS" or
+        "FLUX_BINDING_COMPONENT_NOT_FOUND" or "FLUX_BINDING_MEMBER_NOT_FOUND" or "APPLY_MEMBER_REFERENCE_NOT_FOUND" or
+        "SLOT_NOT_FOUND" or "SLOT_AMBIGUOUS" or "SLOT_PATH_NOT_FOUND" or "SLOT_PATH_AMBIGUOUS" or "COMPONENT_NOT_FOUND" => true,
+        _ => false,
+    };
 
     private async Task<PendingReadback> ReadbackPendingAsync(ApplyPendingWrite p, CancellationToken ct, bool resuming = false)
     {
@@ -245,8 +298,14 @@ public sealed partial class WorldService
                     binding = binding with { IdentityValues = binding.IdentityValues.Where(v => !p.Members.ContainsKey(v.Key) || p.Confirmed.Contains(v.Key))
                         .ToDictionary(v => v.Key, v => readback.Component!.Members.TryGetValue(v.Key, out var m) ? MemberRaw(m) : v.Value) };
                 if (binding.ReferenceSelectors is not null)
-                    binding = binding with { ReferenceSelectors = binding.ReferenceSelectors.Where(v => p.Confirmed.Contains(v.Key) ||
-                        p.Kind != "addComponent" && !p.Members.ContainsKey(v.Key)).ToDictionary() };
+                    binding = binding with { ReferenceSelectors = binding.ReferenceSelectors.Where(v =>
+                        readback.Component!.Members.TryGetValue(v.Key, out var actual) && actual.Kind == "reference" &&
+                        (p.Members.TryGetValue(v.Key, out var sent)
+                            ? p.Confirmed.Contains(v.Key) && actual.TargetId == sent
+                            : state.Components.GetValueOrDefault(p.Key)?.ReferenceSelectors?.GetValueOrDefault(v.Key) == v.Value &&
+                              readback.ReferenceTargets?.TryGetValue(v.Key, out var target) == true && actual.TargetId == target &&
+                              p.Precondition?["members"]?[v.Key]?["kind"]?.GetValue<string>() == "reference" &&
+                              p.Precondition?["members"]?[v.Key]?["targetId"]?.GetValue<string>() == actual.TargetId)).ToDictionary() };
                 next.Components[p.Key] = binding;
             }
             if (p.AssetBinding is not null) next.Assets[p.Key] = p.AssetBinding;
@@ -295,6 +354,7 @@ public sealed partial class WorldService
                 if (p.ParentId is not null && p.ParentId != "Root" && !p.OwnershipSlots.ContainsKey(p.ParentId))
                     throw WriteUnverified(path, p, "pendingUnresolved");
                 var readback = await ReadbackPendingAsync(p, ct, resuming: true);
+                readback = await VerifyResumedReferenceTargetsAsync(path, state, p, readback, ct);
                 var current = await client.GetSessionInfoAsync(ct);
                 var now = (client as IApplySessionObservation)?.ObserveApplySession() ?? ApplySessionObservation.Observe(current.Url);
                 if (now != identity || !current.Connected || current.ConnectionGeneration != session.ConnectionGeneration)

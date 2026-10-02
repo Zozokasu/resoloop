@@ -81,7 +81,7 @@ public sealed partial class ApplyWorkflowTests
     }
 
     [Fact]
-    public async Task CompleteStoredIdsDoNotOverrideSwappedReferenceTopology()
+    public async Task CompleteStoredIdsWithSwappedReferenceTopologyStopWithoutSwitchingOwnership()
     {
         var document = ComponentsDocument("swapped-topology", """
             [{"key":"source-a","type":"Test.Source","fields":{"Target":"$slot:target-a"}},
@@ -106,12 +106,20 @@ public sealed partial class ApplyWorkflowTests
         Assert.Equal(second.Id, saved["components"]!["source-b"]!["id"]!.GetValue<string>());
         newWorld.ResetWriteCounts();
         var service = new WorldService(newWorld);
+        var checkpoint = File.ReadAllText(state);
 
-        Assert.Equal(second.Id, (await service.ResolveStableReferenceAsync(state, "$component:source-a", "session-1")).Id);
-        Assert.Equal(first.Id, (await service.ResolveStableReferenceAsync(state, "$component:source-b", "session-1")).Id);
-        var result = await service.ApplyAsync(document, new ApplyOptions(state));
-        Assert.Equal(2, result.ComponentsUnchanged);
+        // Both recorded IDs are alive but contradict their confirmed reference evidence. Even a uniquely
+        // matching sibling cannot transfer ownership away from that surviving recorded Component.
+        var resolveA = await Assert.ThrowsAsync<RLoopException>(() => service.ResolveStableReferenceAsync(state, "$component:source-a", "session-1"));
+        var resolveB = await Assert.ThrowsAsync<RLoopException>(() => service.ResolveStableReferenceAsync(state, "$component:source-b", "session-1"));
+        var apply = await Assert.ThrowsAsync<RLoopException>(() => service.ApplyAsync(document, new ApplyOptions(state)));
+        Assert.All(new[] { resolveA, resolveB, apply }, error =>
+        {
+            Assert.Equal("APPLY_STORED_ID_UNVERIFIED", error.Code);
+            Assert.Equal("componentEvidenceMismatch", error.Context["reason"]);
+        });
         Assert.Equal(0, newWorld.Writes);
+        Assert.Equal(checkpoint, File.ReadAllText(state));
     }
 
     [Theory]

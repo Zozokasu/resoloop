@@ -594,7 +594,7 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
                     BeforeFirstWrite();
                     var creation = Pending(prepared, "addComponent", component.StableKey, parentId: component.Node.Id, type: component.Spec.Type);
                     creation.Members = initialFields.ToDictionary(StringComparer.Ordinal);
-                    creation.ComponentBinding = CreateComponentState(component, string.Empty);
+                    creation.ComponentBinding = CreateComponentState(prepared, component, string.Empty, sentFields: initialFields);
                     await ExecutePendingAsync(prepared, creation, () => safety.CheckConnectionAsync(component.StableKey, cancellationToken), async () =>
                     {
                         var created = await client.AddComponentAsync(component.Node.Id!, component.Spec.Type, initialFields, cancellationToken);
@@ -607,7 +607,7 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
                 if (component.Existing is not null)
                 {
                     var next = ApplyStateStore.Copy(prepared.State);
-                    next.Components[component.StableKey] = CreateComponentState(component, component.Id!, safety.ObservedFields(component.Id!));
+                    next.Components[component.StableKey] = CreateComponentState(prepared, component, component.Id!, safety.ObservedFields(component.Id!));
                     Checkpoint(prepared, next);
                 }
                 completed++;
@@ -631,7 +631,7 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
                     var memberWrite = Pending(prepared, "setMembers", component.StableKey, component.Id, component.Node.Id,
                         component.ResolvedType ?? component.Spec.Type);
                     memberWrite.Members = changed;
-                    memberWrite.ComponentBinding = CreateComponentState(component, component.Id!, fields);
+                    memberWrite.ComponentBinding = CreateComponentState(prepared, component, component.Id!, fields, changed);
                     await ExecutePendingAsync(prepared, memberWrite, () => safety.CheckComponentAsync(component, changed.Keys, cancellationToken),
                         () => client.SetComponentMembersAsync(component.Id!, component.ResolvedType ?? component.Spec.Type, changed, cancellationToken), cancellationToken);
                     if (component.Existing is not null) { counts.ComponentsUpdated++; updatedComponents.Add(component.Id!); }
@@ -653,7 +653,7 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
                 if (changed.Count == 0)
                 {
                     var next = ApplyStateStore.Copy(prepared.State);
-                    next.Components[component.StableKey] = CreateComponentState(component, component.Id!, safety.ObservedFields(component.Id!));
+                    next.Components[component.StableKey] = CreateComponentState(prepared, component, component.Id!, safety.ObservedFields(component.Id!));
                     Checkpoint(prepared, next);
                 }
                 completed++;
@@ -1917,7 +1917,7 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
                 .Concat(referenceTargets?.Keys ?? []).Distinct(StringComparer.Ordinal);
             var unread = TypeNamesEquivalent(stored.Type, type) &&
                 (stored.Members is null || required.Any(name => !stored.Members.ContainsKey(name)));
-            var identityMismatch = StableComponentCandidates([stored], type, memberNames, identityValues).Length == 0;
+            var identityMismatch = StableComponentCandidates([stored], type, memberNames, identityValues, referenceTargets).Length == 0;
             if (unread || identityMismatch || candidates.Length == 0)
                 throw new RLoopException("APPLY_STORED_ID_UNVERIFIED",
                     $"Stored Component '{storedId}' is alive on the verified owner Slot but its evidence cannot be verified.",
@@ -1950,8 +1950,8 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
         return true;
     }
 
-    private static ApplyStateComponent CreateComponentState(ComponentRuntime component, string id,
-        IReadOnlyDictionary<string, string>? resolvedFields = null)
+    private static ApplyStateComponent CreateComponentState(PreparedApply prepared, ComponentRuntime component, string id,
+        IReadOnlyDictionary<string, string>? resolvedFields = null, IReadOnlyDictionary<string, string>? sentFields = null)
     {
         var memberNames = (component.Spec.Fields?.Keys ?? [])
             .Concat(component.Spec.InitialFields?.Keys ?? []).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray();
@@ -1968,11 +1968,45 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
             }
         }
         var referenceSelectors = new Dictionary<string, string>(StringComparer.Ordinal);
+        var prior = prepared.State.Components.GetValueOrDefault(component.StableKey);
+        var observed = prepared.Safety!.ObservedFields(id);
         foreach (var name in memberNames)
-            if (TryGetReferenceSelector(component.Spec, name, out var selector)) referenceSelectors[name] = selector;
+        {
+            if (!TryGetReferenceSelector(component.Spec, name, out var selector)) continue;
+            // New selectors are intent only until the sent member matches readback. A no-op may retain
+            // previously confirmed evidence, but cannot turn an unsent declaration into evidence.
+            if (sentFields?.ContainsKey(name) == true)
+                referenceSelectors[name] = selector;
+            else if (prior?.ReferenceSelectors?.GetValueOrDefault(name) == selector &&
+                     observed?.TryGetValue(name, out var actual) == true &&
+                     ResolveCheckpointReferenceId(prepared, selector) is { } target && actual == target)
+                referenceSelectors[name] = selector;
+        }
         return new ApplyStateComponent(id, component.Node.StableKey, component.ResolvedType ?? component.Spec.Type,
             component.TypeOrdinal, component.ComponentIndex, memberNames, identityValues,
             referenceSelectors.Count == 0 ? null : referenceSelectors);
+    }
+
+    private static string? ResolveCheckpointReferenceId(PreparedApply prepared, string selector)
+    {
+        if (!StableSelectorSyntax.TryParse(selector, out var syntax)) return null;
+        // The planning snapshot predates this apply's creations. Resolve confirmed runtime IDs and
+        // their actual readback observations first, so a successful creation keeps its reference proof.
+        if (syntax!.Kind is "slot" or "slot-member")
+        {
+            var node = prepared.Nodes.FirstOrDefault(node => node.StableKey == syntax.Key);
+            if (node?.Id is { } id && prepared.State.Slots.GetValueOrDefault(syntax.Key)?.Id == id &&
+                prepared.Safety!.ObservedSlot(id) is { } observed)
+                return syntax.Kind == "slot" ? id : observed.Members?.GetValueOrDefault(syntax.MemberName!)?.Id;
+        }
+        else
+        {
+            var component = prepared.Components.FirstOrDefault(component => component.Spec.Key == syntax.Key);
+            if (component?.Id is { } id && prepared.State.Components.GetValueOrDefault(component.StableKey)?.Id == id &&
+                prepared.Safety!.Expected(id)?.Deserialize<ComponentInfo>(EvidenceJson) is { } observed)
+                return syntax.Kind == "component" ? id : observed.Members.GetValueOrDefault(syntax.MemberName!)?.Id;
+        }
+        return ResolveStateReferenceId(prepared, selector, new HashSet<string>(StringComparer.Ordinal));
     }
 
     private static bool TryGetReferenceSelector(ApplyComponentSpec component, string memberName, out string selector)
