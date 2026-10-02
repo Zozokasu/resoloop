@@ -58,6 +58,43 @@ Componentの`fields`はapplyごとに収束させます。runtimeが更新する
 
 CLI の `validate --strict`、`plan`、`apply`、`test` は、ownership の作業ルートへ `FrooxEngine.AI_GeneratedContent` を自動追加し、`Source` を実行中の resoloop の名前とバージョン（例: `[resoloop 0.1.0-preview.5]`）へ収束させます。子 Slot のうち `runtimeRelocatable: true` のルート、または `Grabbable`、`RawDataTool`、`AvatarRoot`、`ObjectRoot` を持つルートにも同じ Component を追加します。この自動 Component は plan と state に含まれ、2回目の apply では書き込みません。入力 JSON 自体は書き換えません。低水準の `slot create` では、そのコマンドで作った Slot 自体を生成オブジェクトのルートとして同様にタグ付けします。
 
+### Field alias とSlot Tag
+
+`schemaVersion`は`"1"`のままです。stable keyは宣言上の対応付けに使い、Resoniteのsession-scoped IDとは別です。Slot名や配置を変えてもkeyを維持できます。
+
+Componentの任意フィールド`fieldAliases`はaliasからReflectionで確認したmember名への辞書です。参照値には`$field:brightness`を指定できます。alias名は展開後の文書全体で一意です。scope内の短いkeyはscope外へfallbackせず、別scopeを参照する場合は完全修飾keyを使います。compilerは既存のscope解決段階で`$field`を`$member:componentKey.Member`へ変換するため、compiled outputとstate v3に`$field`は残りません。`observe`などCLIのselectorは従来どおり`$member`です。
+
+JSONではalias先を`fields`、`initialFields`または`propertyModes`にも宣言します。次の例の型とmember名は実行前にruntime Reflectionで確認してください。
+
+~~~json
+{
+  "schemaVersion": "1",
+  "ownership": { "key": "lamp" },
+  "slot": { "key": "root", "name": "Lamp", "tag": "lighting" },
+  "components": [
+    { "key": "light", "type": "REFLECTION_VERIFIED_LIGHT_TYPE", "fieldAliases": { "brightness": "REFLECTION_VERIFIED_LIGHT_MEMBER" }, "fields": { "REFLECTION_VERIFIED_LIGHT_MEMBER": 2.0 } },
+    { "key": "controller", "type": "REFLECTION_VERIFIED_CONTROLLER_TYPE", "fields": { "REFLECTION_VERIFIED_CONTROLLER_MEMBER": "$field:brightness" } }
+  ]
+}
+~~~
+
+上の型名とmember名は例示用placeholderです。実行前にruntime Reflectionで確認した値へ置き換えてください。
+
+TSXでは`<Component>`内に`<Field name="REFLECTION_VERIFIED_LIGHT_MEMBER" value={2} key="brightness" />`を置けます。`mode`を省くと、そのmemberの`propertyModes`があれば従い、なければ`config`です。`initial`は`initialFields`相当です。`runtime`と`driver-owned`の値は作成時も書かれません。valueを省いたFieldも使えます。`runtime`または`driver-owned`ならmemberを`propertyModes`へ登録し、`key`は必要な場合だけaliasとして指定します。同じmemberを通常fieldとFieldで重ねて指定しないでください。
+
+| 診断 | 意味 |
+| --- | --- |
+| `APPLY_FIELD_ALIAS_MEMBER_UNDECLARED` | alias先がfields、initialFields、propertyModesにない |
+| `APPLY_FIELD_ALIAS_DUPLICATE` | alias名が文書内で重複 |
+| `APPLY_FIELD_ALIAS_NOT_FOUND` | `$field`参照が未解決 |
+| `APPLY_FIELD_ALIAS_INVALID` | alias辞書またはentryが不正 |
+| `APPLY_FIELD_DUPLICATE` | 同じmemberを複数回指定 |
+| `APPLY_FIELD_INVALID` | Fieldのname/valueが不正 |
+
+modeとのpolicy衝突には既存の`APPLY_COMPONENT_FIELD_POLICY_CONFLICT`を使います。JSON入力はJSON path、TSX bundleはsource rangeで診断します。詳細は[TSX authoring](../tools/resoloop-jsx/README.md)を参照してください。
+
+Slotの任意`tag`を省略するとplanに差分を作らず既存Tagを保持します。明示した空文字列はTagを消去します。Tag書込みはS3 pre-send check、pending記録、readbackを通ります。Workbench backendはSlot書込みを受け付けません。実機でのTag書込みとruntime Reflectionは未検証です。
+
 ## Transform管理とstable key migration
 
 既存Slotの配置を宣言へ取り込むときは、resoloopが管理するtransformを明示的に狭められます。

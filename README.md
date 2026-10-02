@@ -19,6 +19,8 @@ Apply checks the planned values, types and connection again before each write. O
 
 Component `propertyModes` maps member names to `config`, `initial`, `runtime` or `driver-owned`. Omitted members retain `fields` configuration and creation-only `initialFields` behavior. Runtime and driver-owned members are never written by ordinary apply, including creation; the declaration does not prove a driver's ownership.
 
+Schema v1 also supports optional Component `fieldAliases` and Slot `tag`; TSX supports `<Field>` children and `<Slot tag>`. Aliases resolve to canonical `$member` selectors, and omitted tags preserve the live value. See [declarative authoring details](docs/DECLARATIVE.md) for syntax, policy and diagnostics.
+
 Keep the reported state file. State v3 stores confirmed bindings and pending operations; v1/v2 can be read, saves use v3, and older CLIs reject v3. Explicit server rejection clears the pending operation. A later apply can reconcile an accepted result with matching discovery identity and exact target/owner evidence: confirmed values commit, known mismatches clear and planning uses the current observation. Unknown creation IDs, unproven acceptance or identity remain pending; names, types and order are never used to recover a lost creation. Explicit `--url` connections have unknown identity and cannot automatically settle interrupted pending operations; a discovery-selected connection can supply matching identity evidence.
 
 On failure, read `context.reason`, `stateFile`, `operationId`, confirmed results and completeness; inspect the exact Slot/Component IDs before deciding how to continue. After inspecting the world, clear only a chosen operation with:

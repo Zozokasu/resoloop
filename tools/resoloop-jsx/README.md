@@ -255,11 +255,51 @@ Emitted documents contain only `schemaVersion` (`"1"`), `ownership`, `slot`,
 `$draftKeys` guard when keys were generated). `ApplySlotSpec` fields supported as props:
 `name` (required), `key`, `parent` (root only), `position`, `rotation`,
 `scale`, `managedFields`, `preserveWorldTransform`, `migrateFrom`,
-`relocationTransform`, `runtimeRelocatable`. `ApplyComponentSpec` fields:
+`relocationTransform`, `runtimeRelocatable`, `tag`. `ApplyComponentSpec` fields:
 `type` (required), `key`, `fields`, `migrateFrom`, `initialFields`,
-`identityFields`, `propertyModes`. `assets`, `cameras`, `tests`, `include`, `prototypes`,
+`identityFields`, `propertyModes`, `fieldAliases`. `assets`, `cameras`, `tests`, `include`, `prototypes`,
 `parameters`, and `variables` are out of scope; because `assets` declarations
 are not yet supported, no `ref.asset` helper is exposed.
+
+### Field children and aliases
+
+`<Component>` may contain `<Field name="Intensity" value={2} />`. `name` is the declared runtime member name; verify the type and member with Resonite Reflection before using it. `key` optionally supplies a short alias, and `ref.field("brightness")` emits `$field:brightness`. Alias names must be unique across the expanded document. Scope-local short keys do not fall back outside that scope; use a fully qualified key to cross scopes.
+
+Without `mode`, a Field inherits `propertyModes[name]` when present; otherwise it is `config` and emits under `fields`. `mode="initial"` emits under `initialFields`. `runtime` and `driver-owned` values are never written, including during creation. A value may be omitted for `runtime` or `driver-owned`; the Field itself declares that member in `propertyModes`, and its optional `key` adds an alias. Alias targets must appear in `fields`, `initialFields`, or `propertyModes`. Do not declare the same member through both `fields`/`initialFields` and `<Field>`, or through multiple Field children.
+
+`<Slot tag="...">` maps to optional JSON `slot.tag`. Omit it to preserve an existing Tag without a plan change; pass an empty string to clear it. Slot Tag writes use the existing pre-send check, pending evidence and one readback. Workbench does not accept Slot writes. Live Tag writes and runtime Reflection remain unverified.
+
+JSON `fieldAliases` is an optional alias-to-member dictionary. It does not change `schemaVersion: "1"`. The compiler resolves `$field` references to canonical `$member:componentKey.Member` selectors; state v3 and downstream `observe` selectors continue to use `$member`.
+
+For the equivalent JSON form, use `slot.tag` and `fieldAliases` on the provider Component:
+
+~~~json
+{
+  "schemaVersion": "1",
+  "ownership": { "key": "lamp" },
+  "slot": { "key": "root", "name": "Lamp", "tag": "lighting" },
+  "components": [
+    { "key": "light", "type": "REFLECTION_VERIFIED_LIGHT_TYPE", "fieldAliases": { "brightness": "REFLECTION_VERIFIED_LIGHT_MEMBER" }, "fields": { "REFLECTION_VERIFIED_LIGHT_MEMBER": 2.0 } },
+    { "key": "controller", "type": "REFLECTION_VERIFIED_CONTROLLER_TYPE", "fields": { "REFLECTION_VERIFIED_CONTROLLER_MEMBER": "$field:brightness" } }
+  ]
+}
+~~~
+
+The TSX equivalent is:
+
+~~~tsx
+import { Slot, Component, Field, ref } from "resoloop-jsx";
+
+export default <Slot key="root" name="Lamp" tag="lighting">
+  <Component key="light" type="REFLECTION_VERIFIED_LIGHT_TYPE">
+    <Field name="REFLECTION_VERIFIED_LIGHT_MEMBER" value={2} key="brightness" />
+  </Component>
+  <Component key="controller" type="REFLECTION_VERIFIED_CONTROLLER_TYPE"
+    fields={{ REFLECTION_VERIFIED_CONTROLLER_MEMBER: ref.field("brightness") }} />
+</Slot>;
+~~~
+
+Replace every `REFLECTION_VERIFIED_*` type/member placeholder with a name confirmed by runtime Reflection. The example shows authoring syntax; it does not certify that those runtime members exist.
 
 ## Regenerating the Apply contract (developers)
 

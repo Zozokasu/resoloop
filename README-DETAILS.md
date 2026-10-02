@@ -506,6 +506,19 @@ ResoniteLinkはMIT、Flux-SDK programmatic integrationはAGPL-3.0-or-laterです
 
 Component/member の取得範囲、完全名と確認済み alias、base/interface 閉包、generic の確認状態、nullable／tuple の要素、list／array／dictionary と SyncObject の入れ子を保持します。取得範囲外 member は不存在にしません。型名が違うだけでは参照不適合と判定せず、未取得の基底型・interface、未確認 generic、外部参照・asset・Slot member の型不明は `APPLY_CATALOG_UNAVAILABLE`。確認済み閉包で証明できた不適合だけが `APPLY_REFERENCE_TYPE_MISMATCH` です。Single は nullable の非 null 値と tuple 各要素を含め `VALUE_CONVERSION_FAILED` で変換失敗・NaN／Infinity・表現範囲外を拒否します。丸めや精度損失は許容し、member 固有範囲は推測しません。既存 issues／`ApplyValidationResult`／終了コード 6 を使います。
 
+schema v1のComponent `fieldAliases`は、宣言済みmemberへ文書内一意のaliasを付けます。`$field:alias`はcompile時に既存scope解決で`$member:componentKey.Member`へ変換され、state v3や`observe`のselector形式は変わりません。TSX `<Field>`は`mode`省略時に`propertyModes[name]`を引き継ぎ、未指定なら`fields`相当です。`mode="initial"`は`initialFields`相当です。runtime/driver-owned値は作成時も書きません。valueを省略したFieldはruntime/driver-owned memberを`propertyModes`へ登録し、`key`は任意aliasを付けます。`<Slot tag>`は任意JSON `slot.tag`です。省略は保持、空文字列は消去を意味し、Tag更新は通常のS3 pre-send check・pending・readbackを通ります。Workbench backendはSlot書込みに対応していません。実機でのTag書込みとReflectionは未検証です。
+
+| 診断 | 発生条件 |
+| --- | --- |
+| `APPLY_FIELD_ALIAS_MEMBER_UNDECLARED` | alias先が`fields`、`initialFields`、`propertyModes`にない |
+| `APPLY_FIELD_ALIAS_DUPLICATE` | expanded document内でalias名が重複 |
+| `APPLY_FIELD_ALIAS_NOT_FOUND` | `$field`参照を解決できない |
+| `APPLY_FIELD_ALIAS_INVALID` | alias辞書やentryが不正 |
+| `APPLY_FIELD_DUPLICATE` | 同じmemberを通常fieldとField、またはField複数個で重複指定 |
+| `APPLY_FIELD_INVALID` | Fieldのname/valueが不正 |
+
+mode policyとの競合には既存`APPLY_COMPONENT_FIELD_POLICY_CONFLICT`を使います。JSONはstructured JSON path、TSX bundleはsource rangeを返します。
+
 catalog 成功だけでは `Strict=true` にしません。`--catalog --strict` は先に offline catalog preflight、次に既存 live strict と session/client version 照合を行います。Workbench backend の対応は追加しません。通常 CLI に生成コマンドは追加せず、[開発用 tool](tools/RLoop.CatalogExport/README.md) で snapshot の export と catalog import を行います。旧 cache は取得 identity がなく受け入れません。catalog 未指定の既存経路は維持します。V11 の fixture は合成で、実 catalog・live capture の検証は別途必要です。
 
 For source diagnosis, add `--diagnostics NEW_FILE.json` to `validate|diff|plan|apply`. This separate JSON has `diagnosticVersion: "1"` and structured key/member/IR path, known/unknown source, expected/observed evidence and completeness; a known null is distinct from unknown. Bundle map v1 stores original TS/TSX UTF-16 AST offsets and one-based, end-exclusive line/column ranges bound to source hashes. Fix TSX using that location, then create a fresh bundle/request; generated JSON lines are not an authoring location. Unchanged function props forwarded directly preserve caller expressions; rewritten scalar or nested object props have unknown primary locations; Scope, fragments, map callbacks and selected conditional children retain original ranges. Spread/computed members and untracked value transfers have unknown primary locations with real expressions/calls as related evidence. Handwritten and legacy generated JSON also accept diagnostics, with unknown source. Legacy stdout/stderr JSON, context.issues and reports are unchanged. Diagnostics require a new file in an existing writable directory, distinct from the selected input/bundle, catalog and state paths (including missing files); writing failure is reported on stderr without changing validation/apply judgement or exit code. Catalog evidence never completes runtime verification.

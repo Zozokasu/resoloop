@@ -35,6 +35,8 @@ apply は各送信の直前に、計画時の値・型・接続を再確認し�
 
 Component の `propertyModes` は member ごとに `config`・`initial`・`runtime`・`driver-owned` を指定します。省略時は従来どおり、`fields` は設定、`initialFields` は作成時だけの初期値です。通常 apply は runtime と driver-owned を作成時にも書きません。宣言だけで driver の所有を認めることもありません。
 
+schema v1はComponentの任意`fieldAliases`とSlotの`tag`にも対応します。TSXでは`<Field>`子要素と`<Slot tag>`を使えます。alias参照はcanonicalな`$member`へ解決され、tagを省略すると既存値を保ちます。記法・診断・適用条件は[宣言の詳細](docs/DECLARATIVE.md)を参照してください。
+
 state v3 は確定済みの対応と保留を保存します。v1/v2 は読めますが、保存は v3 になり、古い CLI は v3 を拒否します。サーバが明示的に拒否した要求は保留を解消します。次の apply は、discovery の identity・受付・正確な ID・型・親・所有の証拠がそろった保留を照合し、一致した部分を確定します。確認できた不一致は保留を解消し、今の観測から再計画します。作成 ID や受付、identity が不明なら自動では解消しません。同名・型・順番による作成の回収も行いません。明示の `--url` で接続すると identity は不明になり、中断した保留を自動で確定できません。discovery 経由の接続なら一致を照合できます。
 
 失敗後は `context.reason`、`stateFile`、`operationId`、確定部分と completeness を読み、`inspect EXACT_SLOT_ID --members` または `component inspect EXACT_COMPONENT_ID` で実機を確認してください。そのうえで、指定した保留だけを破棄できます。
