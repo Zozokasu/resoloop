@@ -82,7 +82,7 @@ internal sealed class ApplyBuildBundle
                         String(entry.GetProperty("source"), "status") is not ("unknown" or "known"))
                         Fail("mixed", "Invalid map entry.");
                 }
-                try { bundle.Catalog = JsonSerializer.Deserialize<ApplyCatalog>(catalogText, ApplyCatalog.Json)!; }
+                try { bundle.Catalog = JsonSerializer.Deserialize<ApplyCatalog>(catalogText.StartsWith('\uFEFF') ? catalogText[1..] : catalogText, ApplyCatalog.Json)!; }
                 catch (Exception ex) when (ex is JsonException or NotSupportedException)
                 { CatalogUnavailable("Cannot read embedded catalog: " + ex.Message); }
                 if (bundle.Catalog is null) CatalogUnavailable("Embedded catalog is empty.");

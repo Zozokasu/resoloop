@@ -7,13 +7,31 @@
 // JSX attributes against SlotProps / ComponentProps.
 
 import type { SlotScalarProps, ComponentScalarProps } from "./generated/apply-types.js";
+import type { JsonValue } from "./generated/apply-types.js";
+import type { CatalogComponentRegistry } from "./index.js";
 export type { JsonValue, ManagedField, RelocationTransform } from "./generated/apply-types.js";
 
 /** Generated scalar props plus JSX children, which are classified by the evaluator. */
 export interface SlotProps extends SlotScalarProps {
   children?: JsxChild;
 }
-export interface ComponentProps extends ComponentScalarProps { children?: JsxChild }
+/** Catalog declarations supply value types; C# remains the semantic validator. */
+export type ComponentFields<T extends string> = T extends keyof CatalogComponentRegistry
+  ? CatalogComponentRegistry[T] extends { members: infer M; membersComplete: infer Complete }
+    ? Partial<M> & (Complete extends true
+        ? keyof M extends never ? Record<string, never> : unknown
+        : Record<string, JsonValue>)
+    : Record<string, JsonValue>
+  : Record<string, JsonValue>;
+
+export type ComponentProps<T extends string = string> =
+  Omit<ComponentScalarProps, "type" | "fields" | "initialFields"> & {
+    type: T;
+    // Infer from `type` alone: invalid fields must not widen a known literal.
+    fields?: ComponentFields<NoInfer<T>>;
+    initialFields?: ComponentFields<NoInfer<T>>;
+    children?: JsxChild;
+  };
 export interface FieldProps {
   name: string;
   value?: import("./generated/apply-types.js").JsonValue;
@@ -74,7 +92,7 @@ export function Slot(_props: SlotProps): JsxNode {
   );
 }
 
-export function Component(_props: ComponentProps): JsxNode {
+export function Component<const T extends string>(_props: ComponentProps<T>): JsxNode {
   throw new Error(
     "resoloop-jsx: <Component> is a compile-time marker and must not be invoked directly"
   );

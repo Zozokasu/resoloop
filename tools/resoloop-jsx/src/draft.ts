@@ -19,14 +19,14 @@ export { BuildError, evaluate } from "./evaluate.js";
 export type DraftSlotProps = Omit<SlotProps, "key"> & { key?: string };
 
 /** ComponentProps under the draft entry: identical except `key` is optional. */
-export type DraftComponentProps = Omit<ComponentProps, "key"> & { key?: string };
+export type DraftComponentProps<T extends string = string> = Omit<ComponentProps<T>, "key"> & { key?: string };
 
 // Type-only casts. The exported values ARE the same function objects as the
 // main entry point — jsx-runtime.ts recognizes markers by reference equality
 // (type === Slot), so wrapping them in new functions would break detection.
 export const Slot = SlotImpl as unknown as (props: DraftSlotProps) => JsxNode;
 export const Component =
-  ComponentImpl as unknown as (props: DraftComponentProps) => JsxNode;
+  ComponentImpl as unknown as <const T extends string>(props: DraftComponentProps<T>) => JsxNode;
 
 export type {
   JsonValue,

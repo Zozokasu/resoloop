@@ -15,7 +15,7 @@ export function reserveBundleOutput(output: string): string {
 }
 
 export function publishBundle(document: ApplyDocument, inputs: InputFile[], catalogText: string, buildId: string, output: string): void {
-  const catalog = JSON.parse(catalogText);
+  const catalog = JSON.parse(catalogText.replace(/^\uFEFF/, ""));
   const types = new Set<string>();
   const entries: any[] = [];
   const add = (jsonPath: string, pathSegments: (string | number)[], entityKind: string, key: string,

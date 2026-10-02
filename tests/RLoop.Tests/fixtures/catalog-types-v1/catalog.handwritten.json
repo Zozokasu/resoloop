@@ -1,0 +1,89 @@
+﻿{
+    "formatVersion":  "2",
+    "identity":  {
+                     "resoniteVersion":  "OFFLINE-handwritten-fixture",
+                     "resoniteLinkVersion":  "OFFLINE-handwritten-fixture",
+                     "clientPackageVersion":  "0.13.1",
+                     "mapperVersion":  "2",
+                     "retrievedAt":  "2026-10-03T00:00:00+00:00"
+                 },
+    "evidenceIdentity":  {
+                             "resoniteVersion":  "OFFLINE-handwritten-fixture",
+                             "resoniteLinkVersion":  "OFFLINE-handwritten-fixture",
+                             "clientPackageVersion":  "0.13.1",
+                             "mapperVersion":  "2",
+                             "retrievedAt":  "2026-10-03T00:00:00+00:00"
+                         },
+    "source":  "version-cache",
+    "synthetic":  false,
+    "contentHash":  "91bd5b53e5f843d63c9afa86ac7b96371d88a82ca1fe76260ef9fe39c588e66b",
+    "content":  {
+                    "aliases":  {
+                                    "Alias.Light":  "Fixture.Light"
+                                },
+                    "types":  [
+                                  {
+                                      "baseType":  null,
+                                      "closureComplete":  true,
+                                      "confirmed":  true,
+                                      "elementType":  null,
+                                      "enumValues":  null,
+                                      "fullName":  "Fixture.Light",
+                                      "interfaces":  [
+
+                                                     ],
+                                      "isFlags":  null,
+                                      "isGeneric":  false,
+                                      "members":  {
+                                                      "Amount":  {
+                                                                     "confirmed":  true,
+                                                                     "element":  null,
+                                                                     "keyType":  null,
+                                                                     "kind":  "field",
+                                                                     "memberType":  null,
+                                                                     "targetType":  null,
+                                                                     "valueType":  "System.Single"
+                                                                 },
+                                                      "Opaque":  {
+                                                                     "confirmed":  true,
+                                                                     "element":  null,
+                                                                     "keyType":  null,
+                                                                     "kind":  "field",
+                                                                     "memberType":  null,
+                                                                     "targetType":  null,
+                                                                     "valueType":  "Missing.Value"
+                                                                 },
+                                                      "Target":  {
+                                                                     "confirmed":  true,
+                                                                     "element":  null,
+                                                                     "keyType":  null,
+                                                                     "kind":  "reference",
+                                                                     "memberType":  null,
+                                                                     "targetType":  "Missing.Target",
+                                                                     "valueType":  null
+                                                                 }
+                                                  },
+                                      "membersComplete":  true,
+                                      "representation":  "other",
+                                      "tupleSize":  0
+                                  },
+                                  {
+                                      "baseType":  null,
+                                      "closureComplete":  true,
+                                      "confirmed":  true,
+                                      "elementType":  null,
+                                      "enumValues":  null,
+                                      "fullName":  "System.Single",
+                                      "interfaces":  [
+
+                                                     ],
+                                      "isFlags":  null,
+                                      "isGeneric":  false,
+                                      "members":  null,
+                                      "membersComplete":  false,
+                                      "representation":  "single",
+                                      "tupleSize":  0
+                                  }
+                              ]
+                }
+}

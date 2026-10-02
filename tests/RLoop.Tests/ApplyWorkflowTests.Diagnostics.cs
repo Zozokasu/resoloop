@@ -193,6 +193,31 @@ public sealed partial class ApplyWorkflowTests
         Assert.All(ApplyDiagnostics.ForResult(legacy).Diagnostics, d => { Assert.Equal("unknown", d.Source.Status); Assert.Null(d.PathSegments); });
     }
 
+    [Fact]
+    public void FieldOriginUnknownMemberReportsLocatedCatalogDiagnostic()
+    {
+        // A TSX <Field name="Wrong" /> is bundled as an ordinary `fields` member; its name range is the entry source.
+        var bundle = NewBundle();
+        var ir = JsonNode.Parse(bundle.Root["ir"]!["text"]!.GetValue<string>())!;
+        ir["components"] = JsonNode.Parse("""[{"key":"holder","type":"Synthetic.Holder","fields":{"Wrong":1},"fieldAliases":{"wrong":"Wrong"}}]""");
+        var irText = ir.ToJsonString(); bundle.Root["ir"] = BundlePayload(irText); bundle.Root["usedTypes"] = new JsonArray("Synthetic.Holder");
+        var map = JsonNode.Parse(bundle.Root["map"]!["text"]!.GetValue<string>())!; map["irSha256"] = BundleHash(irText);
+        map["entries"] = new JsonArray(new JsonObject { ["jsonPath"] = "$.components[0].fields[\"Wrong\"]",
+            ["pathSegments"] = new JsonArray("components", 0, "fields", "Wrong"), ["entityKind"] = "component", ["key"] = "holder", ["member"] = "Wrong",
+            ["source"] = new JsonObject { ["status"] = "known", ["file"] = bundle.Entry, ["sha256"] = BundleHash(File.ReadAllText(bundle.Entry)),
+                ["range"] = new JsonObject { ["start"] = new JsonObject { ["offset"] = 3, ["line"] = 1, ["column"] = 4 },
+                    ["end"] = new JsonObject { ["offset"] = 8, ["line"] = 1, ["column"] = 9 } } } });
+        bundle.Root["map"] = BundlePayload(map.ToJsonString());
+        var failure = Assert.Throws<RLoopException>(() => ApplyDocument.Load(bundle.Save(), "R1"));
+        var diagnostic = Assert.Single(ApplyDiagnostics.ForException(failure, "validate").Diagnostics);
+        Assert.Equal("COMPONENT_MEMBER_NOT_FOUND", diagnostic.Code);
+        Assert.Equal("holder", diagnostic.Key); Assert.Equal("Wrong", diagnostic.Member);
+        Assert.Equal("$.components[0].fields[\"Wrong\"]", diagnostic.JsonPath);
+        Assert.Equal("known", diagnostic.Source.Status); Assert.Equal(bundle.Entry, diagnostic.Source.File);
+        Assert.Equal(3, diagnostic.Source.Range!.Start.Offset); Assert.Equal(4, diagnostic.Source.Range.Start.Column);
+        Assert.Equal(8, diagnostic.Source.Range.End.Offset); Assert.Equal(9, diagnostic.Source.Range.End.Column);
+    }
+
     [Theory]
     [InlineData("validate")]
     [InlineData("diff")]

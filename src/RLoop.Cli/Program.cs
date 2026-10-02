@@ -12,7 +12,8 @@ public static class Program
 {
     public static Task<int> Main(string[] args) => RunAsync(args);
 
-    internal static async Task<int> RunAsync(string[] args, Func<CancellationToken, Task<IResoniteClient>>? connect = null)
+    internal static async Task<int> RunAsync(string[] args, Func<CancellationToken, Task<IResoniteClient>>? connect = null,
+        Func<Uri, IReadOnlyList<string>, CancellationToken, Task<CatalogSnapshot>>? captureCatalog = null)
     {
         var parsed = ParsedArguments.Parse(args);
         using var output = new OutputWriter(parsed.Has("json"), parsed.Has("brief"));
@@ -142,6 +143,18 @@ public static class Program
                 return ExitCodes.Success;
             }
 
+            if (parsed.Positionals[0].Equals("catalog", StringComparison.OrdinalIgnoreCase))
+            {
+                var operation = parsed.Positional(1, "catalog subcommand");
+                if (operation.Equals("types", StringComparison.OrdinalIgnoreCase))
+                {
+                    CatalogCommands.Types(parsed, output);
+                    return ExitCodes.Success;
+                }
+                if (!operation.Equals("capture", StringComparison.OrdinalIgnoreCase))
+                    throw UnknownCommand(string.Join(' ', parsed.Positionals));
+            }
+
             var cliConfig = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase)
             {
                 ["url"] = parsed.Option("url"), ["timeout"] = parsed.Option("timeout"),
@@ -159,6 +172,12 @@ public static class Program
             commandCancellation.CancelAfter(TimeSpan.FromSeconds(resolution.Config.CommandTimeoutSeconds));
             var commandToken = commandCancellation.Token;
             if (parsed.Has("verbose")) Console.Error.WriteLine(JsonSerializer.Serialize(new { configSources = resolution.Sources }));
+
+            if (parsed.Positionals[0].Equals("catalog", StringComparison.OrdinalIgnoreCase))
+            {
+                await CatalogCommands.CaptureAsync(parsed, output, resolution.Config, commandToken, captureCatalog);
+                return ExitCodes.Success;
+            }
 
             if (parsed.Positionals[0].Equals("discover", StringComparison.OrdinalIgnoreCase))
             {
@@ -1339,6 +1358,15 @@ public static class Program
     {
         var detail = command?.ToLowerInvariant() switch
         {
+            "catalog" => """
+resoloop catalog capture --types FULL_NAMES.json --output CATALOG.json [--snapshot SNAPSHOT.json]
+  [--url ws://localhost:PORT | --url auto --session EXACT_SESSION_ID_OR_NAME]
+resoloop catalog types CATALOG.json [--output FILE.d.ts]
+
+Capture reads 1..512 explicit full Component names from a JSON array; it never writes world content.
+Types generates editor hints only from a trusted, nonsynthetic catalog; C# catalog validation remains authoritative.
+Default declaration output: project .resoloop/catalog-types.d.ts. JsonValue fallbacks are listed in output and comments.
+""",
             "apply" => """
 resoloop apply FILE [--build-id R] [--state FILE] [--require-state] [--adopt] [--profile] [--ndjson-progress] [--prune --yes]
 
@@ -1380,6 +1408,8 @@ Project setup:
   resoloop schema list | schema describe document|node|slot|component|camera|test|assertion|probe|reflection [--json]
   resoloop observe '$member:KEY.NAME' [...] --state WORLD_STATE [--json]
   resoloop type query --request FILE.json [--cache auto|off|refresh] [--cache-dir DIR] [--refresh] [--profile] [--json]
+  resoloop catalog capture --types FULL_NAMES.json --output CATALOG.json [--snapshot SNAPSHOT.json] [--json]
+  resoloop catalog types CATALOG.json [--output FILE.d.ts] [--json]
   resoloop type check --request FILE.json | --manifest FILE.json [--brief] [--profile] [--cache auto|off|refresh] [--json]
   Reflection cache options for connected commands: --cache auto|off|refresh --cache-dir DIR --refresh
   auto trusts matching endpoint/Resonite/ResoniteLink/CLI versions across restarts; no default expiry.

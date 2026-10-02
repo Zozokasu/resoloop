@@ -3,7 +3,7 @@ using Link = ResoniteLink;
 
 namespace RLoop.ResoniteLink;
 
-/// <summary>Explicit developer-tool entry point. Only reads metadata; never used by normal CLI validation.</summary>
+/// <summary>Bounded, read-only metadata acquisition shared by the CLI and development exporter.</summary>
 public static class CatalogCapture
 {
     // A narrow internal seam keeps fake acquisition on the same bounded path as the SDK.
@@ -21,17 +21,33 @@ public static class CatalogCapture
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
         deadline.CancelAfter(TimeSpan.FromMinutes(2));
         await link.Connect(url, deadline.Token).WaitAsync(deadline.Token);
-        var session = await link.GetSessionData().WaitAsync(deadline.Token);
-        if (!session.Success || string.IsNullOrWhiteSpace(session.ResoniteVersion) || string.IsNullOrWhiteSpace(session.ResoniteLinkVersion))
-            throw new RLoopException("APPLY_CATALOG_UNAVAILABLE", "Session versions could not be observed.", ExitCodes.ValidationFailed);
-        var identity = new CatalogIdentity(session.ResoniteVersion, session.ResoniteLinkVersion, CatalogMapper.ClientPackageVersion, ApplyCatalog.CurrentMapperVersion, DateTimeOffset.UtcNow);
         var reader = new Reader(name => link.GetComponentDefinition(name, true), name => link.GetTypeDefinition(name),
             name => link.GetSyncObjectDefinition(name, true), name => link.GetEnumDefinition(name), () => link.IsConnected);
-        var snapshot = await AcquireAsync(identity, componentNames, reader, ct, deadline.Token);
+        async Task<CatalogIdentity> Identity()
+        {
+            var session = await link.GetSessionData().WaitAsync(deadline.Token);
+            if (!session.Success || string.IsNullOrWhiteSpace(session.ResoniteVersion) || string.IsNullOrWhiteSpace(session.ResoniteLinkVersion))
+                throw new RLoopException("APPLY_CATALOG_UNAVAILABLE", "Session versions could not be observed.", ExitCodes.ValidationFailed);
+            return new(session.ResoniteVersion, session.ResoniteLinkVersion, CatalogMapper.ClientPackageVersion,
+                ApplyCatalog.CurrentMapperVersion, DateTimeOffset.UtcNow);
+        }
+        return await ReadAsync(componentNames, reader, Identity, ct, deadline.Token);
+    }
+
+    // Both SDK acquisition and offline fakes traverse the same version checks and bounds.
+    internal static async Task<CatalogSnapshot> ReadAsync(IReadOnlyList<string> componentNames, Reader reader,
+        Func<Task<CatalogIdentity>> observeIdentity, CancellationToken ct = default, CancellationToken deadline = default)
+    {
+        ValidateNames(componentNames);
+        using var combined = CancellationTokenSource.CreateLinkedTokenSource(ct, deadline);
+        var identity = await observeIdentity().WaitAsync(combined.Token);
+        if (string.IsNullOrWhiteSpace(identity.ResoniteVersion) || string.IsNullOrWhiteSpace(identity.ResoniteLinkVersion))
+            throw new RLoopException("APPLY_CATALOG_UNAVAILABLE", "Session versions could not be observed.", ExitCodes.ValidationFailed);
+        var snapshot = await AcquireAsync(identity, componentNames, reader, ct, deadline);
         try
         {
-            var after = await link.GetSessionData().WaitAsync(deadline.Token);
-            if (!after.Success || after.ResoniteVersion != identity.ResoniteVersion || after.ResoniteLinkVersion != identity.ResoniteLinkVersion)
+            var after = await observeIdentity().WaitAsync(combined.Token);
+            if (after.ResoniteVersion != identity.ResoniteVersion || after.ResoniteLinkVersion != identity.ResoniteLinkVersion)
                 throw new RLoopException("APPLY_CATALOG_UNAVAILABLE", "Session identity changed during acquisition.", ExitCodes.ValidationFailed);
         }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested && deadline.IsCancellationRequested)
@@ -41,13 +57,14 @@ public static class CatalogCapture
                 new("*", "session", "time-limit: final session identity was not rechecked")] };
             snapshot = snapshot with { Content = content, ContentHash = CatalogMapper.SnapshotHash(content), Source = "unverified" };
         }
-        if (!link.IsConnected) throw new RLoopException("APPLY_CATALOG_UNAVAILABLE", "Connection lost during acquisition.", ExitCodes.ValidationFailed);
+        if (!reader.Connected()) throw new RLoopException("APPLY_CATALOG_UNAVAILABLE", "Connection lost during acquisition.", ExitCodes.ValidationFailed);
         return snapshot;
     }
 
     private static void ValidateNames(IReadOnlyList<string> names)
     {
-        if (names.Count is 0 or > 512) throw new ArgumentException("Require 1..512 explicit full Component names.");
+        if (names.Count is 0 or > 512 || names.Any(string.IsNullOrWhiteSpace))
+            throw new ArgumentException("Require 1..512 explicit, nonempty full Component names.");
     }
 
     internal static async Task<CatalogSnapshot> AcquireAsync(CatalogIdentity identity, IReadOnlyList<string> componentNames,

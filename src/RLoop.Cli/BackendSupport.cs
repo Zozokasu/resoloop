@@ -34,6 +34,7 @@ public static class BackendSupport
             ["hierarchy profile"] = Unsupported,
             ["hierarchy query"] = Unsupported,
             ["snapshot create"] = Unsupported,
+            ["catalog capture"] = LinkOnly,
             ["find"] = Supported,
             ["observe"] = Supported,
             ["inspect"] = Supported,

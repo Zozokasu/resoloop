@@ -1,5 +1,8 @@
 // Public entry point ("resoloop-jsx").
 
+/** Optional C#-generated catalog declarations augment this registry. */
+export interface CatalogComponentRegistry {}
+
 export { Slot, Component, Scope, Field } from "./elements.js";
 export { Fragment } from "./jsx-runtime.js";
 export { ref } from "./ref.js";
@@ -11,6 +14,7 @@ export type {
   RelocationTransform,
   SlotProps,
   ComponentProps,
+  ComponentFields,
   FieldProps,
   FieldElement,
   ScopeProps,
