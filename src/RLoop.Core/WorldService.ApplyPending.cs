@@ -17,7 +17,8 @@ public sealed partial class WorldService
                 prepared.SnapshotSlots.FirstOrDefault(s => s.Components.Any(c => c.Id == id))?.Id;
         var pending = new ApplyPendingWrite
         {
-            Kind = kind, Key = key, Id = id, ParentId = parentId, Type = type,
+            Kind = kind, Key = key, Id = id, ParentId = parentId,
+            Type = type ?? (kind == "deleteSlot" ? "Slot" : prepared.SnapshotSlots.SelectMany(s => s.Components).FirstOrDefault(c => c.Id == id)?.Type),
             OwnershipKey = prepared.State.OwnershipKey,
             Session = (client as IApplySessionObservation)?.ObserveApplySession() ?? ApplySessionObservation.Observe(prepared.Session.Url),
             ConnectionGeneration = prepared.Session.ConnectionGeneration,
@@ -85,6 +86,21 @@ public sealed partial class WorldService
                 try { ApplyStateStore.Save(prepared.StatePath, prepared.State); }
                 catch (RLoopException saveError) { throw WithPendingEvidence(saveError, prepared.StatePath, pending); }
             }
+            if (pending.ResponseReceived && !pending.ResponseAccepted)
+            {
+                // A negative response settles the request, but an update may have applied partially.
+                // Read once for diagnosis only; never commit its candidate correspondence here.
+                if (pending.Kind is "setMembers" or "updateSlot")
+                {
+                    try { await ReadbackPendingAsync(pending, ct); }
+                    catch (Exception) { pending.Completeness["readback"] = "unknown"; }
+                }
+                var cleared = ApplyStateStore.Copy(prepared.State);
+                cleared.Pending.RemoveAll(p => p.OperationId == pending.OperationId);
+                try { ApplyStateStore.Save(prepared.StatePath, cleared); }
+                catch (RLoopException saveError) { throw WithPendingEvidence(saveError, prepared.StatePath, pending); }
+                prepared.State = cleared;
+            }
             if (!enteredSend || boundary is not null && !boundary.ApplySendStarted && !pending.ResponseReceived)
             {
                 // This process proved that the client mutation entry point was never reached.
@@ -125,11 +141,27 @@ public sealed partial class WorldService
         {
             try
             {
-                p.Observed = p.Kind == "deleteSlot"
-                    ? EvidenceNode(await client.GetSlotAsync(p.Id, 0, false, ct))
-                    : EvidenceNode(await client.GetComponentAsync(p.Id, ct));
+                if (p.Kind == "deleteSlot")
+                {
+                    var remaining = await client.GetSlotAsync(p.Id, 0, false, ct);
+                    p.Observed = EvidenceNode(remaining);
+                    p.Completeness["readback"] = "complete";
+                    return new(false, resuming && remaining.Id == p.Id && !remaining.IsReferenceOnly && remaining.ParentId == p.ParentId &&
+                        (p.Type is null or "Slot"));
+                }
+                var remainingComponent = await client.GetComponentAsync(p.Id, ct);
+                p.Observed = EvidenceNode(remainingComponent);
+                var target = false;
+                if (resuming && p.ParentId is not null)
+                {
+                    var parent = await client.GetSlotAsync(p.ParentId, 0, false, ct);
+                    var matches = parent.Components.Where(c => c.Id == p.Id).ToArray();
+                    target = parent.Id == p.ParentId && !parent.IsReferenceOnly && remainingComponent.Id == p.Id &&
+                        TypeNamesEquivalent(remainingComponent.Type, p.Type ?? p.Precondition?["type"]?.GetValue<string>() ?? "") &&
+                        matches.Length == 1 && TypeNamesEquivalent(matches[0].Type, remainingComponent.Type);
+                }
                 p.Completeness["readback"] = "complete";
-                return new(false, false);
+                return new(false, target);
             }
             catch (RLoopException e) when (e.Code == (p.Kind == "deleteSlot" ? "SLOT_NOT_FOUND" : "COMPONENT_NOT_FOUND"))
             {
@@ -150,7 +182,7 @@ public sealed partial class WorldService
             if (values.Rotation is not null) attributes["rotation"] = slot.Rotation;
             if (values.Scale is not null) attributes["scale"] = slot.Scale;
             p.Observed = EvidenceNode(new { slot.Id, type = "Slot", slot.ParentId, attributes });
-            var target = slot.Id == p.Id && !slot.IsReferenceOnly;
+            var target = slot.Id == p.Id && !slot.IsReferenceOnly && p.Type == "Slot";
             bool Check(string name, bool same) { if (same && target) p.Confirmed.Add(name); return same; }
             var complete = target;
             if (values.Name is not null) complete &= Check("name", slot.Name == values.Name);
@@ -158,11 +190,11 @@ public sealed partial class WorldService
             if (values.Position is not null) complete &= Check("position", VectorEquals(slot.Position, [values.Position.X, values.Position.Y, values.Position.Z]));
             if (values.Rotation is not null) complete &= Check("rotation", QuaternionEquals(slot.Rotation, [values.Rotation.X, values.Rotation.Y, values.Rotation.Z, values.Rotation.W]));
             if (values.Scale is not null) complete &= Check("scale", VectorEquals(slot.Scale, [values.Scale.X, values.Scale.Y, values.Scale.Z]));
-            if (resuming && values.ParentId is null && p.ParentId is not null) target &= slot.ParentId == p.ParentId;
+            if (resuming) target &= p.ParentId is not null && slot.ParentId == p.ParentId;
             p.Completeness["readback"] = "complete";
             var bindingConfirmed = target && (values.Name is null || p.Confirmed.Contains("name")) &&
                 (values.ParentId is null || p.Confirmed.Contains("parent"));
-            return new(complete && target, bindingConfirmed, slot);
+            return new(complete && target, resuming ? target : bindingConfirmed, slot);
         }
         var component = await client.GetComponentAsync(p.Id, ct);
         var parentConfirmed = true;
@@ -172,7 +204,7 @@ public sealed partial class WorldService
             // Membership is structural evidence; do not request other Components' member data.
             var parent = await client.GetSlotAsync(p.ParentId!, 0, false, ct);
             var matches = parent.Components.Where(c => c.Id == p.Id).ToArray();
-            parentConfirmed = !parent.IsReferenceOnly && matches.Length == 1 && TypeNamesEquivalent(matches[0].Type, component.Type);
+            parentConfirmed = parent.Id == p.ParentId && !parent.IsReferenceOnly && matches.Length == 1 && TypeNamesEquivalent(matches[0].Type, component.Type);
         }
         p.Completeness["parent"] = checkParent ? parentConfirmed ? "complete" : "unknown" : "notChecked";
         p.Observed = EvidenceNode(new { component.Id, component.Type,
@@ -189,12 +221,21 @@ public sealed partial class WorldService
         return new(targetConfirmed && p.Confirmed.Count == p.Members.Count, targetConfirmed, Component: component);
     }
 
-    private static void CommitReadback(string path, ApplyState state, ApplyPendingWrite p, PendingReadback readback)
+    private static void CommitReadback(string path, ApplyState state, ApplyPendingWrite p, PendingReadback readback, bool resolvedNotApplied = false)
     {
         var next = ApplyStateStore.Copy(state);
-        if (readback.TargetConfirmed)
+        if (readback.TargetConfirmed && p.Kind is not ("deleteSlot" or "removeComponent"))
         {
-            if (p.SlotBinding is not null) next.Slots[p.Key] = p.SlotBinding with { Id = p.Id! };
+            if (p.SlotBinding is not null)
+            {
+                var binding = p.SlotBinding with { Id = p.Id! };
+                if (resolvedNotApplied && readback.Slot is { } observedSlot)
+                {
+                    var segments = (binding.PathSegments ?? SlotPaths.LegacySegments(binding.Path)).SkipLast(1).Append(observedSlot.Name).ToArray();
+                    binding = binding with { Path = string.Join('/', segments), PathSegments = segments };
+                }
+                next.Slots[p.Key] = binding;
+            }
             if (p.ComponentBinding is not null)
             {
                 var binding = p.ComponentBinding with { Id = p.Id!, Type = p.Type! };
@@ -202,8 +243,9 @@ public sealed partial class WorldService
                 if (binding.IdentityValues is not null)
                     binding = binding with { IdentityValues = binding.IdentityValues.Where(v => !p.Members.ContainsKey(v.Key) || p.Confirmed.Contains(v.Key))
                         .ToDictionary(v => v.Key, v => readback.Component!.Members.TryGetValue(v.Key, out var m) ? MemberRaw(m) : v.Value) };
-                if (binding.ReferenceSelectors is not null && p.Kind == "addComponent")
-                    binding = binding with { ReferenceSelectors = binding.ReferenceSelectors.Where(v => p.Confirmed.Contains(v.Key)).ToDictionary() };
+                if (binding.ReferenceSelectors is not null)
+                    binding = binding with { ReferenceSelectors = binding.ReferenceSelectors.Where(v => p.Confirmed.Contains(v.Key) ||
+                        p.Kind != "addComponent" && !p.Members.ContainsKey(v.Key)).ToDictionary() };
                 next.Components[p.Key] = binding;
             }
             if (p.AssetBinding is not null) next.Assets[p.Key] = p.AssetBinding;
@@ -214,20 +256,17 @@ public sealed partial class WorldService
             foreach (var key in p.RemoveComponents) next.Components.Remove(key);
             next.Pending.RemoveAll(item => item.OperationId == p.OperationId);
         }
+        else if (resolvedNotApplied) next.Pending.RemoveAll(item => item.OperationId == p.OperationId);
         ApplyStateStore.Save(path, next);
         // The confirmed in-memory snapshot changes only after persistence succeeded.
         state.SchemaVersion = next.SchemaVersion;
         state.Slots = next.Slots; state.Components = next.Components; state.Assets = next.Assets; state.Pending = next.Pending;
     }
 
-    private async Task ReconcilePendingAsync(string path, ApplyState state, SessionInfo session, CancellationToken ct)
+    private async Task ReconcilePendingAsync(string path, ApplyState state, SessionInfo session, List<ApplyDiagnostic> diagnostics, CancellationToken ct)
     {
-        foreach (var legacy in state.Slots.Where(s => string.IsNullOrWhiteSpace(s.Value.Id)))
-            throw WriteUnverified(path, new ApplyPendingWrite { Kind = "legacyCreateSlot", Key = legacy.Key, OwnershipKey = state.OwnershipKey,
-                SlotBinding = legacy.Value }, "pendingUnresolved");
-        foreach (var legacy in state.Components.Where(c => string.IsNullOrWhiteSpace(c.Value.Id)))
-            throw WriteUnverified(path, new ApplyPendingWrite { Kind = "legacyAddComponent", Key = legacy.Key, OwnershipKey = state.OwnershipKey,
-                ComponentBinding = legacy.Value }, "pendingUnresolved");
+        if (ApplyPendingDiscard.LegacyPending(state).FirstOrDefault() is { } legacy)
+            throw WriteUnverified(path, legacy, "pendingUnresolved");
         var identity = (client as IApplySessionObservation)?.ObserveApplySession() ?? ApplySessionObservation.Observe(session.Url);
         foreach (var p in state.Pending.ToArray())
         {
@@ -248,6 +287,8 @@ public sealed partial class WorldService
                     var slot = await client.GetSlotAsync(evidence.Id, 0, false, ct);
                     if (slot.Id != evidence.Id || slot.IsReferenceOnly || slot.Name != evidence.Name || slot.ParentId != evidence.ParentId)
                         throw WriteUnverified(path, p, "pendingUnresolved");
+                    if (evidence.ParentId is not null && evidence.ParentId != "Root" && !p.OwnershipSlots.ContainsKey(evidence.ParentId))
+                        throw WriteUnverified(path, p, "pendingUnresolved");
                 }
                 // A managed non-Root parent must have an exact observation in the journal.
                 if (p.ParentId is not null && p.ParentId != "Root" && !p.OwnershipSlots.ContainsKey(p.ParentId))
@@ -257,8 +298,11 @@ public sealed partial class WorldService
                 var now = (client as IApplySessionObservation)?.ObserveApplySession() ?? ApplySessionObservation.Observe(current.Url);
                 if (now != identity || !current.Connected || current.ConnectionGeneration != session.ConnectionGeneration)
                     throw WriteUnverified(path, p, "identityUnproven");
-                CommitReadback(path, state, p, readback);
-                if (!readback.Complete) throw WriteUnverified(path, p, "pendingUnresolved");
+                // Missing member data is not evidence that the requested value was not applied.
+                var resolved = !readback.Complete && readback.TargetConfirmed && p.Completeness["readback"] == "complete";
+                CommitReadback(path, state, p, readback, resolved);
+                if (resolved) diagnostics.AddRange(ResolvedDiagnostics(p));
+                else if (!readback.Complete) throw WriteUnverified(path, p, "pendingUnresolved");
             }
             catch (RLoopException e) when (e.Code is not ("APPLY_WRITE_UNVERIFIED" or "APPLY_STATE_WRITE_FAILED" or "CONNECTION_GENERATION_CHANGED" or "REQUEST_TIMEOUT"))
             { throw WriteUnverified(path, p, "pendingUnresolved", e); }
@@ -271,6 +315,27 @@ public sealed partial class WorldService
         }
     }
 
+    private static IEnumerable<ApplyDiagnostic> ResolvedDiagnostics(ApplyPendingWrite p)
+    {
+        var values = p.Kind is "deleteSlot" or "removeComponent"
+            ? new Dictionary<string, object?> { ["absence"] = "absent" }
+            : p.SlotValues is { } slot
+                ? new Dictionary<string, object?> { ["name"] = slot.Name, ["parent"] = slot.ParentId,
+                    ["position"] = slot.Position, ["rotation"] = slot.Rotation, ["scale"] = slot.Scale }
+                    .Where(v => v.Value is not null).ToDictionary()
+                : p.Members.ToDictionary(v => v.Key, v => (object?)v.Value);
+        foreach (var value in values.Where(v => !p.Confirmed.Contains(v.Key)))
+            yield return ApplyDiagnostics.Unknown("APPLY_PENDING_RESOLVED_NOT_APPLIED",
+                $"Pending '{p.OperationId}' at '{p.Key}.{value.Key}' (exact ID {p.Id}) was resolved as not applied; planning uses the current observation.", "apply") with
+            {
+                Severity = "warning", BuildId = p.BuildId, Key = p.Key, Member = value.Key, OperationId = p.OperationId,
+                Expected = ApplyDiagnosticValue.Known(value.Value),
+                Observed = ApplyDiagnosticValue.Known(p.Kind is "deleteSlot" or "removeComponent" ? p.Observed :
+                    p.Observed?[p.SlotValues is null ? "members" : "attributes"]?[value.Key]),
+                Completeness = new Dictionary<string, string>(p.Completeness),
+            };
+    }
+
     private static Dictionary<string, object?> PendingContext(string path, ApplyPendingWrite p, string reason) => new()
     {
         ["stateFile"] = path, ["reason"] = reason, ["operationId"] = p.OperationId, ["sendStatus"] = p.SendStatus,
@@ -280,7 +345,9 @@ public sealed partial class WorldService
     private static RLoopException WriteUnverified(string path, ApplyPendingWrite p, string reason, Exception? inner = null) =>
         WithPendingEvidence(new RLoopException("APPLY_WRITE_UNVERIFIED", $"Write '{p.OperationId}' remains unverified ({reason}); no replay was attempted.",
             ExitCodes.OperationFailed, PendingContext(path, p, reason),
-            ["Inspect the exact IDs and pending evidence in the state file. A subsequent apply only reconciles proven results; unresolved writes stop before new mutations."], inner), path, p);
+            [PendingSuggestion(path, p)], inner), path, p);
+    private static string PendingSuggestion(string path, ApplyPendingWrite p) =>
+        $"Inspect exact target ID {p.Id ?? "unknown"} ({p.Kind}, key '{p.Key}') and state '{path}'. After inspection, explicitly discard with: resoloop apply FILE --state \"{path}\" --discard-pending \"{p.OperationId}\" --yes. Discarding leaves this target outside management; a successful creation may be duplicated by the next apply. Delete unwanted objects only by their exact IDs with --yes.";
     private static RLoopException WithPendingEvidence(RLoopException e, string path, ApplyPendingWrite p)
     {
         var context = new Dictionary<string, object?>(e.Context);
@@ -299,11 +366,13 @@ public sealed partial class WorldService
         catch (RLoopException) { }
         context["evidencePersistence"] = persistence;
         context["confirmedBindings"] = bindings;
-        var result = new RLoopException(e.Code, e.Message, e.ExitCode, context, e.Suggestions, e.InnerException ?? e);
+        var result = new RLoopException(e.Code, e.Message, e.ExitCode, context,
+            e.Suggestions.Concat([PendingSuggestion(path, p)]).Distinct().ToArray(), e.InnerException ?? e);
         var earlier = ApplyDiagnostics.ForException(e, "apply").Diagnostics;
         var diagnostic = (earlier.LastOrDefault() ?? ApplyDiagnostics.Unknown(e.Code, e.Message, "apply")) with
         {
             BuildId = earlier.LastOrDefault()?.BuildId ?? p.BuildId,
+            Message = e.Message + " " + PendingSuggestion(path, p),
             Key = p.Key, Member = context.GetValueOrDefault("member")?.ToString(), Expected = ApplyDiagnosticValue.Known(context["expected"]),
             Observed = ApplyDiagnosticValue.Known(context["observed"]),
             Completeness = context["completeness"] as IReadOnlyDictionary<string, string> ?? p.Completeness,

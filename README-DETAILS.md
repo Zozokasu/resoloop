@@ -515,4 +515,14 @@ Component の任意の `propertyModes` は member 名を `config` / `initial` / 
 
 apply の state は `schemaVersion: 3` です。v1/v2 は読めますが、安全確認後の最初の保存で v3 になり、保留が空でも v2 に戻りません。v3 に未対応の CLI は `APPLY_STATE_VERSION_UNSUPPORTED` で拒否します。state 本体の `pending` に操作 ID、session の観測、正確な対象 ID（不明なら null）、送信内容、応答と readback の証拠、確認できた部分を保存します。型 cache や生成 bundle とは別の記録です。
 
-送信前に保留を保存し、応答後に送った属性・member を一度だけ readback します。確認できた結果の保存後に対応を確定し、不一致・欠落は `APPLY_WRITE_UNVERIFIED`（exit 7）で停止します。cancel・timeout・state 保存失敗は従来のコードを保ち、後続の送信を止めます。次の apply は、URL と照合済み S-ID が一致し、受付・所有・型・親・値を正確な ID で確認できる保留だけを確定します。identity 不明や作成の応答喪失で ID が不明な保留は、名前で回収したり再送したりしません。失敗 context と `--diagnostics` の `operationId`、`sendStatus`、`pending`、`confirmed`、`confirmedBindings`、`evidencePersistence` を使って、実機で調べる ID と未確定部分を確認してください。保留を手動解除するコマンドはありません。
+送信前に保留を保存し、応答後に送った属性・member を一度だけ readback します。確認できた結果の保存後に対応を確定し、不一致・欠落は保留のまま `APPLY_WRITE_UNVERIFIED`（exit 7）で停止します。同じ apply の中では再送しません。サーバの明示的な否定応答は、保留を外して元のエラーで停止します。更新の否定応答では、部分的な適用を調べるため一度 readback し、観測値を診断に載せます。確定済みの対応は変えません。保留を外す保存に失敗した場合は保留が残ります。cancel・timeout・state 保存失敗は従来のコードを保ち、後続の送信を止めます。
+
+次の apply は、双方の URL と照合済み S-ID が一致し、受付の証拠があり、正確な ID・型・親・所有 Slot の鎖を確認できる保留を照合します。値が合う部分は確定し、合わない部分は「書けていないと分かった」として保留を解消します。確認した対象の ID は採用しますが、送った値を確定済みの値として記録しません。解消した部分は warning の診断 `APPLY_PENDING_RESOLVED_NOT_APPLIED` に操作 ID・key・member・期待値・観測値を残します。この診断に終了コードはありません。その後は今の観測と宣言から通常どおり計画します。同じ宣言なら新しい確認つきの書込みを一度試み、宣言を直していれば直した内容を使います。削除対象がまだ在ると確認できた保留も解消しますが、prune の送信には引き続き `--prune --yes` が必要です。
+
+identity を証明できない、作成 ID が不明、受付の証拠が無い、対象が不在・型違い・親違いの場合は自動では解消しません。名前・型・順番による作成 ID の回収もしません。失敗 context と `--diagnostics` の `operationId`、`sendStatus`、`pending`、`confirmed`、`confirmedBindings`、`evidencePersistence` を使い、実機で調べる正確な ID と未確定部分を確認してください。
+
+実機を `inspect EXACT_SLOT_ID --members` または `component inspect EXACT_COMPONENT_ID` で確かめた後、`resoloop apply FILE --state STATE_FILE --discard-pending OPERATION_ID --yes` で指定した保留だけを破棄できます。接続せずに project state lock を取り、保存して終了します。その実行では通常の apply を続けず、保留内の候補の対応を採用しません。確定済みの対応は維持します。`--prune`・`--adopt` など書込みを伴う引数との併用は `INVALID_OPTION`、`--yes` が無ければ `CONFIRMATION_REQUIRED`、存在しない操作 ID は `INVALID_OPTION` です。
+
+v3 の操作 ID は state の `pending[].operationId` です。v1/v2 の空 ID は、停止時に表示する `legacy:slot:KEY` または `legacy:component:KEY` を使います。KEY は実効 key の URI エスケープ表記です（例: `child/a` → `legacy:slot:child%2Fa`）。旧形式では、その空 ID の未証明の対応だけを外します。破棄の成功 JSON は `stateFile`・`operationId`・`kind`・`key`・`id`（不明なら null）・`warning` を返します。人間向けの表示にも対象と注意事項を載せます。
+
+破棄した保留の対象は管理の外になります。作成が実機で成功していた場合、次の apply は同じものをもう一度作る可能性があります。先に実機を inspect で確かめ、不要なものは正確な ID と `--yes` で削除してください。ID 不明の作成は、実機で対象を見つけて確認する必要があります。

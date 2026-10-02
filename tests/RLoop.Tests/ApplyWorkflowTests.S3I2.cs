@@ -66,28 +66,21 @@ public sealed partial class ApplyWorkflowTests
     }
 
     [Fact]
-    public async Task S3RejectedResponseIsRecordedButNotAcceptedOrReplayed()
+    public async Task S3RejectedResponseClearsPendingAndAllowsNextApply()
     {
         var document = Document("i2-reject", "[]");
         var client = new FakeResoniteClient(document) { DiscoverId = "S-test" };
-        client.AfterMutation = (_, _) =>
-        {
-            client.ApplyResponseReceived = true;
-            client.ApplyResponseAccepted = false;
-            throw new RLoopException("SLOT_CREATE_FAILED", "rejected response", ExitCodes.OperationFailed);
-        };
+        client.RejectKind = "createSlot";
         var service = new WorldService(client);
         var path = Path.Combine(_root, "reject.state.json");
         var error = await Assert.ThrowsAsync<RLoopException>(() => service.ApplyAsync(document, new(path)));
-        Assert.Equal("SLOT_CREATE_FAILED", error.Code);
+        Assert.Equal("RESONITE_OPERATION_FAILED", error.Code);
         Assert.Equal("responseReceived", error.Context["sendStatus"]);
-        var pending = Assert.Single(ApplyStateStore.Load(path, document.Ownership!.Key).Pending);
-        Assert.True(pending.ResponseReceived);
-        Assert.False(pending.ResponseAccepted);
+        Assert.Empty(ApplyStateStore.Load(path, document.Ownership!.Key).Pending);
+        client.RejectKind = null;
         client.ResetWriteCounts();
-        var resume = await Assert.ThrowsAsync<RLoopException>(() => service.ApplyAsync(document, new(path)));
-        Assert.Equal("pendingUnresolved", resume.Context["reason"]);
-        Assert.Equal(0, client.Writes);
+        await service.ApplyAsync(document, new(path));
+        Assert.Equal(1, client.Writes);
     }
 
     [Fact]
@@ -315,6 +308,14 @@ public sealed partial class ApplyWorkflowTests
         }
         client.CancelAfterWrites = null;
         client.ResetWriteCounts();
+        if (drift == "value")
+        {
+            var result = await service.ApplyAsync(document, new(path));
+            Assert.Contains(ApplyDiagnostics.ForRuntime(result).Diagnostics, d => d.Code == "APPLY_PENDING_RESOLVED_NOT_APPLIED");
+            Assert.Equal(1, client.Writes);
+            Assert.Empty(ApplyStateStore.Load(path, document.Ownership!.Key).Pending);
+            return;
+        }
         var error = await Assert.ThrowsAsync<RLoopException>(() => service.ApplyAsync(document, new(path)));
         Assert.Equal("pendingUnresolved", error.Context["reason"]);
         Assert.Equal(0, client.Writes);
@@ -355,10 +356,13 @@ public sealed partial class ApplyWorkflowTests
         Assert.True(p.ResponseReceived);
         client.ResetWriteCounts();
         var resume = await Assert.ThrowsAsync<RLoopException>(() => service.ApplyAsync(desired, new(path)));
-        Assert.Equal("pendingUnresolved", resume.Context["reason"]);
-        Assert.Equal(0, client.Writes);
+        Assert.Equal("readbackMismatch", resume.Context["reason"]);
+        Assert.Equal(1, client.Writes);
+        Assert.Contains(ApplyDiagnostics.ForException(resume, "apply").Diagnostics, d => d.Code == "APPLY_PENDING_RESOLVED_NOT_APPLIED");
         Assert.True(source.Members["Accepted"].Value!.GetValue<bool>());
-        Assert.Contains("Accepted", Assert.Single(ApplyStateStore.Load(path, document.Ownership.Key).Pending).Confirmed);
+        var retried = Assert.Single(ApplyStateStore.Load(path, document.Ownership.Key).Pending);
+        Assert.NotEqual(p.OperationId, retried.OperationId);
+        Assert.DoesNotContain("Accepted", retried.Members.Keys);
     }
 
     [Theory]

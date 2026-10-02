@@ -742,7 +742,8 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
                 .Distinct(StringComparer.Ordinal).ToArray();
             var failure = new RLoopException(ex.Code, ex.Message, ex.ExitCode, context, suggestions,
                 detailed.Code == "APPLY_CANCELLED" ? detailed.InnerException : detailed);
-            ApplyDiagnostics.CopyFailure(detailed, failure);
+            ApplyDiagnostics.AttachRuntime(failure, safety.Diagnostics
+                .Concat(ApplyDiagnostics.ForException(detailed, "apply").Diagnostics).Distinct().ToArray());
             throw failure;
         }
 
@@ -1028,83 +1029,94 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
         ApplyDocumentValidator.ThrowIfInvalid(offlineValidation);
         var statePath = resolvedStatePath ?? document.ResolveStatePath(options.StateFile);
         var state = ApplyStateStore.Load(statePath, document.Ownership!.Key, options.RequireState);
+        var pendingDiagnostics = new List<ApplyDiagnostic>();
         var session = await client.GetSessionInfoAsync(cancellationToken);
         document.BuildBundle?.VerifySession(session);
         if (state.Pending.Count > 0 || state.Slots.Values.Any(s => string.IsNullOrWhiteSpace(s.Id)) ||
             state.Components.Values.Any(c => string.IsNullOrWhiteSpace(c.Id)))
         {
-            if (reconcilePending) await ReconcilePendingAsync(statePath, state, session, cancellationToken);
-            else throw WriteUnverified(statePath, state.Pending.FirstOrDefault() ?? new ApplyPendingWrite { Kind = "legacyCreation" }, "pendingUnresolved");
+            if (reconcilePending) await ReconcilePendingAsync(statePath, state, session, pendingDiagnostics, cancellationToken);
+            else throw WriteUnverified(statePath, state.Pending.FirstOrDefault() ?? ApplyPendingDiscard.LegacyPending(state).First(), "pendingUnresolved");
         }
-        // SessionId is kept in state for compatibility only. UniqueSessionId is a per-connection counter,
-        // so a match never authorizes reusing a stored live ID; every reuse is proven against the live world.
-        state.SessionId = session.UniqueSessionId;
-        var migrations = ApplyStateMigrations(document, state);
-        var parentSelector = string.IsNullOrWhiteSpace(document.Slot!.Parent) ? "Root" : document.Slot.Parent;
-        var parentId = await ResolveSlotIdAsync(parentSelector, cancellationToken);
-        var stateDepth = state.Slots.Values.Select(x => x.PathSegments?.Count - 1 ?? x.Path.Count(ch => ch == '/')).DefaultIfEmpty(0).Max();
-        var parent = await client.GetSlotAsync(parentId, Math.Clamp(Math.Max(MaxDepth(document.Children) + 1, stateDepth), 0, 64), true, cancellationToken);
-        var parentPath = await ObserveAbsolutePathAsync(parent, cancellationToken);
-        var parentSegments = await ObserveAbsoluteSegmentsAsync(parent, cancellationToken);
-        var snapshots = new List<(SlotInfo Slot, string Path)> { (parent, parentPath) };
-        var rootKey = document.Slot!.Key!;
-        if (state.Slots.TryGetValue(rootKey, out var rootState) &&
-            (!ContainsSlot(parent, rootState.Id) ||
-             !(rootState.PathSegments ?? SlotPaths.LegacySegments(rootState.Path)).SkipLast(1)
-                 .SequenceEqual(parentSegments, StringComparer.Ordinal)))
+        try
         {
-            if (rootState.RuntimeRelocatable)
+            // SessionId is kept in state for compatibility only. UniqueSessionId is a per-connection counter,
+            // so a match never authorizes reusing a stored live ID; every reuse is proven against the live world.
+            state.SessionId = session.UniqueSessionId;
+            var migrations = ApplyStateMigrations(document, state);
+            var parentSelector = string.IsNullOrWhiteSpace(document.Slot!.Parent) ? "Root" : document.Slot.Parent;
+            var parentId = await ResolveSlotIdAsync(parentSelector, cancellationToken);
+            var stateDepth = state.Slots.Values.Select(x => x.PathSegments?.Count - 1 ?? x.Path.Count(ch => ch == '/')).DefaultIfEmpty(0).Max();
+            var parent = await client.GetSlotAsync(parentId, Math.Clamp(Math.Max(MaxDepth(document.Children) + 1, stateDepth), 0, 64), true, cancellationToken);
+            var parentPath = await ObserveAbsolutePathAsync(parent, cancellationToken);
+            var parentSegments = await ObserveAbsoluteSegmentsAsync(parent, cancellationToken);
+            var snapshots = new List<(SlotInfo Slot, string Path)> { (parent, parentPath) };
+            var rootKey = document.Slot!.Key!;
+            if (state.Slots.TryGetValue(rootKey, out var rootState) &&
+                (!ContainsSlot(parent, rootState.Id) ||
+                 !(rootState.PathSegments ?? SlotPaths.LegacySegments(rootState.Path)).SkipLast(1)
+                     .SequenceEqual(parentSegments, StringComparer.Ordinal)))
             {
-                var stable = new StableSlotReference(rootKey, rootState.Id, rootState.Path, state.SessionId,
-                    state.OwnershipKey, true, rootState.PathSegments);
-                var check = await VerifyStoredSlotAsync(statePath, stable, cancellationToken, state);
-                if (check.VerifiedId is not null)
-                    snapshots.Add((await client.GetSlotAsync(check.VerifiedId, Math.Clamp(stateDepth, 0, 64), true, cancellationToken), rootState.Path));
-                else
+                if (rootState.RuntimeRelocatable)
                 {
-                    SlotInfo relocated;
-                    try { relocated = await ResolveRelocatableSlotAsync(statePath, stable, cancellationToken); }
-                    catch (RLoopException ex) when (check.Live && ex.Code == "STABLE_RELOCATABLE_SLOT_NOT_FOUND")
+                    var stable = new StableSlotReference(rootKey, rootState.Id, rootState.Path, state.SessionId,
+                        state.OwnershipKey, true, rootState.PathSegments);
+                    var check = await VerifyStoredSlotAsync(statePath, stable, cancellationToken, state);
+                    if (check.VerifiedId is not null)
+                        snapshots.Add((await client.GetSlotAsync(check.VerifiedId, Math.Clamp(stateDepth, 0, 64), true, cancellationToken), rootState.Path));
+                    else
                     {
-                        throw StoredIdUnverified(rootKey, rootState.Id, rootState.Path, check, ex);
+                        SlotInfo relocated;
+                        try { relocated = await ResolveRelocatableSlotAsync(statePath, stable, cancellationToken); }
+                        catch (RLoopException ex) when (check.Live && ex.Code == "STABLE_RELOCATABLE_SLOT_NOT_FOUND")
+                        {
+                            throw StoredIdUnverified(rootKey, rootState.Id, rootState.Path, check, ex);
+                        }
+                        state.Slots[rootKey] = rootState = rootState with { Id = relocated.Id };
+                        snapshots.Add((relocated, relocated.Path ?? rootState.Path));
                     }
-                    state.Slots[rootKey] = rootState = rootState with { Id = relocated.Id };
-                    snapshots.Add((relocated, relocated.Path ?? rootState.Path));
+                }
+                else
+                try
+                {
+                    var oldRootId = await ResolveSlotIdAsync(SlotPaths.Selector(rootState.Path, rootState.PathSegments), cancellationToken);
+                    snapshots.Add((await client.GetSlotAsync(oldRootId, Math.Clamp(stateDepth, 0, 64), true, cancellationToken), rootState.Path));
+                }
+                catch (RLoopException ex) when (ex.Code is "SLOT_NOT_FOUND" or "SLOT_PATH_NOT_FOUND")
+                {
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+                {
+                    throw StoredIdUnverified(rootKey, rootState.Id, rootState.Path,
+                        new StoredSlotCheck(null, false, "recordedPathReadFailed"), ex);
                 }
             }
-            else
-            try
-            {
-                var oldRootId = await ResolveSlotIdAsync(SlotPaths.Selector(rootState.Path, rootState.PathSegments), cancellationToken);
-                snapshots.Add((await client.GetSlotAsync(oldRootId, Math.Clamp(stateDepth, 0, 64), true, cancellationToken), rootState.Path));
-            }
-            catch (RLoopException ex) when (ex.Code is "SLOT_NOT_FOUND" or "SLOT_PATH_NOT_FOUND")
-            {
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
-            {
-                throw StoredIdUnverified(rootKey, rootState.Id, rootState.Path,
-                    new StoredSlotCheck(null, false, "recordedPathReadFailed"), ex);
-            }
+            var prepared = new PreparedApply(document, options, state, statePath, session, parentId, snapshots,
+                migrations.Slots, migrations.Components, parentSegments);
+            var rootSpec = new ApplyNodeSpec(document.Slot, document.Components, document.Children);
+            BuildNode(prepared, rootSpec, null, parent, parentPath, true);
+            await RequireStoredSlotIdsAbsentBeforeCreateAsync(prepared, cancellationToken);
+            await PrepareRelocationTransformsAsync(prepared, parentPath, cancellationToken);
+            BuildAssetPlans(prepared);
+            BuildComponentPlans(prepared);
+            BuildDeletionPlans(prepared);
+            ValidateSlotOwnership(prepared);
+            ValidateComponentOwnership(prepared);
+            var resolvedTypes = prepared.Components.Where(x => x.Existing is not null)
+                .GroupBy(x => x.Spec.Type, StringComparer.Ordinal)
+                .ToDictionary(group => group.Key, group => group.First().Existing!.Type, StringComparer.Ordinal);
+            prepared.Safety = new ApplySafety(client, prepared);
+            prepared.Safety.Diagnostics.AddRange(pendingDiagnostics);
+            var strictValidation = await ApplyDocumentValidator.ValidateAsync(document, client, cancellationToken, resolvedTypes);
+            ApplyDocumentValidator.ThrowIfInvalid(strictValidation);
+            return prepared;
         }
-        var prepared = new PreparedApply(document, options, state, statePath, session, parentId, snapshots,
-            migrations.Slots, migrations.Components, parentSegments);
-        var rootSpec = new ApplyNodeSpec(document.Slot, document.Components, document.Children);
-        BuildNode(prepared, rootSpec, null, parent, parentPath, true);
-        await RequireStoredSlotIdsAbsentBeforeCreateAsync(prepared, cancellationToken);
-        await PrepareRelocationTransformsAsync(prepared, parentPath, cancellationToken);
-        BuildAssetPlans(prepared);
-        BuildComponentPlans(prepared);
-        BuildDeletionPlans(prepared);
-        ValidateSlotOwnership(prepared);
-        ValidateComponentOwnership(prepared);
-        var resolvedTypes = prepared.Components.Where(x => x.Existing is not null)
-            .GroupBy(x => x.Spec.Type, StringComparer.Ordinal)
-            .ToDictionary(group => group.Key, group => group.First().Existing!.Type, StringComparer.Ordinal);
-        prepared.Safety = new ApplySafety(client, prepared);
-        var strictValidation = await ApplyDocumentValidator.ValidateAsync(document, client, cancellationToken, resolvedTypes);
-        ApplyDocumentValidator.ThrowIfInvalid(strictValidation);
-        return prepared;
+        catch (RLoopException error) when (pendingDiagnostics.Count > 0)
+        {
+            var failure = new RLoopException(error.Code, error.Message, error.ExitCode, error.Context, error.Suggestions, error);
+            ApplyDiagnostics.AttachRuntime(failure, pendingDiagnostics.Concat(ApplyDiagnostics.ForException(error, "apply").Diagnostics).ToArray());
+            throw failure;
+        }
     }
 
     private static void BuildNode(PreparedApply prepared, ApplyNodeSpec spec, NodeRuntime? parentRuntime,

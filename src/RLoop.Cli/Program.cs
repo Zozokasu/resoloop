@@ -49,6 +49,27 @@ public static class Program
             }
             if (parsed.Has("build-id") && !applyCommand)
                 throw new RLoopException("INVALID_OPTION", "--build-id is supported only by validate/diff/plan/apply.", ExitCodes.InvalidArguments);
+            if (parsed.Has("discard-pending"))
+            {
+                if (!parsed.Positionals[0].Equals("apply", StringComparison.OrdinalIgnoreCase) ||
+                    new[] { "prune", "adopt", "set", "update" }.Any(parsed.Has) || parsed.Options("discard-pending").Count != 1)
+                    throw new RLoopException("INVALID_OPTION", "--discard-pending is an apply-only state operation and cannot be combined with mutation options (--prune, --adopt, --set, --update).", ExitCodes.InvalidArguments);
+                var operationId = parsed.RequireOption("discard-pending");
+                if (!parsed.Has("yes"))
+                    throw new RLoopException("CONFIRMATION_REQUIRED", "apply --discard-pending requires --yes after inspecting the world.", ExitCodes.ValidationFailed);
+                if (parsed.Positionals.Count > 2)
+                    throw new RLoopException("UNEXPECTED_ARGUMENT", "apply --discard-pending accepts one apply file.", ExitCodes.InvalidArguments);
+                var document = ApplyDocument.Load(parsed.Positional(1, "Apply file"), parsed.Option("build-id"));
+                output.ProtectDiagnosticsState(document, parsed.Option("state"));
+                var discarded = ApplyPendingDiscard.Discard(document, operationId, true, parsed.Option("state"));
+                output.Success(discarded, writer =>
+                {
+                    writer.WriteLine($"discarded {discarded.OperationId}: {discarded.Kind}, key '{discarded.Key}', exact ID {discarded.Id ?? "unknown"}");
+                    writer.WriteLine($"state: {discarded.StateFile}");
+                    writer.WriteLine(discarded.Warning);
+                });
+                return ExitCodes.Success;
+            }
 
             if (parsed.Positionals[0].Equals("init", StringComparison.OrdinalIgnoreCase))
             {
@@ -1317,6 +1338,8 @@ resoloop apply FILE [--build-id R] [--state FILE] [--require-state] [--adopt] [-
 
 Validates and plans the complete document before mutation. State checkpoints make a failed non-atomic apply resumable.
 --adopt binds one verified existing root. --prune deletes stale owned targets and always requires --yes.
+--discard-pending OPERATION_ID --yes discards only that pending record offline and exits; do not combine with --prune/--adopt.
+Inspect first: an untracked successful creation can be duplicated by the next apply; delete unwanted objects only by exact IDs.
 """,
             "plan" or "diff" => """
 resoloop plan|diff FILE [--build-id R] [--state FILE] [--require-state] [--adopt]

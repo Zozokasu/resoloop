@@ -144,7 +144,7 @@ public sealed partial class ApplyWorkflowTests
             [{"key":"target","type":"Test.Target","fields":{"Enabled":true}},
              {"key":"old","type":"Test.Source","fields":{"Target":"$member:target.Enabled"}}]
             """);
-        var client = new FakeResoniteClient(initial);
+        var client = new FakeResoniteClient(initial) { DiscoverId = "S-test" };
         var service = new WorldService(client);
         var options = new ApplyOptions(Path.Combine(_root, "drivers.state.json"));
         await service.ApplyAsync(initial, options);
@@ -162,8 +162,15 @@ public sealed partial class ApplyWorkflowTests
         Assert.Equal(0, client.BatchUpdates);
         client.ResetWriteCounts();
         var resume = await Assert.ThrowsAsync<RLoopException>(() => service.ApplyAsync(desired, options with { Prune = true, ConfirmDeletes = true }));
-        Assert.Equal("APPLY_WRITE_UNVERIFIED", resume.Code);
+        // Reconciliation settles the mismatch, then existing correspondence resolution
+        // sees two indistinguishable Source Components before reference writes or prune.
+        Assert.Equal("STABLE_COMPONENT_AMBIGUOUS", resume.Code);
         Assert.Equal(0, client.Writes);
+        Assert.Equal(0, client.BatchUpdates);
+        Assert.Empty(ApplyStateStore.Load(options.StateFile!, desired.Ownership!.Key).Pending);
+        Assert.True(ApplyStateStore.Load(options.StateFile!, desired.Ownership.Key).Components.ContainsKey("replacement"));
+        Assert.Contains(Assert.Single(client.Root.Children).Components, c => c.Id == client.TargetClaimedBy);
+        Assert.Contains(ApplyDiagnostics.ForException(resume, "apply").Diagnostics, d => d.Code == "APPLY_PENDING_RESOLVED_NOT_APPLIED");
     }
 
     [Fact]

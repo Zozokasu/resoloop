@@ -1471,6 +1471,7 @@ public sealed partial class ApplyWorkflowTests : IDisposable
         public bool ApplyResponseReceived { get; set; }
         public bool ApplyResponseAccepted { get; set; }
         public Action? BeforeWriteBoundary { get; set; }
+        public string? RejectKind { get; set; }
         public void BeginApplySend() { ApplySendStarted = false; ApplyResponseReceived = false; ApplyResponseAccepted = false; }
         public ApplySessionObservation ObserveApplySession() => new("ws://fake/", DiscoverId, DiscoverId is null ? "unknown" : "matched");
         public Action<string, string>? AfterMutation { get; set; }
@@ -1525,6 +1526,7 @@ public sealed partial class ApplyWorkflowTests : IDisposable
 
         public Task<string> CreateSlotAsync(SlotCreateRequest request, CancellationToken cancellationToken = default)
         {
+            Reject("createSlot");
             Write();
             var id = "S" + _nextSlot++;
             var slot = new FakeSlot(id, request.Name, request.ParentId, request.Position, request.Rotation, request.Scale);
@@ -1541,6 +1543,7 @@ public sealed partial class ApplyWorkflowTests : IDisposable
 
         public Task UpdateSlotAsync(SlotUpdateRequest request, CancellationToken cancellationToken = default)
         {
+            Reject("updateSlot");
             if (request.ParentId is not null) Mutations.Add("move:" + request.Id);
             Write();
             var slot = _slots[request.Id];
@@ -1560,6 +1563,7 @@ public sealed partial class ApplyWorkflowTests : IDisposable
 
         public Task DeleteSlotAsync(string id, CancellationToken cancellationToken = default)
         {
+            Reject("deleteSlot");
             Write();
             var slot = _slots[id];
             _slots[slot.ParentId!].Children.Remove(slot);
@@ -1571,6 +1575,7 @@ public sealed partial class ApplyWorkflowTests : IDisposable
         public Task<ComponentCreateResult> AddComponentAsync(string slotId, string componentType,
             IReadOnlyDictionary<string, string> fields, CancellationToken cancellationToken = default)
         {
+            Reject("addComponent");
             Mutations.Add("add-component:" + slotId);
             Write();
             var id = "C" + _nextComponent++;
@@ -1597,6 +1602,7 @@ public sealed partial class ApplyWorkflowTests : IDisposable
         public Task SetComponentMembersAsync(string componentId, string componentType,
             IReadOnlyDictionary<string, string> fields, CancellationToken cancellationToken = default)
         {
+            Reject("setMembers");
             Mutations.Add("set-members:" + componentId + ":" + string.Join(',', fields.Keys));
             cancellationToken.ThrowIfCancellationRequested();
             Write();
@@ -1610,6 +1616,7 @@ public sealed partial class ApplyWorkflowTests : IDisposable
 
         public Task RemoveComponentAsync(string componentId, CancellationToken cancellationToken = default)
         {
+            Reject("removeComponent");
             Write();
             var component = _components[componentId];
             foreach (var slot in _slots.Values) slot.Components.Remove(component);
@@ -1636,6 +1643,7 @@ public sealed partial class ApplyWorkflowTests : IDisposable
         public Task<TypeInfo> DescribeTypeAsync(string type, CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public Task<string> ImportAssetAsync(ApplyAssetSpec asset, string resolvedSource, CancellationToken cancellationToken = default)
         {
+            Reject("importAsset");
             AssetImports++;
             return Task.FromResult("resdb:///asset-" + AssetImports);
         }
@@ -1654,6 +1662,15 @@ public sealed partial class ApplyWorkflowTests : IDisposable
             _components[component.Id] = component;
             slot.Components.Insert(0, component);
             return component;
+        }
+
+        private void Reject(string kind)
+        {
+            if (RejectKind != kind) return;
+            ApplySendStarted = true;
+            ApplyResponseReceived = true;
+            ApplyResponseAccepted = false;
+            throw new RLoopException("RESONITE_OPERATION_FAILED", "rejected " + kind, ExitCodes.OperationFailed);
         }
 
         private void Write()
