@@ -5,6 +5,12 @@ namespace RLoop.Core;
 /// <summary>Announcement evidence, separate from the per-connection session counter.</summary>
 public sealed record ApplySessionObservation(string NormalizedUrl, string? DiscoverSessionId, string IdentityStatus)
 {
+    /// <summary>
+    /// Produces the local write-lock key: lowercased IDN host with trailing dots removed, URI-canonicalized
+    /// scheme and port, and loopback addresses collapsed to localhost (including 127.0.0.2 and ::1).
+    /// URI path and query remain in the key, and different schemes remain different. This is a coordination
+    /// key, not proof that two URLs reach the same server or that an alias is accepted by the listener.
+    /// </summary>
     public static string NormalizeUrl(string url)
     {
         var uri = new Uri(url);

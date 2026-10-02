@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using RLoop.Core;
+using RLoop.ResoniteLink;
 
 namespace RLoop.Tests;
 
@@ -1471,9 +1472,17 @@ public sealed partial class ApplyWorkflowTests : IDisposable
         public bool ApplySendStarted { get; private set; }
         public bool ApplyResponseReceived { get; set; }
         public bool ApplyResponseAccepted { get; set; }
+        public Func<ApplyAssetSpec, string, CancellationToken, Task<string>>? AssetImporter { get; set; }
+        public IApplySendEvidence? AssetImportEvidence { get; set; }
+        public ResoniteLinkClientAdapter? AssetAdapter { get; set; }
+        private bool _assetImportInProgress;
         public Action? BeforeWriteBoundary { get; set; }
         public string? RejectKind { get; set; }
-        public void BeginApplySend() { ApplySendStarted = false; ApplyResponseReceived = false; ApplyResponseAccepted = false; }
+        public void BeginApplySend()
+        {
+            ApplySendStarted = false; ApplyResponseReceived = false; ApplyResponseAccepted = false;
+            if (_assetImportInProgress) AssetImportEvidence?.BeginApplySend();
+        }
         public ApplySessionObservation ObserveApplySession() => new(ApplySessionObservation.NormalizeUrl(SessionUrl), DiscoverId, DiscoverId is null ? "unknown" : "matched");
         public Action<string, string>? AfterMutation { get; set; }
         public Action<string>? BeforeComponentRead { get; set; }
@@ -1656,8 +1665,28 @@ public sealed partial class ApplyWorkflowTests : IDisposable
         public Task<string> ImportAssetAsync(ApplyAssetSpec asset, string resolvedSource, CancellationToken cancellationToken = default)
         {
             Reject("importAsset");
+            if (AssetImporter is not null)
+            {
+                _assetImportInProgress = true;
+                AssetImportEvidence?.BeginApplySend();
+                return ImportAssetThroughAdapter(asset, resolvedSource, cancellationToken);
+            }
             AssetImports++;
             return Task.FromResult("resdb:///asset-" + AssetImports);
+        }
+        private async Task<string> ImportAssetThroughAdapter(ApplyAssetSpec asset, string resolvedSource, CancellationToken cancellationToken)
+        {
+            try { return await AssetImporter!(asset, resolvedSource, cancellationToken); }
+            finally
+            {
+                if (AssetImportEvidence is not null)
+                {
+                    ApplySendStarted = AssetImportEvidence.ApplySendStarted;
+                    ApplyResponseReceived = AssetImportEvidence.ApplyResponseReceived;
+                    ApplyResponseAccepted = AssetImportEvidence.ApplyResponseAccepted;
+                }
+                _assetImportInProgress = false;
+            }
         }
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
         public void ResetMetrics() => _requests = 0;

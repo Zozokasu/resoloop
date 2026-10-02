@@ -35,6 +35,7 @@ public sealed class ResoniteLinkClientAdapter : IResoniteClient, IResoniteClient
     }
     private sealed class ApplyGuardScope(Action dispose) : IDisposable { public void Dispose() => dispose(); }
     internal Action? BeforeApplyWriteBoundaryForTests;
+    internal Func<string, CancellationToken, Task<string>> ReadMeshFileAsync { get; set; } = File.ReadAllTextAsync;
     private void CheckApplyWriteBoundary(CancellationToken ct)
     {
         if (_applyGeneration.Value is null)
@@ -453,11 +454,10 @@ public sealed class ResoniteLinkClientAdapter : IResoniteClient, IResoniteClient
         CancellationToken cancellationToken = default)
     {
         EnsureConnected();
-        CheckApplyWriteBoundary(cancellationToken);
         Link.AssetData response = asset.Kind.ToLowerInvariant() switch
         {
-            "texture" or "texture2d" => await Wait(_link.ImportTexture(new Link.ImportTexture2DFile { FilePath = resolvedSource }), "asset.texture.import", cancellationToken),
-            "audio" or "audioclip" => await Wait(_link.ImportAudioClip(new Link.ImportAudioClipFile { FilePath = resolvedSource }), "asset.audio.import", cancellationToken),
+            "texture" or "texture2d" => await ImportTexture(resolvedSource, cancellationToken),
+            "audio" or "audioclip" => await ImportAudio(resolvedSource, cancellationToken),
             "mesh" => await ImportMeshJson(resolvedSource, cancellationToken),
             _ => throw new RLoopException("ASSET_KIND_UNSUPPORTED", $"Asset kind '{asset.Kind}' is not importable. Use a resdb URI for material and other runtime assets.", ExitCodes.ValidationFailed)
         };
@@ -466,11 +466,24 @@ public sealed class ResoniteLinkClientAdapter : IResoniteClient, IResoniteClient
         return response.AssetURL?.ToString() ?? throw new RLoopException("ASSET_URL_MISSING", "Asset import succeeded without an AssetURL.", ExitCodes.OperationFailed);
     }
 
+    private async Task<Link.AssetData> ImportTexture(string path, CancellationToken cancellationToken)
+    {
+        CheckApplyWriteBoundary(cancellationToken);
+        return await Wait(_link.ImportTexture(new Link.ImportTexture2DFile { FilePath = path }), "asset.texture.import", cancellationToken);
+    }
+
+    private async Task<Link.AssetData> ImportAudio(string path, CancellationToken cancellationToken)
+    {
+        CheckApplyWriteBoundary(cancellationToken);
+        return await Wait(_link.ImportAudioClip(new Link.ImportAudioClipFile { FilePath = path }), "asset.audio.import", cancellationToken);
+    }
+
     private async Task<Link.AssetData> ImportMeshJson(string path, CancellationToken cancellationToken)
     {
-        var request = MeshImportDocument.Parse(await File.ReadAllTextAsync(path, cancellationToken));
+        var request = MeshImportDocument.Parse(await ReadMeshFileAsync(path, cancellationToken));
+        var raw = MeshImportDocument.ToRawStatic(request);
         CheckApplyWriteBoundary(cancellationToken);
-        if (MeshImportDocument.ToRawStatic(request) is { } raw)
+        if (raw is not null)
             return await Wait(_link.ImportMesh(raw), "asset.mesh.import", cancellationToken);
         return await Wait(_link.ImportMesh(request), "asset.mesh.import", cancellationToken);
     }

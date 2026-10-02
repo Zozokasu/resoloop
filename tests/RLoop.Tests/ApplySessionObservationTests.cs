@@ -22,10 +22,25 @@ public sealed class ApplySessionObservationTests
     [Theory]
     [InlineData("WS://LOCALHOST:047610", "ws://localhost:47610/")]
     [InlineData("ws://127.0.0.1:47610/", "ws://localhost:47610/")]
+    [InlineData("ws://127.0.0.2:47610/", "ws://localhost:47610/")]
     [InlineData("ws://[::1]:47610/", "ws://localhost:47610/")]
     [InlineData("ws://Example.COM:80/", "ws://example.com/")]
     public void SessionUrlNormalizesHostAndPort(string url, string expected) =>
         Assert.Equal(expected, ApplySessionObservation.NormalizeUrl(url));
+
+    [Theory]
+    [InlineData("WS://BÜCHER.example.:80/a?x=1", "ws://xn--bcher-kva.example/a?x=1")]
+    [InlineData("ws://127.0.0.2:47610/path?q=one", "ws://[::1]:47610/path?q=one")]
+    public void EndpointAliasesShareTheExistingNormalizedKey(string left, string right) =>
+        Assert.Equal(ApplySessionObservation.NormalizeUrl(left), ApplySessionObservation.NormalizeUrl(right));
+
+    [Theory]
+    [InlineData("ws://localhost:47610/a", "ws://localhost:47611/a")]
+    [InlineData("ws://localhost:47610/a", "ws://localhost:47610/b")]
+    [InlineData("ws://localhost:47610/a?x=1", "ws://localhost:47610/a?x=2")]
+    [InlineData("ws://localhost:47610/a", "wss://localhost:47610/a")]
+    public void PortPathQueryAndSchemeRemainPartOfTheExistingKey(string left, string right) =>
+        Assert.NotEqual(ApplySessionObservation.NormalizeUrl(left), ApplySessionObservation.NormalizeUrl(right));
 
     [Fact]
     public void SessionAnnouncementOnlyMatchesNormalizedUrlAndSId()
