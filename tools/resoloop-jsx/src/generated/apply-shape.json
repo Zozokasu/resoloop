@@ -527,6 +527,23 @@
           "copy": "Copy",
           "checkFinite": true,
           "suggestCandidate": true
+        },
+        {
+          "name": "fieldAliases",
+          "type": "Record\u003Cstring, string\u003E",
+          "nullable": true,
+          "constructorRequired": false,
+          "jsonRequired": false,
+          "jsxRequired": false,
+          "outputRequired": false,
+          "hasDefault": true,
+          "default": null,
+          "ignoreCondition": "WhenWritingNull",
+          "length": 0,
+          "choices": null,
+          "copy": "Copy",
+          "checkFinite": false,
+          "suggestCandidate": true
         }
       ]
     },
@@ -1131,6 +1148,23 @@
           "choices": null,
           "copy": "Copy",
           "checkFinite": true,
+          "suggestCandidate": true
+        },
+        {
+          "name": "tag",
+          "type": "string",
+          "nullable": true,
+          "constructorRequired": false,
+          "jsonRequired": false,
+          "jsxRequired": false,
+          "outputRequired": false,
+          "hasDefault": true,
+          "default": null,
+          "ignoreCondition": "WhenWritingNull",
+          "length": 0,
+          "choices": null,
+          "copy": "Copy",
+          "checkFinite": false,
           "suggestCandidate": true
         }
       ]

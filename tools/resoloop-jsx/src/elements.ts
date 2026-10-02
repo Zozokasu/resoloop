@@ -13,7 +13,14 @@ export type { JsonValue, ManagedField, RelocationTransform } from "./generated/a
 export interface SlotProps extends SlotScalarProps {
   children?: JsxChild;
 }
-export interface ComponentProps extends ComponentScalarProps {}
+export interface ComponentProps extends ComponentScalarProps { children?: JsxChild }
+export interface FieldProps {
+  name: string;
+  value?: import("./generated/apply-types.js").JsonValue;
+  mode?: "config" | "initial" | "runtime" | "driver-owned";
+  key?: string;
+}
+export interface FieldElement { kind: "field"; props: FieldProps }
 
 /** Internal element object produced by the JSX runtime for <Slot>. */
 export interface SlotElement {
@@ -46,7 +53,7 @@ export interface ScopeElement {
 }
 
 /** Any element object produced by the JSX runtime. */
-export type JsxElement = SlotElement | ComponentElement | FragmentElement | ScopeElement;
+export type JsxElement = SlotElement | ComponentElement | FragmentElement | ScopeElement | FieldElement;
 
 /** Anything that may legally appear as a JSX child / function-component
  *  return value. Arrays may be nested arbitrarily; falsy values are dropped
@@ -75,4 +82,8 @@ export function Component(_props: ComponentProps): JsxNode {
 
 export function Scope(_props: ScopeProps): JsxNode {
   throw new Error("resoloop-jsx: <Scope> is a compile-time marker");
+}
+
+export function Field(_props: FieldProps): JsxNode {
+  throw new Error("resoloop-jsx: <Field> is a compile-time marker");
 }

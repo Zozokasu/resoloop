@@ -5,7 +5,7 @@
 import type { ApplyDocument, ApplyOwnershipSpec, ApplySlotSpec, ApplyComponentSpec, ApplyNodeSpec } from "./generated/apply-types.js";
 import { copyComponent, copySlot } from "./generated/apply-copy.js";
 export type { ApplyDocument, ApplyOwnershipSpec, ApplySlotSpec, ApplyComponentSpec, ApplyNodeSpec } from "./generated/apply-types.js";
-import { copyOrigin, bindIr, markBuildError } from "./source-map.js";
+import { copyOrigin, bindIr, markBuildError, markBuildErrorOrigin, originOfElement, bindIrOrigin, unknown, type Origin } from "./source-map.js";
 import { scopeKey, scopeValue } from "./scope.js";
 
 /** Tagged build error; `code` is printed by the CLI as `code: message`
@@ -146,6 +146,7 @@ export function evaluate(
   // validator's HashSet over the entire recursive walk.
   const slotKeys = new Map<string, string>(); // key -> first path seen
   const componentKeys = new Map<string, string>();
+  const aliasKeys = new Set<string>();
 
   function registerKey(
     map: Map<string, string>,
@@ -203,6 +204,68 @@ export function evaluate(
     const key = resolveKey("component", props, type, parentKey, siblingIndex, path, el.scope ?? "");
     registerKey(componentKeys, key, "component", path);
     const spec = copyComponent(props, key, path, el.scope ?? "", false, { assertFiniteNumbers, scopeValue });
+    const source = originOfElement(el);
+    const attributes = { ...(source?.attributes ?? {}) };
+    function addOrigin(section: string, member: string, origin: Origin | undefined): void {
+      const old = attributes[section];
+      attributes[section] = { ...old, source: old?.source ?? unknown,
+        children: { ...old?.children, [member]: origin ?? { source: unknown } } };
+    }
+    const aliases = spec.fieldAliases;
+    if (aliases && el.scope) {
+      spec.fieldAliases = Object.fromEntries(Object.entries(aliases).map(([alias, member]) => [scopeKey(el.scope!, alias, `${path}.fieldAliases`), member]));
+      const old = attributes.fieldAliases;
+      if (old?.children) attributes.fieldAliases = { ...old, children: Object.fromEntries(Object.entries(old.children).map(([alias, value]) => [scopeKey(el.scope!, alias, path), value])) };
+    }
+    const members = new Set([...Object.keys(spec.fields ?? {}), ...Object.keys(spec.initialFields ?? {})]);
+    function convertField(value: any): void {
+      if (value === undefined || value === null || typeof value === "boolean") return;
+      if (Array.isArray(value)) { value.forEach(convertField); return; }
+      if (isElement(value) && value.kind === "fragment") { convertField(value.props?.children); return; }
+      if (!isElement(value) || value.kind !== "field")
+        throw new BuildError("INVALID_CHILD", `Component children at ${path} must be <Field> elements`);
+      const field = value.props ?? {};
+      const name = field.name;
+      function fail(code: string, message: string, attribute: string): never {
+        const error = new BuildError(code, message); markBuildError(error, value, attribute); throw error;
+      }
+      if (typeof name !== "string" || !name.trim()) fail("APPLY_FIELD_INVALID", `Field at ${path} requires a non-empty name`, "name");
+      if (members.has(name)) fail("APPLY_FIELD_DUPLICATE", `Member '${name}' at ${path} is declared more than once`, "name");
+      members.add(name);
+      const mode = field.mode ?? spec.propertyModes?.[name] ?? "config";
+      if (!["config", "initial", "runtime", "driver-owned"].includes(mode)) fail("APPLY_COMPONENT_FIELD_POLICY_CONFLICT", `Invalid Field mode '${mode}'`, "mode");
+      if (spec.propertyModes?.[name] !== undefined && spec.propertyModes[name] !== mode)
+        fail("APPLY_COMPONENT_FIELD_POLICY_CONFLICT", `Conflicting mode for '${name}'`, "mode");
+      const fieldOrigin = originOfElement(value);
+      if (field.mode !== undefined) {
+        spec.propertyModes = { ...spec.propertyModes, [name]: mode };
+        addOrigin("propertyModes", name, fieldOrigin?.attributes.mode);
+      }
+      if (field.value !== undefined) {
+        assertFiniteNumbers(field.value, `${path}.${mode === "initial" ? "initialFields" : "fields"}.${name}`);
+        const section = mode === "initial" ? "initialFields" : "fields";
+        spec[section] = { ...spec[section], [name]: scopeValue(field.value, el.scope ?? "") };
+        addOrigin(section, name, { ...fieldOrigin?.attributes.value,
+          source: fieldOrigin?.attributes.name?.valueSource ?? unknown, related: fieldOrigin?.related });
+      } else if (mode === "config" || mode === "initial")
+        fail("APPLY_FIELD_INVALID", `Field '${name}' requires a value in '${mode}' mode`, "name");
+      if (field.key !== undefined) {
+        let alias: string;
+        try { alias = scopeKey(el.scope ?? "", field.key, `${path}.fieldAliases`); }
+        catch (error) { if (error instanceof Error) markBuildError(error, value, "key"); throw error; }
+        if (Object.hasOwn(spec.fieldAliases ?? {}, alias)) fail("APPLY_FIELD_ALIAS_DUPLICATE", `Field alias '${alias}' is declared more than once`, "key");
+        spec.fieldAliases = { ...spec.fieldAliases, [alias]: name };
+        addOrigin("fieldAliases", alias, fieldOrigin?.attributes.key);
+      }
+    }
+    convertField(props.children);
+    for (const alias of Object.keys(spec.fieldAliases ?? {})) {
+      if (aliasKeys.has(alias)) {
+        const error = new BuildError("APPLY_FIELD_ALIAS_DUPLICATE", `Field alias '${alias}' is declared more than once`);
+        markBuildErrorOrigin(error, attributes.fieldAliases?.children?.[alias]); throw error;
+      }
+      aliasKeys.add(alias);
+    }
     for (const [member, mode] of Object.entries(spec.propertyModes ?? {})) {
       if (!member.trim() || !["config", "initial", "runtime", "driver-owned"].includes(mode) ||
           mode === "config" && Object.hasOwn(spec.initialFields ?? {}, member) ||
@@ -210,6 +273,7 @@ export function evaluate(
         throw new BuildError("APPLY_COMPONENT_FIELD_POLICY_CONFLICT", `Invalid propertyModes declaration at ${path}.propertyModes.${member}`);
     }
     bindIr(el, spec);
+    bindIrOrigin(spec, { source: source?.source ?? unknown, attributes, related: source?.related });
     return spec;
   }
 

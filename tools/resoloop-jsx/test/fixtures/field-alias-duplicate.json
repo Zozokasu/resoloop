@@ -1,0 +1,1 @@
+{"schemaVersion":"1","ownership":{"key":"root"},"slot":{"key":"root","name":"Duplicate","parent":"Root"},"components":[{"key":"a","type":"Test.Target","fields":{"Enabled":true},"fieldAliases":{"value":"Enabled"}},{"key":"b","type":"Test.Target","fields":{"Enabled":false},"fieldAliases":{"value":"Enabled"}}]}

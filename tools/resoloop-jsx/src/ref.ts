@@ -8,6 +8,8 @@
 import { scopeKey } from "./scope.js";
 
 export const ref = {
+  /** Source-only alias, resolved by the C# compiler to a member selector. */
+  field: (key: string) => `$field:${key}`,
   /** Compose an absolute scoped key, including nested instance segments. */
   key: (...segments: [string, string, ...string[]]) =>
     segments.reduce((scope, segment) => scopeKey(scope, segment, "ref.key"), ""),

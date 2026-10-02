@@ -25,11 +25,12 @@ test("generated copies every declared scalar using independently chosen values",
   const slotValues: Record<string, any> = {
     position: [9, 8, 7], rotation: [0, 1, 0, 0], scale: [3, 2, 1],
     managedFields: ["scale"], preserveWorldTransform: false, migrateFrom: "earlier",
-    relocationTransform: "world", runtimeRelocatable: false,
+    relocationTransform: "world", runtimeRelocatable: false, tag: "shape-sentinel",
   };
   const componentValues: Record<string, any> = {
     fields: { Enabled: false, Empty: null }, migrateFrom: "previous", initialFields: { Seed: 23 }, identityFields: ["Seed"],
     propertyModes: { Enabled: "config", Seed: "initial", Clock: "runtime", Driven: "driver-owned" },
+    fieldAliases: { enabled: "Enabled", seed: "Seed", clock: "Clock", driven: "Driven" },
   };
   // The reflection manifest checks coverage; it is never used to construct expected values.
   const manifest = JSON.parse(fs.readFileSync(path.join(packageRoot, "src/generated/apply-shape.json"), { encoding: "utf8" }));

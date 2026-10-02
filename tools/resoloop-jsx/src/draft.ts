@@ -11,7 +11,7 @@ import { Slot as SlotImpl, Component as ComponentImpl } from "./elements.js";
 import type { SlotProps, ComponentProps, JsxNode } from "./elements.js";
 
 export { Fragment } from "./jsx-runtime.js";
-export { Scope } from "./elements.js";
+export { Scope, Field } from "./elements.js";
 export { ref } from "./ref.js";
 export { BuildError, evaluate } from "./evaluate.js";
 
@@ -31,6 +31,8 @@ export const Component =
 export type {
   JsonValue,
   ScopeProps,
+  FieldProps,
+  FieldElement,
   ScopeElement,
   ManagedField,
   RelocationTransform,

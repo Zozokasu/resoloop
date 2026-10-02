@@ -119,6 +119,7 @@ public sealed partial class WorldService
                 CheckWriter("slot", node.StableKey, name, null, oldMember?.Id);
             }
             if (request.Name is not null) Check("name", expected.Name, current.Name);
+            if (request.Tag is not null) Check("tag", expected.Tag, current.Tag);
             if (request.ParentId is not null) Check("parent", expected.ParentId, current.ParentId);
             if (request.Position is not null) Check("position", expected.Position, current.Position);
             if (request.Rotation is not null) Check("rotation", expected.Rotation, current.Rotation);
@@ -136,7 +137,8 @@ public sealed partial class WorldService
                         ParentId = sent.ParentId is null ? old.ParentId : slot.ParentId,
                         Position = sent.Position is null ? old.Position : slot.Position,
                         Rotation = sent.Rotation is null ? old.Rotation : slot.Rotation,
-                        Scale = sent.Scale is null ? old.Scale : slot.Scale };
+                        Scale = sent.Scale is null ? old.Scale : slot.Scale,
+                        Tag = sent.Tag is null ? old.Tag : slot.Tag };
                 else slots[slot.Id] = slot with { Members = CloneMembers(slot.Members) };
             }
             if (component is null) return;

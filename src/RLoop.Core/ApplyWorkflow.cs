@@ -60,7 +60,7 @@ public sealed record ApplyDocument(
             if (bundleOnly && bundle is null) return null;
             if (bundle is null && !Path.GetExtension(path).Equals(".json", StringComparison.OrdinalIgnoreCase))
                 throw new RLoopException("APPLY_FORMAT_UNSUPPORTED", "Apply documents must use JSON.", ExitCodes.ValidationFailed);
-            var expanded = bundle is null ? ApplyDocumentCompiler.Compile(fullPath) : ApplyDocumentCompiler.CompileBundleIr(bundle.Ir);
+            var expanded = bundle is null ? ApplyDocumentCompiler.Compile(fullPath) : ApplyDocumentCompiler.CompileBundleIr(bundle.Ir, bundle);
             ApplyProjectContext.ValidateJson(expanded.Json);
             var document = (JsonSerializer.Deserialize<ApplyDocument>(expanded.Json, JsonOptions)
                     ?? throw new JsonException("Document was empty.")) with
@@ -193,7 +193,8 @@ public sealed record ApplySlotSpec(
     [property: ApplyShape(CheckFinite = true)] bool PreserveWorldTransform = false,
     [property: ApplyShape(Copy = ApplyCopyPolicy.SlotMigration, CheckFinite = true)] string? MigrateFrom = null,
     [property: ApplyShape(Choices = new[] { "local", "world" }, Alias = "RelocationTransform", CheckFinite = true)] string RelocationTransform = "local",
-    [property: ApplyShape(CheckFinite = true)] bool RuntimeRelocatable = false);
+    [property: ApplyShape(CheckFinite = true)] bool RuntimeRelocatable = false,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Tag = null);
 
 public sealed record ApplyComponentSpec(
     [property: ApplyShape(JsonRequired = true, JsxRequired = true, OutputRequired = true, Copy = ApplyCopyPolicy.Identity)] string Type,
@@ -202,7 +203,8 @@ public sealed record ApplyComponentSpec(
     [property: ApplyShape(Copy = ApplyCopyPolicy.ComponentMigration)] string? MigrateFrom = null,
     [property: ApplyShape(Copy = ApplyCopyPolicy.ScopeValue, CheckFinite = true)] IReadOnlyDictionary<string, JsonElement>? InitialFields = null,
     IReadOnlyList<string>? IdentityFields = null,
-    [property: ApplyShape(CheckFinite = true)] IReadOnlyDictionary<string, string>? PropertyModes = null);
+    [property: ApplyShape(CheckFinite = true)] IReadOnlyDictionary<string, string>? PropertyModes = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyDictionary<string, string>? FieldAliases = null);
 
 [ApplySourceProperty("$scope", "string")]
 public sealed record ApplyNodeSpec(

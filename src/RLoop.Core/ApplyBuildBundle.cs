@@ -17,6 +17,9 @@ internal sealed class ApplyBuildBundle
     private readonly List<Input> inputs = [];
     private string[] usedTypes = [];
     internal string Ir { get; private set; } = "";
+    private readonly Dictionary<string, (string Before, string After)> loweredSelectors = new(StringComparer.Ordinal);
+    internal void RecordLoweredSelector(IReadOnlyList<object> path, string before, string after) =>
+        loweredSelectors[JsonSerializer.Serialize(path)] = (before, after);
     internal ApplyCatalog Catalog { get; private set; } = null!;
 
     internal static ApplyBuildBundle? Read(string path, string? request)
@@ -122,6 +125,25 @@ internal sealed class ApplyBuildBundle
         return matches.Length == 1 ? matches[0] : null;
     }
 
+    internal bool MatchesOriginalString(IReadOnlyList<object> path, string value)
+    {
+        using var original = JsonDocument.Parse(Ir);
+        var current = original.RootElement;
+        foreach (var segment in path)
+        {
+            if (segment is string property)
+            {
+                if (current.ValueKind != JsonValueKind.Object || !current.TryGetProperty(property, out current)) return false;
+            }
+            else if (segment is int index)
+            {
+                if (current.ValueKind != JsonValueKind.Array || index >= current.GetArrayLength()) return false;
+                current = current[index];
+            }
+        }
+        return current.ValueKind == JsonValueKind.String && current.GetString() == value;
+    }
+
     internal bool MatchesOriginal(ApplyDocument document, IReadOnlyList<object> segments)
     {
         using var original = JsonDocument.Parse(Ir);
@@ -141,7 +163,10 @@ internal sealed class ApplyBuildBundle
                 before = before[index]; current = current[index];
             }
         }
-        return JsonElement.DeepEquals(before, current);
+        if (JsonElement.DeepEquals(before, current)) return true;
+        return loweredSelectors.TryGetValue(JsonSerializer.Serialize(segments), out var lowered) &&
+            before.ValueKind == JsonValueKind.String && current.ValueKind == JsonValueKind.String &&
+            before.GetString() == lowered.Before && current.GetString() == lowered.After;
     }
 
     private void ReadEntry(JsonElement entry)

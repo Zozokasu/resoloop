@@ -534,9 +534,9 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
                         BeforeFirstWrite();
                         var request = new SlotCreateRequest(parentId, node.Spec.Name,
                             node.Spec.Position?.ToVector3("position"), node.Spec.Rotation?.ToQuaternion("rotation"),
-                            node.Spec.Scale?.ToVector3("scale"));
+                            node.Spec.Scale?.ToVector3("scale"), Tag: node.Spec.Tag);
                         var creation = Pending(prepared, "createSlot", node.StableKey, parentId: parentId, type: "Slot");
-                        creation.SlotValues = new("", request.Name, request.Position, request.Rotation, request.Scale, parentId);
+                        creation.SlotValues = new("", request.Name, request.Position, request.Rotation, request.Scale, parentId, request.Tag);
                         creation.SlotBinding = new("", node.Path, node.Spec.RuntimeRelocatable, node.PathSegments);
                         await ExecutePendingAsync(prepared, creation, () => safety.CheckConnectionAsync(node.StableKey, cancellationToken), async () =>
                         {
@@ -1172,8 +1172,11 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
             Reason: action == "create" ? "managed Slot does not exist" : action == "relocate" ?
                 $"stable key '{stableKey}' preserves identity while the parent changes; relocationTransform={spec.Slot.RelocationTransform}" : planAction == "rename" ?
                 $"stable key '{stableKey}' preserves identity while the name changes from '{existing!.Name}' to '{spec.Slot.Name}'" :
-                action == "update" ? "one or more managed transforms differ" : migratedFrom is not null ?
-                $"stable key migrated from '{migratedFrom}' without recreating the Slot" : "Slot already matches"));
+                action == "update" ? spec.Slot.Tag is not null && existing!.Tag != spec.Slot.Tag ?
+                    "one or more managed Slot values differ" : "one or more managed transforms differ" : migratedFrom is not null ?
+                $"stable key migrated from '{migratedFrom}' without recreating the Slot" : "Slot already matches",
+            Diffs: spec.Slot.Tag is not null && (existing is null || existing.Tag != spec.Slot.Tag)
+                ? [new ApplyMemberDiff("tag", existing is null ? "create" : "update")] : null));
 
         var childParent = existing ?? new SlotInfo("", spec.Slot.Name, null, null, null, null, null, null, null, false, [], []);
         for (var i = 0; i < (spec.Children?.Count ?? 0); i++)
@@ -2024,6 +2027,7 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
 
     private static bool SlotNeedsUpdate(SlotInfo existing, ApplySlotSpec desired) =>
         existing.Name != desired.Name ||
+        desired.Tag is not null && existing.Tag != desired.Tag ||
         ManagesTransform(desired, "position") && desired.Position is not null && !VectorEquals(existing.Position, desired.Position) ||
         ManagesTransform(desired, "rotation") && desired.Rotation is not null && !QuaternionEquals(existing.Rotation, desired.Rotation) ||
         ManagesTransform(desired, "scale") && desired.Scale is not null && !VectorEquals(existing.Scale, desired.Scale);
@@ -2120,7 +2124,8 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
             node.RelocationPosition ?? (ManagesTransform(node.Spec, "position") && node.Spec.Position is not null && !VectorEquals(existing.Position, node.Spec.Position) ? node.Spec.Position.ToVector3("position") : null),
             node.RelocationRotation ?? (ManagesTransform(node.Spec, "rotation") && node.Spec.Rotation is not null && !QuaternionEquals(existing.Rotation, node.Spec.Rotation) ? node.Spec.Rotation.ToQuaternion("rotation") : null),
             node.RelocationScale ?? (ManagesTransform(node.Spec, "scale") && node.Spec.Scale is not null && !VectorEquals(existing.Scale, node.Spec.Scale) ? node.Spec.Scale.ToVector3("scale") : null),
-            node.SlotAction == "relocate" ? node.Parent?.Id ?? rootParentId : null);
+            node.SlotAction == "relocate" ? node.Parent?.Id ?? rootParentId : null,
+            node.Spec.Tag is not null && existing.Tag != node.Spec.Tag ? node.Spec.Tag : null);
     }
 
     private static bool ManagesTransform(ApplySlotSpec slot, string field) =>

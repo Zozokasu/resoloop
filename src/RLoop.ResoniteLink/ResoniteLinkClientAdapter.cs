@@ -213,15 +213,7 @@ public sealed class ResoniteLinkClientAdapter : IResoniteClient, IResoniteClient
     public async Task<string> CreateSlotAsync(SlotCreateRequest request, CancellationToken cancellationToken = default)
     {
         EnsureConnected();
-        var slot = new Link.Slot
-        {
-            ID = request.RequestedId,
-            Parent = new Link.Reference { TargetID = request.ParentId },
-            Name = new Link.Field_string { Value = request.Name },
-            Position = request.Position is null ? null : new Link.Field_float3 { Value = ToLink(request.Position) },
-            Rotation = request.Rotation is null ? null : new Link.Field_floatQ { Value = ToLink(request.Rotation) },
-            Scale = request.Scale is null ? null : new Link.Field_float3 { Value = ToLink(request.Scale) }
-        };
+        var slot = MapSlotCreate(request);
         CheckApplyWriteBoundary(cancellationToken);
         var response = await Wait(_link.AddSlot(new Link.AddSlot { Data = slot }), "slot.add", cancellationToken);
         ObserveApplyResponse(response.Success);
@@ -232,20 +224,36 @@ public sealed class ResoniteLinkClientAdapter : IResoniteClient, IResoniteClient
     public async Task UpdateSlotAsync(SlotUpdateRequest request, CancellationToken cancellationToken = default)
     {
         EnsureConnected();
-        var slot = new Link.Slot
-        {
-            ID = request.Id,
-            Parent = request.ParentId is null ? null : new Link.Reference { TargetID = request.ParentId },
-            Name = request.Name is null ? null : new Link.Field_string { Value = request.Name },
-            Position = request.Position is null ? null : new Link.Field_float3 { Value = ToLink(request.Position) },
-            Rotation = request.Rotation is null ? null : new Link.Field_floatQ { Value = ToLink(request.Rotation) },
-            Scale = request.Scale is null ? null : new Link.Field_float3 { Value = ToLink(request.Scale) }
-        };
+        var slot = MapSlotUpdate(request);
         CheckApplyWriteBoundary(cancellationToken);
         var response = await Wait(_link.UpdateSlot(new Link.UpdateSlot { Data = slot }), "slot.update", cancellationToken);
         ObserveApplyResponse(response.Success);
         EnsureSuccess(response, "SLOT_UPDATE_FAILED", new Dictionary<string, object?> { ["slotId"] = request.Id });
     }
+
+    internal static Link.Slot MapSlotCreate(SlotCreateRequest request) =>
+        new Link.Slot
+        {
+            ID = request.RequestedId,
+            Parent = new Link.Reference { TargetID = request.ParentId },
+            Name = new Link.Field_string { Value = request.Name },
+            Tag = request.Tag is null ? null : new Link.Field_string { Value = request.Tag },
+            Position = request.Position is null ? null : new Link.Field_float3 { Value = ToLink(request.Position) },
+            Rotation = request.Rotation is null ? null : new Link.Field_floatQ { Value = ToLink(request.Rotation) },
+            Scale = request.Scale is null ? null : new Link.Field_float3 { Value = ToLink(request.Scale) }
+        };
+
+    internal static Link.Slot MapSlotUpdate(SlotUpdateRequest request) =>
+        new Link.Slot
+        {
+            ID = request.Id,
+            Parent = request.ParentId is null ? null : new Link.Reference { TargetID = request.ParentId },
+            Name = request.Name is null ? null : new Link.Field_string { Value = request.Name },
+            Tag = request.Tag is null ? null : new Link.Field_string { Value = request.Tag },
+            Position = request.Position is null ? null : new Link.Field_float3 { Value = ToLink(request.Position) },
+            Rotation = request.Rotation is null ? null : new Link.Field_floatQ { Value = ToLink(request.Rotation) },
+            Scale = request.Scale is null ? null : new Link.Field_float3 { Value = ToLink(request.Scale) }
+        };
 
     public async Task DeleteSlotAsync(string id, CancellationToken cancellationToken = default)
     {

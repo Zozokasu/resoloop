@@ -73,11 +73,16 @@ export function callComponent(fn: (props: any) => any, props: object): any {
 }
 export function copyOrigin(from: object, to: object): void { const origin = origins.get(from); if (origin) origins.set(to, origin); }
 export function bindIr(from: object, to: object): void { const origin = origins.get(from); if (origin) irOrigins.set(to, origin); }
+export function originOfElement(value: object): ElementOrigin | undefined { return origins.get(value); }
+export function bindIrOrigin(to: object, origin: ElementOrigin): void { irOrigins.set(to, origin); }
 export function originOfIr(value: object): ElementOrigin | undefined { return irOrigins.get(value); }
 export function markBuildError(error: object, element: object, attribute: string): void {
   const origin = origins.get(element);
   buildErrors.set(error, { source: origin?.attributes[attribute]?.valueSource ?? unknown,
     related: [...(origin?.attributes[attribute]?.related ?? []), ...(origin?.related ?? [])] });
+}
+export function markBuildErrorOrigin(error: object, origin: Origin | undefined): void {
+  buildErrors.set(error, { source: origin?.valueSource ?? origin?.source ?? unknown, related: origin?.related ?? [] });
 }
 export function buildErrorLocation(error: object): string {
   const source = buildErrors.get(error)?.source ?? unknown;

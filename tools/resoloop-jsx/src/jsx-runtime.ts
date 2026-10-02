@@ -9,7 +9,7 @@
 // the evaluator can uniformly read element.props.key.
 
 import { captureElement, callComponent } from "./source-map.js";
-import { Slot, Component, Scope } from "./elements.js";
+import { Slot, Component, Scope, Field } from "./elements.js";
 import type { JsxChild, JsxNode, JsxElement } from "./elements.js";
 
 /** Marker for <>{...}</> fragments. Also recognized by reference equality;
@@ -36,6 +36,7 @@ function createElement(type: unknown, props: any, key?: string): JsxNode {
   function marker(kind: string): JsxNode { const element = { kind, props: merged } as JsxNode; captureElement(element as object); return element; }
   if (type === Slot) return marker("slot");
   if (type === Component) return marker("component");
+  if (type === Field) return marker("field");
   if (type === Fragment) return marker("fragment");
   if (type === Scope) return marker("scope");
   // User-defined function component: resolved eagerly at evaluation time.
