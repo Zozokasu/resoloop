@@ -91,11 +91,12 @@ public sealed class P1WorkflowTests : IDisposable
               {"name":"base","source":"base.pg","module":"Base"}
             ] }
             """);
-        var fake = new FakeFluxTool();
-        var orchestrator = new FluxManifestOrchestrator(fake);
+        var world = new FluxTestWorld();
+        var fake = new FluxTestDeployer(world);
+        var orchestrator = new FluxManifestOrchestrator(fake, fake, world);
 
-        var first = await orchestrator.DeployAsync(manifest, "Reso_Parent", new Uri("ws://localhost:12449"), null, null);
-        var second = await orchestrator.DeployAsync(manifest, "Reso_Parent", new Uri("ws://localhost:12449"), null, null);
+        var first = await orchestrator.DeployAsync(manifest, FluxTestWorld.Parent, new Uri(world.Url), null, null);
+        var second = await orchestrator.DeployAsync(manifest, FluxTestWorld.Parent, new Uri(world.Url), null, null);
 
         Assert.True(first.Success);
         Assert.Equal(["Base", "Main"], fake.Deployed);
@@ -122,8 +123,12 @@ public sealed class P1WorkflowTests : IDisposable
               }
             }] }
             """);
-        var fake = new FakeFluxTool();
-        var orchestrator = new FluxManifestOrchestrator(fake);
+        var world = new FluxTestWorld();
+        var fake = new FluxTestDeployer(world);
+        fake.PreparedPorts["Binding"] = [
+            FluxTestDeployer.Port("Source", "source", "[FrooxEngine]FrooxEngine.ProtoFlux.GlobalReference<[FrooxEngine]FrooxEngine.Slot>", "element"),
+            FluxTestDeployer.Port("Result", "drive", "[FrooxEngine]FrooxEngine.FieldDriveBase<bool>+Proxy")];
+        var orchestrator = new FluxManifestOrchestrator(fake, fake, world);
         var resolved = new Dictionary<string, FluxResolvedModuleBindings>
         {
             ["binding"] = new([
@@ -132,24 +137,26 @@ public sealed class P1WorkflowTests : IDisposable
             ])
         };
 
-        var result = await orchestrator.DeployAsync(manifest, "Reso_Parent", new Uri("ws://localhost:12449"),
+        var result = await orchestrator.DeployAsync(manifest, FluxTestWorld.Parent, new Uri(world.Url),
             null, null, resolvedBindings: resolved);
 
         Assert.True(result.Success);
-        var request = Assert.Single(fake.Requests);
+        var request = Assert.Single(fake.Executions);
         Assert.Equal("Reso_Slot", request.InputMap!["Source"]);
         Assert.Equal("Reso_Member", request.OutputMap!["Result"]);
         Assert.Equal(2, Assert.Single(result.Modules).Bindings!.Count);
+        // The guard read both bindings back from the new module before it settled the state.
+        Assert.Equal(FluxDeployCheckStatus.Verified, Assert.Single(result.Modules).Deploy!.BindingReadback);
 
         resolved["binding"] = new([
             new("Source", "source", "$slot:root", "Reso_RecreatedSlot", "slot", "Slot"),
             new("Result", "drive", "$member:target.Enabled", "Reso_Member", "member", "bool")
         ]);
-        var rebound = await orchestrator.DeployAsync(manifest, "Reso_Parent", new Uri("ws://localhost:12449"),
+        var rebound = await orchestrator.DeployAsync(manifest, FluxTestWorld.Parent, new Uri(world.Url),
             null, null, resolvedBindings: resolved);
 
         Assert.True(Assert.Single(rebound.Modules).Deployed);
-        Assert.Equal("Reso_RecreatedSlot", fake.Requests[1].InputMap!["Source"]);
+        Assert.Equal("Reso_RecreatedSlot", fake.Executions[1].InputMap!["Source"]);
     }
 
     [Fact]
@@ -179,8 +186,13 @@ public sealed class P1WorkflowTests : IDisposable
             ])
         };
 
-        var result = await new FluxManifestOrchestrator(new FakeFluxTool()).DeployAsync(manifest,
-            "Reso_Parent", new Uri("ws://localhost:12449"), null, null, resolvedBindings: resolved);
+        var world = new FluxTestWorld();
+        var fake = new FluxTestDeployer(world);
+        fake.PreparedPorts["Aliases"] = [
+            FluxTestDeployer.Port("Count", "source", "[FrooxEngine]FrooxEngine.ProtoFlux.GlobalReference<[FrooxEngine]FrooxEngine.IValue<int>>"),
+            FluxTestDeployer.Port("Playing", "drive", "[FrooxEngine]FrooxEngine.FieldDriveBase<bool>+Proxy")];
+        var result = await new FluxManifestOrchestrator(fake, fake, world).DeployAsync(manifest,
+            FluxTestWorld.Parent, new Uri(world.Url), null, null, resolvedBindings: resolved);
 
         Assert.True(result.Success);
     }
@@ -241,31 +253,36 @@ public sealed class P1WorkflowTests : IDisposable
     }
 
     [Fact]
-    public async Task FluxManifestReturnsReobservedModuleChildIdsInsteadOfSdkParentId()
+    public async Task FluxManifestReturnsTheCreatedModuleRootIdInsteadOfTheParentId()
     {
         File.WriteAllText(Path.Combine(_root, "ids.pg"), "module ActualModule where { 1->display }");
         var manifest = Path.Combine(_root, "ids-flux.json");
         File.WriteAllText(manifest, """
             { "schemaVersion":"1", "modules":[{"name":"logical-name","source":"ids.pg","module":"ActualModule"}] }
             """);
-        var observations = new Queue<string?>(["Reso_OldModule", "Reso_NewModule", "Reso_NewModule"]);
-        var fake = new FakeFluxTool();
-        var orchestrator = new FluxManifestOrchestrator(fake);
+        // ROADMAP-9: the previous root comes from the deploy state, never from a lookup by name.
+        var world = new FluxTestWorld();
+        var fake = new FluxTestDeployer(world);
+        var orchestrator = new FluxManifestOrchestrator(fake, fake, world);
+        var first = await orchestrator.DeployAsync(manifest, FluxTestWorld.Parent, new Uri(world.Url), null, null);
+        File.WriteAllText(Path.Combine(_root, "ids.pg"), "module ActualModule where { 2->display }");
 
-        var result = await orchestrator.DeployAsync(manifest, "Reso_Parent", new Uri("ws://localhost:12449"),
-            null, null, resolveModuleSlot: (_, _) => Task.FromResult(observations.Dequeue()));
+        var result = await orchestrator.DeployAsync(manifest, FluxTestWorld.Parent, new Uri(world.Url), null, null);
 
+        Assert.Equal("Flux_1", Assert.Single(first.Modules).ModuleSlotIdAfter);
         var deployment = Assert.Single(result.Modules);
-        Assert.Equal("Reso_OldModule", deployment.ModuleSlotIdBefore);
-        Assert.Equal("Reso_NewModule", deployment.ModuleSlotIdAfter);
+        Assert.Equal("Flux_1", deployment.ModuleSlotIdBefore);
+        Assert.Equal("Flux_2", deployment.ModuleSlotIdAfter);
         Assert.NotEqual(result.ParentSlotId, deployment.ModuleSlotIdAfter);
+        Assert.Equal([null, "Flux_1"], fake.Executions.Select(request => request.PreviousRootSlotId));
 
-        var reconnected = await orchestrator.DeployAsync(manifest, "Reso_Parent", new Uri("ws://localhost:12449"),
-            null, null, sessionId: "connection-2",
-            resolveModuleSlot: (_, _) => Task.FromResult(observations.Dequeue()));
+        // A new connection to the same session (same URL and S- ID; the per-connection counter is not identity).
+        world.Generation = "gen-2";
+        var reconnected = await orchestrator.DeployAsync(manifest, FluxTestWorld.Parent, new Uri(world.Url), null, null);
 
         Assert.Equal("no-op", Assert.Single(reconnected.Modules).Action);
-        Assert.Single(fake.Requests);
+        Assert.Equal("Flux_2", Assert.Single(reconnected.Modules).ModuleSlotIdAfter);
+        Assert.Equal(2, fake.Executions.Count);
     }
 
     [Fact]
@@ -280,8 +297,10 @@ public sealed class P1WorkflowTests : IDisposable
             }] }
             """);
 
-        var error = await Assert.ThrowsAsync<RLoopException>(() => new FluxManifestOrchestrator(new FakeFluxTool())
-            .DeployAsync(manifest, "Reso_Parent", new Uri("ws://localhost:12449"), null, null));
+        var world = new FluxTestWorld();
+        var fake = new FluxTestDeployer(world);
+        var error = await Assert.ThrowsAsync<RLoopException>(() => new FluxManifestOrchestrator(fake, fake, world)
+            .DeployAsync(manifest, FluxTestWorld.Parent, new Uri(world.Url), null, null));
 
         Assert.Equal("FLUX_BINDINGS_UNRESOLVED", error.Code);
     }
@@ -316,7 +335,7 @@ public sealed class P1WorkflowTests : IDisposable
     [Fact]
     public async Task FluxManagedDataProbeDistinguishesSuccessfulAutoDiscoveryFromFailure()
     {
-        var successTool = new FakeFluxTool
+        var successTool = new FluxTestDeployer(new FluxTestWorld())
         {
             BuildResult = new FluxResult(true, 0, "Added Froox nodes: 3306\n", "")
         };
@@ -328,7 +347,7 @@ public sealed class P1WorkflowTests : IDisposable
         Assert.Equal(3306, success.LoadedNodes);
         Assert.Null(Assert.Single(successTool.BuildRequests).LibraryPath);
 
-        var failureTool = new FakeFluxTool
+        var failureTool = new FluxTestDeployer(new FluxTestWorld())
         {
             BuildResult = new FluxResult(false, 1, "", "Could not find FrooxEngine assemblies")
         };
@@ -376,10 +395,11 @@ public sealed class P1WorkflowTests : IDisposable
         File.WriteAllText(manifest, """
             { "schemaVersion":"1", "modules":[{"name":"empty","source":"empty.pg","module":"Empty"}] }
             """);
-        var fake = new FakeFluxTool { BuildResult = new FluxResult(true, 0, "Packing 0 ProtoFlux nodes and 0 comments.", "") };
+        var world = new FluxTestWorld();
+        var fake = new FluxTestDeployer(world) { BuildResult = new FluxResult(true, 0, "Packing 0 ProtoFlux nodes and 0 comments.", "") };
 
-        var error = await Assert.ThrowsAsync<RLoopException>(() => new FluxManifestOrchestrator(fake)
-            .DeployAsync(manifest, "Reso_Parent", new Uri("ws://localhost:12449"), null, null));
+        var error = await Assert.ThrowsAsync<RLoopException>(() => new FluxManifestOrchestrator(fake, fake, world)
+            .DeployAsync(manifest, FluxTestWorld.Parent, new Uri(world.Url), null, null));
 
         Assert.Equal("FLUX_EMPTY_MODULE", error.Code);
         Assert.Empty(fake.Deployed);
@@ -402,10 +422,11 @@ public sealed class P1WorkflowTests : IDisposable
         {
             ["button"] = new([new("TouchButton", "source", "$component:button", "Reso_Button", "component", "FrooxEngine.PhysicalButton")])
         };
-        var fake = new FakeFluxTool();
+        var world = new FluxTestWorld();
+        var fake = new FluxTestDeployer(world);
 
-        var error = await Assert.ThrowsAsync<RLoopException>(() => new FluxManifestOrchestrator(fake)
-            .DeployAsync(manifest, "Reso_Parent", new Uri("ws://localhost:12449"), null, null, resolvedBindings: resolved));
+        var error = await Assert.ThrowsAsync<RLoopException>(() => new FluxManifestOrchestrator(fake, fake, world)
+            .DeployAsync(manifest, FluxTestWorld.Parent, new Uri(world.Url), null, null, resolvedBindings: resolved));
 
         Assert.Equal("FLUX_INTERFACE_GLOBAL_UNSUPPORTED", error.Code);
         Assert.Empty(fake.BuildRequests);
@@ -413,26 +434,4 @@ public sealed class P1WorkflowTests : IDisposable
     }
 
     public void Dispose() { if (Directory.Exists(_root)) Directory.Delete(_root, true); }
-
-    private sealed class FakeFluxTool : IFluxTool
-    {
-        public List<string> Deployed { get; } = [];
-        public List<FluxDeployRequest> Requests { get; } = [];
-        public List<FluxBuildRequest> BuildRequests { get; } = [];
-        public FluxResult? BuildResult { get; init; }
-        public Task<FluxResult> BuildAsync(FluxBuildRequest request, CancellationToken cancellationToken = default)
-        {
-            BuildRequests.Add(request);
-            return Task.FromResult(BuildResult ?? new FluxResult(true, 0, "", ""));
-        }
-        public Task<FluxResult> CheckAsync(FluxBuildRequest request, CancellationToken cancellationToken = default) => BuildAsync(request, cancellationToken);
-        public Task<FluxResult> WatchAsync(FluxBuildRequest request, CancellationToken cancellationToken = default) => BuildAsync(request, cancellationToken);
-        public Task<FluxResult> DeployAsync(FluxDeployRequest request, CancellationToken cancellationToken = default)
-        {
-            Deployed.Add(request.Module);
-            Requests.Add(request);
-            return Task.FromResult(new FluxResult(true, 0, "", "", "Reso_" + request.Module));
-        }
-        public Task<FluxToolStatus> GetStatusAsync(CancellationToken cancellationToken = default) => Task.FromResult(new FluxToolStatus(true, "fake", "1.9.0"));
-    }
 }

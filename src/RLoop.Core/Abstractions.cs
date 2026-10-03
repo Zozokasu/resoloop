@@ -44,13 +44,24 @@ public interface IFluxTool
     Task<FluxResult> BuildAsync(FluxBuildRequest request, CancellationToken cancellationToken = default);
     Task<FluxResult> CheckAsync(FluxBuildRequest request, CancellationToken cancellationToken = default);
     Task<FluxResult> WatchAsync(FluxBuildRequest request, CancellationToken cancellationToken = default);
-    Task<FluxResult> DeployAsync(FluxDeployRequest request, CancellationToken cancellationToken = default);
     Task<FluxToolStatus> GetStatusAsync(CancellationToken cancellationToken = default);
 }
 
+/// <summary>
+/// Places a compiled ProtoGraph module in two separate steps (ROADMAP-9, P1-b). Types are in FluxDeployContracts.cs.
+/// Every deployment goes through <see cref="FluxDeployGuard"/>; nothing else calls <see cref="ExecuteAsync"/>.
+/// </summary>
 public interface IFluxDeployer
 {
-    Task<FluxResult> DeployAsync(FluxDeployRequest request, CancellationToken cancellationToken = default);
+    /// <summary>Compiles only. Never connects to or writes to the world.</summary>
+    Task<FluxDeployPreparation> PrepareAsync(FluxDeployPrepareRequest request, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Compiles again and, only when that compile is clean and declares the expected module name: removes the exact
+    /// previous root (if given), sends the creation batch once, and reads the new root ID from its first inner response.
+    /// Failures are reported through the result, not by throwing.
+    /// </summary>
+    Task<FluxDeployExecution> ExecuteAsync(FluxDeployExecuteRequest request, CancellationToken cancellationToken = default);
 }
 
 public sealed record FluxBuildRequest(
@@ -59,16 +70,6 @@ public sealed record FluxBuildRequest(
     string? Output,
     string? LibraryPath,
     bool CompactErrors = true);
-
-public sealed record FluxDeployRequest(
-    string ProjectDirectory,
-    string Module,
-    string ParentSlotId,
-    Uri Url,
-    string? LibraryPath,
-    string? HelperPath,
-    IReadOnlyDictionary<string, string>? InputMap = null,
-    IReadOnlyDictionary<string, string>? OutputMap = null);
 
 public sealed record FluxDiagnostic(
     string? File,
@@ -82,9 +83,28 @@ public sealed record FluxDiagnostic(
     string Category,
     bool IsPrimary);
 
+/// <param name="Verdict">How a build or check was judged from its diagnostics (P9); null for other Flux-SDK commands.</param>
 public sealed record FluxResult(bool Success, int ExitCode, string StandardOutput, string StandardError,
     string? OutputPath = null,
     IReadOnlyList<FluxDiagnostic>? Diagnostics = null,
-    IReadOnlyList<FluxDiagnostic>? PrimaryDiagnostics = null);
+    IReadOnlyList<FluxDiagnostic>? PrimaryDiagnostics = null,
+    FluxBuildVerdict? Verdict = null);
+
+/// <summary>
+/// The judgement of one Flux-SDK build or check (ROADMAP-9, P9). Success is decided by the error diagnostics in its
+/// output, not by the exit code alone: Flux-SDK 1.9.0 exits 1 for a build with warnings only, and writes its
+/// diagnostics to stdout. A build is only an early check; the deployer's own compile decides what is placed.
+/// </summary>
+/// <param name="Basis">
+/// <c>clean</c> (exit 0, no error), <c>warningsOnly</c> (non-zero exit explained by warnings and a summary of 0 errors),
+/// <c>errorDiagnostics</c> (at least one error diagnostic, whatever the exit code), <c>reportedErrors</c> (the summary
+/// line reports errors that were not parsed as diagnostics), <c>unexplainedExitCode</c> (non-zero exit that no parsed
+/// diagnostic explains), or <c>toolReportedFailure</c> (the tool reported failure without output that explains it).
+/// </param>
+/// <param name="ErrorCount">Parsed diagnostics with severity <c>error</c>.</param>
+/// <param name="WarningCount">Parsed diagnostics with severity <c>warning</c>.</param>
+/// <param name="ReportedErrorCount">Errors stated by the SDK's summary line, when there is one.</param>
+public sealed record FluxBuildVerdict(bool Success, string Basis, int ExitCode, int ErrorCount, int WarningCount,
+    int? ReportedErrorCount, string Detail);
 
 public sealed record FluxToolStatus(bool Available, string Executable, string? Version);

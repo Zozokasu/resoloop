@@ -109,6 +109,110 @@ public sealed class SessionWriteLockTests(ITestOutputHelper output) : IDisposabl
         finally { if (!holder.HasExited) { holder.Kill(entireProcessTree: true); await holder.WaitForExitAsync(); } }
     }
 
+    // ROADMAP-9 unit 2: the pending rule is chosen by the kind of the state the lock points to.
+    private static readonly FluxDeploySessionRecord FluxSession = new("ws://localhost/", null, "unknown");
+    private static FluxDeployPending FluxPending() => FluxDeployPending.Begin("main", FluxSession, "Reso_Parent", "Main",
+        null, [], "HASH", new DateTimeOffset(2026, 10, 3, 0, 0, 0, TimeSpan.Zero));
+
+    [Fact]
+    public void R9FluxStateWithPendingBlocksOtherWritersLikeAnApplyPending()
+    {
+        var fluxState = Path.Combine(root, "flux", "flux.json");
+        FluxDeployStateStore.AddPending(fluxState, FluxPending());
+        using var lease = SessionWriteLock.Acquire("ws://localhost", root);
+        lease.RecordState(fluxState);
+
+        foreach (var other in new[] { Path.Combine(root, "other.state.json"), null })
+        {
+            var e = Assert.Throws<RLoopException>(() => lease.CheckPreviousState(other));
+            Assert.Equal("APPLY_WRITE_UNVERIFIED", e.Code);
+            Assert.Equal(7, e.ExitCode);
+            Assert.Equal("previousFluxStatePending", e.Context["reason"]);
+            Assert.Equal(Path.GetFullPath(fluxState), e.Context["stateFile"]);
+            Assert.Equal(lease.Path, e.Context["lockFile"]);
+            Assert.Contains("--discard-pending OPERATION_ID --yes", Assert.Single(e.Suggestions));
+        }
+        // The owner of the Flux state keeps responsibility for its own pending record.
+        lease.CheckPreviousState(fluxState);
+    }
+
+    [Fact]
+    public void R9FluxStateWithoutPendingLetsOtherWritersContinue()
+    {
+        var fluxState = Path.Combine(root, "flux", "flux.json");
+        var pending = FluxPending();
+        FluxDeployStateStore.AddPending(fluxState, pending);
+        FluxDeployStateStore.ResolvePending(fluxState, pending.OperationId, new FluxDeployModuleRecord
+            { ParentSlotId = "Reso_Parent", RootSlotId = "Reso_Root", ModuleName = "Main", InputHash = "HASH" });
+        using var lease = SessionWriteLock.Acquire("ws://localhost", root);
+        lease.RecordState(fluxState);
+
+        lease.CheckPreviousState(Path.Combine(root, "other.state.json"));
+        lease.CheckPreviousState(null);
+
+        // Discarding the pending record of a blocked state unblocks it, without a client.
+        FluxDeployStateStore.AddPending(fluxState, pending);
+        Assert.Equal("previousFluxStatePending", Assert.Throws<RLoopException>(() => lease.CheckPreviousState(null)).Context["reason"]);
+        FluxDeployPendingDiscard.Discard(fluxState, pending.OperationId, confirmed: true);
+        lease.CheckPreviousState(null);
+    }
+
+    [Fact]
+    public void R9MissingFluxStateLetsOtherWritersContinue()
+    {
+        var fluxState = Path.Combine(root, "flux", "flux.json");
+        FluxDeployStateStore.AddPending(fluxState, FluxPending());
+        using var lease = SessionWriteLock.Acquire("ws://localhost", root);
+        lease.RecordState(fluxState);
+        File.Delete(fluxState);
+
+        lease.CheckPreviousState(null); // Same rule as a missing apply state.
+    }
+
+    [Theory]
+    [InlineData("""{ "kind": "flux-deploy", "schemaVersion": 3, "session": null, "modules": {}, "pending": [] }""")] // newer Flux state
+    [InlineData("""{ "kind": "flux-deploy", "schemaVersion": 2, "session": null, "modules": {} }""")] // no pending list
+    [InlineData("""{ "kind": "flux-deploy", "schemaVersion": 2, "session": null, "modules": {}, "pending": [], "future": true }""")]
+    [InlineData("""{ "kind": "something-else", "schemaVersion": 2, "pending": [] }""")] // unknown kind
+    [InlineData("""{ "kind": null, "ownershipKey": "own", "schemaVersion": 3 }""")]
+    [InlineData("""{ "schemaVersion": 1, "parentSlotId": "P", "sessionId": "1", "modules": {} }""")] // Flux v1: no kind, no ownershipKey
+    [InlineData("""{ "schemaVersion": 2, "session": null, "modules": {}, "pending": [] }""")]
+    [InlineData("""{ "ownershipKey": "own", "schemaVersion": 4, "slots": {}, "components": {} }""")] // newer apply state
+    [InlineData("{")]
+    [InlineData("[]")]
+    public void R9StateOfUnknownKindOrVersionBlocksAsUnreadable(string content)
+    {
+        var state = Path.Combine(root, "previous.json");
+        Directory.CreateDirectory(root);
+        File.WriteAllText(state, content);
+        using var lease = SessionWriteLock.Acquire("ws://localhost", root);
+        lease.RecordState(state);
+
+        var e = Assert.Throws<RLoopException>(() => lease.CheckPreviousState(Path.Combine(root, "other.state.json")));
+
+        Assert.Equal("APPLY_WRITE_UNVERIFIED", e.Code);
+        Assert.Equal("previousStateUnreadable", e.Context["reason"]);
+        Assert.Equal(state, e.Context["stateFile"]);
+        lease.CheckPreviousState(state); // The owner may still repair its own state.
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void R9ApplyStateKeepsItsPendingRule(bool pending)
+    {
+        var state = Path.Combine(root, "apply.state.json");
+        ApplyStateStore.Save(state, new ApplyState { OwnershipKey = "own",
+            Pending = pending ? [new() { Kind = "createSlot", Key = "root", OwnershipKey = "own" }] : [] });
+        using var lease = SessionWriteLock.Acquire("ws://localhost", root);
+        lease.RecordState(state);
+
+        if (!pending) { lease.CheckPreviousState(null); return; }
+        var e = Assert.Throws<RLoopException>(() => lease.CheckPreviousState(null));
+        Assert.Equal("APPLY_WRITE_UNVERIFIED", e.Code);
+        Assert.Equal("previousStatePending", e.Context["reason"]);
+    }
+
     private static string Quote(string value) => value.Replace("'", "''");
     private static Process StartPowerShell(string script)
     {
@@ -129,9 +233,32 @@ public sealed class SessionWriteLockTests(ITestOutputHelper output) : IDisposabl
     [InlineData("component inspect", false)]
     [InlineData("type describe", false)]
     [InlineData("snapshot create", false)]
-    [InlineData("flux deploy", false)]
     public void S3DirectEntryClassification(string command, bool write) =>
         Assert.Equal(write, Program.IsDirectWrite(ParsedArguments.Parse(command.Split(' '))));
+
+    // ROADMAP-9 unit 4a (replaces S3's "flux deploy is not a write"): ProtoGraph deployments write to the world and
+    // take the URL lock, but the deploy guard takes it once per deployment. The CLI's generic path does not take it as
+    // well, which would make the guard's own acquisition APPLY_SESSION_BUSY. Commands that do not reach the world
+    // (build, check, watch of a .pg source, discarding a pending record) take no lock.
+    [Theory]
+    [InlineData("slot create", "Cli")]
+    [InlineData("component remove", "Cli")]
+    [InlineData("flux deploy --project p --module m --parent P", "FluxGuard")]
+    [InlineData("flux deploy-manifest modules.json", "FluxGuard")]
+    [InlineData("flux watch modules.json", "FluxGuard")]
+    [InlineData("flux watch Main.pg", "None")]
+    [InlineData("flux build Main.pg", "None")]
+    [InlineData("flux check Main.pg", "None")]
+    [InlineData("flux deploy --project p --module m --discard-pending OP --yes", "None")]
+    [InlineData("flux deploy-manifest modules.json --discard-pending OP --yes", "None")]
+    [InlineData("type describe", "None")]
+    public void R9SessionLockEntryClassification(string command, string expected)
+    {
+        var entry = Enum.Parse<Program.SessionLockEntry>(expected);
+        var args = ParsedArguments.Parse(command.Split(' '));
+        Assert.Equal(entry, Program.SessionLockEntryOf(args));
+        Assert.Equal(entry == Program.SessionLockEntry.Cli, Program.IsDirectWrite(args));
+    }
 
     public void Dispose()
     {
