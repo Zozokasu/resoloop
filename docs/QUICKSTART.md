@@ -131,7 +131,7 @@ resoloop flux watch flux/resoloop.flux.json --json
 resoloop inspect $slotId --depth 2 --members --json
 ~~~
 
-`flux deploy` は指定parent配下の同名moduleだけを置換します。`flux validate-manifest`はResoniteへ接続せず、source、dependency、port、bindingを検証します。module manifestでは複数moduleと依存順を宣言でき、world apply stateの `$slot:key` をparentにできます。CLIの`--state`はcurrent directory基準、manifest内の`worldState`、`source`、`deployState`はmanifest基準です。manifest結果の`parentSlotId`はdeploy先、`moduleSlotIdBefore` / `moduleSlotIdAfter`は再観測した実module childです。watchは成功buildだけを再deployします。
+`flux deploy`は明示した非Root parentを使い、配置前にmodule宣言名と同じ直下Slotがstate記録の旧rootだけであることを確認します。記録のない同名Slotがあれば停止します。置換には記録したrootの正確なIDだけを使います。`flux validate-manifest`はResoniteへ接続せず、source、dependency、port、bindingを検証します。module manifestでは複数moduleと依存順を宣言でき、world apply stateの `$slot:key` をparentにできます。CLIの`--state`はcurrent directory基準、manifest内の`worldState`、`source`、`deployState`はmanifest基準です。manifest結果の`parentSlotId`はdeploy先、`moduleSlotIdBefore`はstateに記録され今回信頼した旧root、`moduleSlotIdAfter`はdeployer応答のNewEntityIdを配置後にIDで読み直した新rootです。配置はURL session lockをreadbackとstate確定まで保持し、watchはpendingまたは`APPLY_SESSION_BUSY`で停止してretryしません。watchは成功buildだけを再deployします。
 
 同型の弾や標的を多数使う場合、各instanceへ完全なFluxを複製しません。template内は不可避なDriverだけにし、状態を名前空間付きDynamicVariableへ置き、上限付きpool全体を単一controller moduleから走査・reset・再利用します。
 
