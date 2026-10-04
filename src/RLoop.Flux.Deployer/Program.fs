@@ -5,6 +5,8 @@ open System.IO
 open System.Collections.Generic
 open System.Threading
 open System.Threading.Tasks
+open System.Security.Cryptography
+open FluxSDK.Common
 open FluxSDK.Build.Incremental
 open FluxSDK.ResoniteLink
 open ResoniteLink
@@ -79,6 +81,20 @@ type private SdkWriterConnection(link: LinkInterface, url: Uri, operations: List
 // Loader.replace is not used: it removes every same-named child and ignores compile diagnostics.
 // The rules applied to the answers live in RLoop.Core.FluxDeployClassifier so they are testable offline.
 
+// Call only inside FluxConsoleCapture: the SDK epoch and counter are process-global,
+// and the same gate must cover rotation, compilation and packing.
+module private ElementIdEpoch =
+    let mutable private seeded = false
+
+    let rotate () =
+        if not seeded then
+            // Independent CLI processes must not replay IDs spent in the same world session.
+            // Reserve the top byte for this process's subsequent monotonic rotations.
+            let candidate = BitConverter.ToUInt64(RandomNumberGenerator.GetBytes(sizeof<uint64>)) &&& 0x00FF_FFFF_FFFF_FFFFUL
+            ElementID.setEpoch (if candidate = 0UL then 1UL else candidate) |> ignore
+            seeded <- true
+        ElementID.nextEpoch ()
+
 module private Deploy =
 
     let placeholderParent = "ResoLoop.Prepare.NotSent"
@@ -138,6 +154,10 @@ module private Deploy =
             let store =
                 if paths.Length = 0 then Build.initializeStore ()
                 else Build.initializeStoreWith (paths)
+
+            // Set the incremental input before any query allocates or memoizes IDs.
+            let epoch = ElementIdEpoch.rotate ()
+            store.SetInput(FluxSDK.Resolving.Incremental.ElementIDEpochKey.Key, epoch)
 
             let project = Path.GetFullPath(projectDirectory)
             let manifest = Build.loadManifest (project)
