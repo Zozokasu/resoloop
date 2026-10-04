@@ -47,6 +47,7 @@ export interface ApplyComponentSpec {
   initialFields?: Record<string, JsonValue>;
   identityFields?: string[];
   propertyModes?: Record<string, string>;
+  fieldAliases?: Record<string, string>;
 }
 
 export interface ApplyDocument {
@@ -95,6 +96,7 @@ export interface ApplySlotSpec {
   migrateFrom?: string;
   relocationTransform?: RelocationTransform;
   runtimeRelocatable?: boolean;
+  tag?: string;
 }
 
 export interface ApplyTestSpec {
@@ -117,6 +119,7 @@ export interface SlotScalarProps {
   migrateFrom?: string;
   relocationTransform?: RelocationTransform;
   runtimeRelocatable?: boolean;
+  tag?: string;
 }
 
 export interface ComponentScalarProps {
@@ -127,4 +130,5 @@ export interface ComponentScalarProps {
   initialFields?: Record<string, JsonValue>;
   identityFields?: string[];
   propertyModes?: Record<string, string>;
+  fieldAliases?: Record<string, string>;
 }

@@ -1,0 +1,242 @@
+﻿{
+    "formatVersion":  "2",
+    "identity":  {
+                     "resoniteVersion":  "OFFLINE-handwritten-fixture",
+                     "resoniteLinkVersion":  "OFFLINE-handwritten-fixture",
+                     "clientPackageVersion":  "0.13.1",
+                     "mapperVersion":  "2",
+                     "retrievedAt":  "2026-10-03T00:00:00+00:00"
+                 },
+    "evidenceIdentity":  {
+                             "resoniteVersion":  "OFFLINE-handwritten-fixture",
+                             "resoniteLinkVersion":  "OFFLINE-handwritten-fixture",
+                             "clientPackageVersion":  "0.13.1",
+                             "mapperVersion":  "2",
+                             "retrievedAt":  "2026-10-03T00:00:00+00:00"
+                         },
+    "source":  "version-cache",
+    "synthetic":  false,
+    "contentHash":  "608223ad9b382c68898852c246213b6bb37d03dd74de86b1110bb40e78bff76f",
+    "content":  {
+                    "types":  [
+                                  {
+                                      "fullName":  "Synthetic.Strict",
+                                      "confirmed":  true,
+                                      "closureComplete":  true,
+                                      "baseType":  null,
+                                      "interfaces":  [
+
+                                                     ],
+                                      "isGeneric":  false,
+                                      "members":  {
+                                                      "Amount":  {
+                                                                     "kind":  "field",
+                                                                     "memberType":  null,
+                                                                     "valueType":  "System.Single",
+                                                                     "targetType":  null,
+                                                                     "element":  null,
+                                                                     "keyType":  null,
+                                                                     "confirmed":  true
+                                                                 },
+                                                      "Caption":  {
+                                                                      "kind":  "field",
+                                                                      "memberType":  null,
+                                                                      "valueType":  "Fixture.Nullable",
+                                                                      "targetType":  null,
+                                                                      "element":  null,
+                                                                      "keyType":  null,
+                                                                      "confirmed":  true
+                                                                  },
+                                                      "Enabled":  {
+                                                                      "kind":  "field",
+                                                                      "memberType":  null,
+                                                                      "valueType":  "System.Boolean",
+                                                                      "targetType":  null,
+                                                                      "element":  null,
+                                                                      "keyType":  null,
+                                                                      "confirmed":  true
+                                                                  },
+                                                      "Mode":  {
+                                                                   "kind":  "field",
+                                                                   "memberType":  null,
+                                                                   "valueType":  "Fixture.Mode",
+                                                                   "targetType":  null,
+                                                                   "element":  null,
+                                                                   "keyType":  null,
+                                                                   "confirmed":  true
+                                                               },
+                                                      "Position":  {
+                                                                       "kind":  "field",
+                                                                       "memberType":  null,
+                                                                       "valueType":  "Fixture.Float3",
+                                                                       "targetType":  null,
+                                                                       "element":  null,
+                                                                       "keyType":  null,
+                                                                       "confirmed":  true
+                                                                   },
+                                                      "Target":  {
+                                                                     "kind":  "reference",
+                                                                     "memberType":  null,
+                                                                     "valueType":  null,
+                                                                     "targetType":  "Missing.Reference",
+                                                                     "element":  null,
+                                                                     "keyType":  null,
+                                                                     "confirmed":  true
+                                                                 },
+                                                      "Unsupported":  {
+                                                                          "kind":  "field",
+                                                                          "memberType":  null,
+                                                                          "valueType":  "Missing.Unknown",
+                                                                          "targetType":  null,
+                                                                          "element":  null,
+                                                                          "keyType":  null,
+                                                                          "confirmed":  true
+                                                                      }
+                                                  },
+                                      "membersComplete":  true,
+                                      "representation":  "other",
+                                      "elementType":  null,
+                                      "tupleSize":  0,
+                                      "enumValues":  null,
+                                      "isFlags":  null
+                                  },
+                                  {
+                                      "fullName":  "Synthetic.Open",
+                                      "confirmed":  true,
+                                      "closureComplete":  true,
+                                      "baseType":  null,
+                                      "interfaces":  [
+
+                                                     ],
+                                      "isGeneric":  false,
+                                      "members":  {
+                                                      "Amount":  {
+                                                                     "kind":  "field",
+                                                                     "memberType":  null,
+                                                                     "valueType":  "System.Single",
+                                                                     "targetType":  null,
+                                                                     "element":  null,
+                                                                     "keyType":  null,
+                                                                     "confirmed":  true
+                                                                 }
+                                                  },
+                                      "membersComplete":  false,
+                                      "representation":  "other",
+                                      "elementType":  null,
+                                      "tupleSize":  0,
+                                      "enumValues":  null,
+                                      "isFlags":  null
+                                  },
+                                  {
+                                      "fullName":  "System.Single",
+                                      "confirmed":  true,
+                                      "closureComplete":  true,
+                                      "baseType":  null,
+                                      "interfaces":  [
+
+                                                     ],
+                                      "isGeneric":  false,
+                                      "members":  null,
+                                      "membersComplete":  false,
+                                      "representation":  "single",
+                                      "elementType":  null,
+                                      "tupleSize":  0,
+                                      "enumValues":  null,
+                                      "isFlags":  null
+                                  },
+                                  {
+                                      "fullName":  "System.Boolean",
+                                      "confirmed":  true,
+                                      "closureComplete":  true,
+                                      "baseType":  null,
+                                      "interfaces":  [
+
+                                                     ],
+                                      "isGeneric":  false,
+                                      "members":  null,
+                                      "membersComplete":  false,
+                                      "representation":  "other",
+                                      "elementType":  null,
+                                      "tupleSize":  0,
+                                      "enumValues":  null,
+                                      "isFlags":  null
+                                  },
+                                  {
+                                      "fullName":  "Fixture.Nullable",
+                                      "confirmed":  true,
+                                      "closureComplete":  true,
+                                      "baseType":  null,
+                                      "interfaces":  [
+
+                                                     ],
+                                      "isGeneric":  false,
+                                      "members":  null,
+                                      "membersComplete":  false,
+                                      "representation":  "nullable",
+                                      "elementType":  "System.Single",
+                                      "tupleSize":  0,
+                                      "enumValues":  null,
+                                      "isFlags":  null
+                                  },
+                                  {
+                                      "fullName":  "Fixture.Float3",
+                                      "confirmed":  true,
+                                      "closureComplete":  true,
+                                      "baseType":  null,
+                                      "interfaces":  [
+
+                                                     ],
+                                      "isGeneric":  false,
+                                      "members":  null,
+                                      "membersComplete":  false,
+                                      "representation":  "tuple",
+                                      "elementType":  "System.Single",
+                                      "tupleSize":  3,
+                                      "enumValues":  null,
+                                      "isFlags":  null
+                                  },
+                                  {
+                                      "fullName":  "Fixture.Mode",
+                                      "confirmed":  true,
+                                      "closureComplete":  true,
+                                      "baseType":  null,
+                                      "interfaces":  [
+
+                                                     ],
+                                      "isGeneric":  false,
+                                      "members":  null,
+                                      "membersComplete":  false,
+                                      "representation":  "enum",
+                                      "elementType":  null,
+                                      "tupleSize":  0,
+                                      "enumValues":  {
+                                                         "Fast":  1,
+                                                         "Slow":  2
+                                                     },
+                                      "isFlags":  false
+                                  },
+                                  {
+                                      "fullName":  "Synthetic.Empty",
+                                      "confirmed":  true,
+                                      "closureComplete":  true,
+                                      "baseType":  null,
+                                      "interfaces":  [
+
+                                                     ],
+                                      "isGeneric":  false,
+                                      "members":  {
+
+                                                  },
+                                      "membersComplete":  true,
+                                      "representation":  "other",
+                                      "elementType":  null,
+                                      "tupleSize":  0,
+                                      "enumValues":  null,
+                                      "isFlags":  null
+                                  }
+                              ],
+                    "aliases":  {
+                                    "Alias.Strict":  "Synthetic.Strict"
+                                }
+                }
+}

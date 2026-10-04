@@ -10,7 +10,7 @@ export function scopeKey(scope: string, local: unknown, path: string): string {
 export function scopeValue(value: any, scope: string): any {
   if (!scope) return value;
   if (typeof value === "string") {
-    const match = /^(\$(?:slot|component|ref|member|slot-member):)(.+)$/.exec(value);
+    const match = /^(\$(?:slot|component|ref|member|slot-member|field):)(.+)$/.exec(value);
     if (!match) return value;
     const body = match[2];
     const member = match[1] === "$member:" || match[1] === "$slot-member:";

@@ -124,27 +124,83 @@ public static class FluxNodeCatalog
 
 public sealed record FluxModulePort(string Name, string Direction, string Type, string? Modifier);
 
-public static class FluxModuleSignature
+/// <summary>A header line that starts like a port declaration (<c>in</c> / <c>out</c>) but could not be read as one.</summary>
+/// <param name="Line">1-based line number in the source.</param>
+/// <param name="Reason"><c>noTypeSeparator</c>, <c>emptyName</c>, <c>invalidName</c> or <c>emptyType</c>.</param>
+public sealed record FluxModulePortParseIssue(int Line, string Text, string Reason);
+
+/// <param name="Unparsed">Port-like lines that were not read as ports. Lines that are not port-like are not listed.</param>
+public sealed record FluxModuleSignatureReading(IReadOnlyList<FluxModulePort> Ports, IReadOnlyList<FluxModulePortParseIssue> Unparsed);
+
+/// <summary>
+/// Reads the port declarations of a ProtoGraph module header, line by line, up to <c>where</c>. This is a pre-check of
+/// the source text only (the deployer's compile reports the ports actually built). A line is ignored only when it
+/// cannot declare a port: blank, a <c>//</c> comment, the <c>module</c> declaration, or a line that does not start with
+/// the <c>in</c> / <c>out</c> keyword. A line that starts with <c>in</c> / <c>out</c> but cannot be read as
+/// <c>NAME: TYPE [modifier]</c> is never dropped silently: <see cref="Parse"/> fails with FLUX_PORT_PARSE_FAILED,
+/// because a lost port declaration leads to a wrong placement.
+/// </summary>
+public static partial class FluxModuleSignature
 {
-    public static IReadOnlyList<FluxModulePort> Parse(string source)
+    /// <summary>The declared ports. Throws FLUX_PORT_PARSE_FAILED when a port-like line could not be read.</summary>
+    /// <param name="sourcePath">Reported with the error; not read.</param>
+    public static IReadOnlyList<FluxModulePort> Parse(string source, string? sourcePath = null)
+    {
+        var reading = Read(source);
+        if (reading.Unparsed.Count == 0) return reading.Ports;
+        var first = reading.Unparsed[0];
+        throw new RLoop.Core.RLoopException("FLUX_PORT_PARSE_FAILED",
+            $"{reading.Unparsed.Count} port declaration line(s) of {(sourcePath is null ? "the module source" : $"'{sourcePath}'")} could not be read (line {first.Line}: '{first.Text}', {first.Reason}). Nothing was built or deployed.",
+            RLoop.Core.ExitCodes.ValidationFailed,
+            new Dictionary<string, object?> { ["source"] = sourcePath, ["lines"] = reading.Unparsed },
+            ["Write each port as 'in NAME: TYPE [element|global|mutable]' or 'out NAME: TYPE' on its own line before 'where'."]);
+    }
+
+    /// <summary>Reads the header without throwing: the ports and every port-like line that could not be read.</summary>
+    public static FluxModuleSignatureReading Read(string source)
     {
         var ports = new List<FluxModulePort>();
-        foreach (var raw in source.Replace("\r\n", "\n").Split('\n'))
+        var unparsed = new List<FluxModulePortParseIssue>();
+        var lines = source.Replace("\r\n", "\n").Split('\n');
+        for (var index = 0; index < lines.Length; index++)
         {
-            var line = raw.Split("//", 2, StringSplitOptions.None)[0].Trim();
-            if (line.StartsWith("where", StringComparison.Ordinal)) break;
-            var direction = line.StartsWith("in ", StringComparison.Ordinal) ? "source" :
-                line.StartsWith("out ", StringComparison.Ordinal) ? "drive" : null;
-            if (direction is null) continue;
-            var body = line[(direction == "source" ? 3 : 4)..].Trim();
-            var separator = body.IndexOf(':');
-            if (separator <= 0 || separator == body.Length - 1) continue;
-            var name = body[..separator].Trim();
-            var typeParts = body[(separator + 1)..].Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries);
-            var modifier = typeParts.LastOrDefault() is "global" or "element" or "mutable" ? typeParts[^1] : null;
-            var type = modifier is null ? string.Join(' ', typeParts) : string.Join(' ', typeParts[..^1]);
-            if (name.Length > 0 && type.Length > 0) ports.Add(new FluxModulePort(name, direction, type, modifier));
+            var line = lines[index].Split("//", 2, StringSplitOptions.None)[0].Trim();
+            // The header ends at 'where', also when it shares a line with the module declaration.
+            var where = WhereKeyword().Match(line);
+            var header = where.Success ? line[..where.Index].Trim() : line;
+            if (header.Length > 0 && PortKeyword().Match(header) is { Success: true } keyword)
+            {
+                var direction = keyword.Groups["keyword"].Value == "in" ? "source" : "drive";
+                var (port, reason) = ReadPort(direction, header[keyword.Length..].Trim());
+                if (port is not null) ports.Add(port);
+                else unparsed.Add(new FluxModulePortParseIssue(index + 1, header, reason!));
+            }
+            if (where.Success) break;
         }
-        return ports;
+        return new FluxModuleSignatureReading(ports, unparsed);
     }
+
+    private static (FluxModulePort? Port, string? Reason) ReadPort(string direction, string body)
+    {
+        var separator = body.IndexOf(':');
+        if (separator < 0) return (null, "noTypeSeparator");
+        var name = body[..separator].Trim();
+        if (name.Length == 0) return (null, "emptyName");
+        if (!PortName().IsMatch(name)) return (null, "invalidName");
+        var typeParts = body[(separator + 1)..].Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+        var modifier = typeParts.LastOrDefault() is "global" or "element" or "mutable" ? typeParts[^1] : null;
+        var type = modifier is null ? string.Join(' ', typeParts) : string.Join(' ', typeParts[..^1]);
+        return type.Length == 0 ? (null, "emptyType") : (new FluxModulePort(name, direction, type, modifier), null);
+    }
+
+    // 'in' / 'out' as a whole word at the start of the header text ('input: …' is not a port line).
+    [System.Text.RegularExpressions.GeneratedRegex(@"^(?<keyword>in|out)(?=\s|:|$)")]
+    private static partial System.Text.RegularExpressions.Regex PortKeyword();
+
+    [System.Text.RegularExpressions.GeneratedRegex(@"(?<![\w$])where(?![\w$])")]
+    private static partial System.Text.RegularExpressions.Regex WhereKeyword();
+
+    // A port name is one token: no whitespace and none of the characters that separate declarations or types.
+    [System.Text.RegularExpressions.GeneratedRegex(@"^[^\s,;:(){}<>\[\]=""']+$")]
+    private static partial System.Text.RegularExpressions.Regex PortName();
 }

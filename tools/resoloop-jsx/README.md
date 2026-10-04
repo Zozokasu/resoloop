@@ -255,11 +255,51 @@ Emitted documents contain only `schemaVersion` (`"1"`), `ownership`, `slot`,
 `$draftKeys` guard when keys were generated). `ApplySlotSpec` fields supported as props:
 `name` (required), `key`, `parent` (root only), `position`, `rotation`,
 `scale`, `managedFields`, `preserveWorldTransform`, `migrateFrom`,
-`relocationTransform`, `runtimeRelocatable`. `ApplyComponentSpec` fields:
+`relocationTransform`, `runtimeRelocatable`, `tag`. `ApplyComponentSpec` fields:
 `type` (required), `key`, `fields`, `migrateFrom`, `initialFields`,
-`identityFields`, `propertyModes`. `assets`, `cameras`, `tests`, `include`, `prototypes`,
+`identityFields`, `propertyModes`, `fieldAliases`. `assets`, `cameras`, `tests`, `include`, `prototypes`,
 `parameters`, and `variables` are out of scope; because `assets` declarations
 are not yet supported, no `ref.asset` helper is exposed.
+
+### Field children and aliases
+
+`<Component>` may contain `<Field name="Intensity" value={2} />`. `name` is the declared runtime member name; verify the type and member with Resonite Reflection before using it. `key` optionally supplies a short alias, and `ref.field("brightness")` emits `$field:brightness`. Alias names must be unique across the expanded document. Scope-local short keys do not fall back outside that scope; use a fully qualified key to cross scopes.
+
+Without `mode`, a Field inherits `propertyModes[name]` when present; otherwise it is `config` and emits under `fields`. `mode="initial"` emits under `initialFields`. `runtime` and `driver-owned` values are never written, including during creation. A value may be omitted for `runtime` or `driver-owned`; the Field itself declares that member in `propertyModes`, and its optional `key` adds an alias. Alias targets must appear in `fields`, `initialFields`, or `propertyModes`. Do not declare the same member through both `fields`/`initialFields` and `<Field>`, or through multiple Field children. The generated types apply only to the `fields` and `initialFields` of `<Component type="...">`. A `<Field>` child keeps the loose `JsonValue` type, so TypeScript does not check its member name or value; a nonexistent member passes `tsc`, and only the C# catalog check (`COMPONENT_MEMBER_NOT_FOUND` and related codes) decides pass or fail.
+
+`<Slot tag="...">` maps to optional JSON `slot.tag`. Omit it to preserve an existing Tag without a plan change; pass an empty string to clear it. Slot Tag writes use the existing pre-send check, pending evidence and one readback. Workbench does not accept Slot writes. Live-verified on 2026-10-03 (Resonite 2026.9.18.82, ResoniteLink 0.13.1.0): creating and updating a Slot with a declared tag applied and matched the readback; removing the tag from the declaration left the live value unchanged; `tag: ""` read back as an empty string with no pending evidence left (an unset Tag is returned as null). Runtime Reflection remains unverified.
+
+JSON `fieldAliases` is an optional alias-to-member dictionary. It does not change `schemaVersion: "1"`. The compiler resolves `$field` references to canonical `$member:componentKey.Member` selectors; state v3 and downstream `observe` selectors continue to use `$member`.
+
+For the equivalent JSON form, use `slot.tag` and `fieldAliases` on the provider Component:
+
+~~~json
+{
+  "schemaVersion": "1",
+  "ownership": { "key": "lamp" },
+  "slot": { "key": "root", "name": "Lamp", "tag": "lighting" },
+  "components": [
+    { "key": "light", "type": "REFLECTION_VERIFIED_LIGHT_TYPE", "fieldAliases": { "brightness": "REFLECTION_VERIFIED_LIGHT_MEMBER" }, "fields": { "REFLECTION_VERIFIED_LIGHT_MEMBER": 2.0 } },
+    { "key": "controller", "type": "REFLECTION_VERIFIED_CONTROLLER_TYPE", "fields": { "REFLECTION_VERIFIED_CONTROLLER_MEMBER": "$field:brightness" } }
+  ]
+}
+~~~
+
+The TSX equivalent is:
+
+~~~tsx
+import { Slot, Component, Field, ref } from "resoloop-jsx";
+
+export default <Slot key="root" name="Lamp" tag="lighting">
+  <Component key="light" type="REFLECTION_VERIFIED_LIGHT_TYPE">
+    <Field name="REFLECTION_VERIFIED_LIGHT_MEMBER" value={2} key="brightness" />
+  </Component>
+  <Component key="controller" type="REFLECTION_VERIFIED_CONTROLLER_TYPE"
+    fields={{ REFLECTION_VERIFIED_CONTROLLER_MEMBER: ref.field("brightness") }} />
+</Slot>;
+~~~
+
+Replace every `REFLECTION_VERIFIED_*` type/member placeholder with a name confirmed by runtime Reflection. The example shows authoring syntax; it does not certify that those runtime members exist.
 
 ## Regenerating the Apply contract (developers)
 
@@ -289,9 +329,36 @@ not a generator target. Expected JSON changes require deliberate review.
 
 ## Catalog validation (V11)
 
-After building an IR file, run `resoloop validate FILE.json --catalog CATALOG.json --json`. This is a C# Core check and runs without Node or a Resonite connection. No separate TypeScript member validator is introduced. Catalogs must carry acquisition identity, provenance and an intact content hash; missing/unconfirmed evidence and unknown reference closure fail with `APPLY_CATALOG_UNAVAILABLE`. Proven incompatible references use `APPLY_REFERENCE_TYPE_MISMATCH`; invalid/non-finite/out-of-range Single values use `VALUE_CONVERSION_FAILED`, including nullable non-null values and tuple elements. Rounding is allowed; member-specific ranges are not guessed. Both catalog error codes retain validation exit 6 and the existing issue format. Success keeps `strict: false`; adding `--strict` also requests the existing live validation after catalog preflight and session version comparison against the same snapshot; synthetic catalogs are rejected before connection.
+For regular CLI authoring, use Reflection to confirm each exact full runtime Component type name and save the names as a JSON array. Then capture metadata and generate optional TypeScript editor declarations:
 
-`test/fixtures/catalog-v11/catalog.synthetic.json` is a fixed **synthetic** original with identity and content hash. `oracle.handwritten.json` independently fixes expected member types, case inputs and diagnostic codes/paths; do not derive or regenerate its expectations from the catalog or generated Apply types. `npm run contract` runs these cases and request-bound bundle handoffs through the actual offline CLI alongside the unchanged existing fixtures. This does not establish real Component/runtime verification. [CatalogExport](../RLoop.CatalogExport/README.md) provides developer-only export/import; legacy reflection caches without acquisition identity are not catalogs. Source locations are covered by the independent source-v11 oracle.
+```powershell
+resoloop catalog capture --types component-types.json --output catalog.json --url ws://localhost:<current-port>
+resoloop catalog types catalog.json
+resoloop-jsx build content/main.tsx -o build/main.json
+resoloop validate build/main.json --catalog catalog.json --json
+```
+
+`--url` may be omitted to use the existing CLI URL/configuration selection. Capture uses the Link backend, is read-only, takes no session write lock, checks versions before and after acquisition, and is bounded to 512 explicitly requested names and 512 unique metadata types acquired in total (including recursively observed dependencies), plus two minutes. `catalog types` is offline, rejects synthetic catalogs and catalogs with an `UnavailableReason`, and defaults to `.resoloop/catalog-types.d.ts` under the nearest `.resoloop.json` project root (or the current directory when there is no project). The default output location is resolved from the current directory, while `resoloop-jsx build` automatically reads only the `.resoloop/catalog-types.d.ts` of the project containing `.resoloop.json` (or of `--project-root`), so run `catalog types` inside that project or pass `--output`. Its header records format version, catalog content hash, and generator version; comments beginning `resoloop-catalog-fallback` list fallbacks. The declarations augment `CatalogComponentRegistry`; a normal `tsc` setup must explicitly include them, for example with `/// <reference path="../.resoloop/catalog-types.d.ts" />` or a `tsconfig.json` `include` entry. JSX build automatically loads this conventional file when it exists. When both this generated file and `--catalog` are present in bundle mode, their content hashes must match or build fails with `APPLY_CATALOG_TYPES_HASH_MISMATCH`. For a literal `<Component>`, an owner with `Confirmed` and `MembersComplete` closes the accepted member names; otherwise the member-name set stays open. A member with confirmed value metadata can receive a specific TypeScript value type even when the owner is incomplete, while an unconfirmed member uses `JsonValue`. Single values map to TypeScript `number`, nullable values to a union with `null`, tuples to arrays and xyzw/rgba objects, enums to names or numbers, and references to `string | null`. Generic values without complete closure and other or unknown value shapes use `JsonValue`. The editor types are assistance and may be narrower than C# conversion rules (for example, C# accepts numeric strings for Single). C# `ApplyCatalogValidator` remains authoritative: TypeScript acceptance does not replace its judgement, and `JsonValue` fallback alone does not imply `APPLY_CATALOG_UNAVAILABLE`.
+
+Use the exact full Component type and member obtained through Reflection. Replace both placeholders below with observed names; this example assumes Reflection confirmed the member is a Single. The valid declaration is checked early; the commented typo and wrong value are examples of TypeScript diagnostics when the type is confirmed:
+
+```tsx
+<Component key="example" type="REFLECTION_VERIFIED_FULL_COMPONENT_TYPE" fields={{ REFLECTION_VERIFIED_SINGLE_MEMBER: 2 }} />
+// <Component key="example" type="REFLECTION_VERIFIED_FULL_COMPONENT_TYPE" fields={{ REFLECTION_VERIFIED_SINLGE_MEMBER: 2 }} /> // unknown member when names are closed
+// <Component key="example" type="REFLECTION_VERIFIED_FULL_COMPONENT_TYPE" fields={{ REFLECTION_VERIFIED_SINGLE_MEMBER: "bad" }} /> // wrong value type
+```
+
+For `--catalog` hash binding, use the existing request-bound bundle mode. `--catalog` remains bundle-only on the JSX build command:
+
+```powershell
+$requestId = [guid]::NewGuid().ToString("N")
+resoloop-jsx build content/main.tsx --bundle --catalog catalog.json --build-id $requestId -o build/$requestId/bundle.json
+resoloop validate build/$requestId/bundle.json --build-id $requestId --json
+```
+
+The C# Core check runs without Node or a Resonite connection. Catalogs must carry acquisition identity, provenance and an intact content hash; missing/unconfirmed evidence and unknown reference closure fail with `APPLY_CATALOG_UNAVAILABLE`. Proven incompatible references use `APPLY_REFERENCE_TYPE_MISMATCH`; invalid/non-finite/out-of-range Single values use `VALUE_CONVERSION_FAILED`, including nullable non-null values and tuple elements. Rounding is allowed; member-specific ranges are not guessed. Both catalog error codes retain validation exit 6 and the existing issue format. Success keeps `strict: false`; adding `--strict` also requests the existing live validation after catalog preflight and session version comparison against the same snapshot; synthetic catalogs are rejected before connection.
+
+`test/fixtures/catalog-v11/catalog.synthetic.json` is a fixed **synthetic** original with identity and content hash. `oracle.handwritten.json` independently fixes expected member types, case inputs and diagnostic codes/paths; do not derive or regenerate its expectations from the catalog or generated Apply types. `npm run contract` runs these cases and request-bound bundle handoffs through the actual offline CLI alongside the unchanged existing fixtures. This does not establish real Component/runtime verification. [CatalogExport](../RLoop.CatalogExport/README.md) documents the lower-level developer export/import tool; legacy reflection caches without acquisition identity are not catalogs. Source locations are covered by the independent source-v11 oracle.
 ## propertyModes
 
 `<Component propertyModes={{ Config: "config", Seed: "initial", Clock: "runtime", Driven: "driver-owned" }}>`

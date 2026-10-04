@@ -20,6 +20,7 @@ import { sourceTransformer } from "./source-transform.js";
 import { buildErrorLocation } from "./source-map.js";
 import { snapshotInputs } from "./input-snapshot.js";
 import { reserveBundleOutput, publishBundle } from "./bundle.js";
+import { catalogDeclaration, verifyCatalogDeclaration } from "./catalog-declarations.js";
 
 export interface BuildOptions {
   draft?: boolean;
@@ -105,11 +106,12 @@ export async function buildFile(
   // node_modules lookup. Deleted in `finally`.
   const outDir = fs.mkdtempSync(path.join(path.dirname(entryAbs), ".resoloop-jsx-"));
   try {
-    const bundleOutput = opts.bundle ? reserveBundleOutput(opts.output!) : undefined;
+    const catalogText = opts.bundle ? fs.readFileSync(path.resolve(opts.catalog!), { encoding: "utf8" }) : undefined;
+    const declaration = catalogDeclaration(projectRoot, catalogText);
     // rootDir is required for self-referencing package resolution (TS2209);
     // constraining it to the entry's directory also keeps emit predictable.
     const rootDir = path.dirname(entryAbs);
-    const program = ts.createProgram([entryAbs], {
+    const program = ts.createProgram(declaration === undefined ? [entryAbs] : [entryAbs, declaration], {
       jsx: ts.JsxEmit.ReactJSX,
       jsxImportSource: "resoloop-jsx",
       module: ts.ModuleKind.NodeNext,
@@ -123,8 +125,12 @@ export async function buildFile(
       declaration: false,
     });
 
+    if (catalogText !== undefined)
+      for (const source of program.getSourceFiles())
+        if (source.isDeclarationFile) verifyCatalogDeclaration(source.fileName, source.text, catalogText);
+    const bundleOutput = opts.bundle ? reserveBundleOutput(opts.output!) : undefined;
+
     const inputs = opts.bundle ? snapshotInputs(program, projectRoot, opts.catalog!) : undefined;
-    const catalogText = opts.bundle ? fs.readFileSync(path.resolve(opts.catalog!), { encoding: "utf8" }) : undefined;
     const preEmit = ts.getPreEmitDiagnostics(program);
     if (preEmit.length > 0)
       return {

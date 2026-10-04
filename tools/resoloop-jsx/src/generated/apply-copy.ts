@@ -8,7 +8,7 @@ export interface CopyHelpers {
   scopeValue(value: any, scope: string): any;
 }
 
-export const SLOT_SCALAR_PROPS = ["position", "rotation", "scale", "managedFields", "preserveWorldTransform", "migrateFrom", "relocationTransform", "runtimeRelocatable"] as const;
+export const SLOT_SCALAR_PROPS = ["position", "rotation", "scale", "managedFields", "preserveWorldTransform", "migrateFrom", "relocationTransform", "runtimeRelocatable", "tag"] as const;
 
 export function copySlot(props: Record<string, any>, key: string, path: string, scope: string, isRoot: boolean, helpers: CopyHelpers): ApplySlotSpec {
   const spec: ApplySlotSpec = { name: props.name, key };
@@ -47,10 +47,13 @@ export function copySlot(props: Record<string, any>, key: string, path: string, 
     helpers.assertFiniteNumbers(props.runtimeRelocatable, `${path}.runtimeRelocatable`);
     spec.runtimeRelocatable = props.runtimeRelocatable;
   }
+  if (props.tag !== undefined) {
+    spec.tag = props.tag;
+  }
   return spec;
 }
 
-export const COMPONENT_SCALAR_PROPS = ["fields", "migrateFrom", "initialFields", "identityFields", "propertyModes"] as const;
+export const COMPONENT_SCALAR_PROPS = ["fields", "migrateFrom", "initialFields", "identityFields", "propertyModes", "fieldAliases"] as const;
 
 export function copyComponent(props: Record<string, any>, key: string, path: string, scope: string, isRoot: boolean, helpers: CopyHelpers): ApplyComponentSpec {
   const spec: ApplyComponentSpec = { type: props.type, key };
@@ -71,6 +74,9 @@ export function copyComponent(props: Record<string, any>, key: string, path: str
   if (props.propertyModes !== undefined) {
     helpers.assertFiniteNumbers(props.propertyModes, `${path}.propertyModes`);
     spec.propertyModes = props.propertyModes;
+  }
+  if (props.fieldAliases !== undefined) {
+    spec.fieldAliases = props.fieldAliases;
   }
   return spec;
 }

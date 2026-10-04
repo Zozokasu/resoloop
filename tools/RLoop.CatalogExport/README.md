@@ -1,5 +1,7 @@
 # RLoop.CatalogExport (developer tool)
 
+For regular projects, use the product CLI workflow: `resoloop catalog capture --types FULL_NAMES.json --output CATALOG.json [--url ws://localhost:PORT]`, followed by `resoloop catalog types CATALOG.json`. The types file is a JSON array of exact full runtime Component names confirmed through Reflection. Capture is read-only, uses existing CLI URL/configuration selection when `--url` is omitted, takes no session write lock, checks versions before and after acquisition, and observes both a 512-name input limit and a 512-unique-metadata-type total acquisition limit (including recursive dependencies), plus a two-minute limit. See the root README for the authoring and validation workflow. This developer tool remains useful for snapshot export/import and SDK diagnostics.
+
 This tool exports an identified SDK metadata snapshot to an SDK-independent Core catalog, or imports and checks an existing catalog. It does not connect unless the explicit `capture --live` or `probe --live` mode is selected. No new NuGet/npm dependencies are required. Build the solution with `--no-restore` after packages have been restored outside the sandbox.
 
 ```powershell

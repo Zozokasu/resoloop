@@ -18,32 +18,168 @@ public sealed record FluxResolvedModuleBindings(IReadOnlyList<FluxResolvedBindin
 }
 public sealed record FluxModuleSpec(string Name, string Source, string Module, IReadOnlyList<string>? DependsOn = null,
     IReadOnlyDictionary<string, FluxBindingSpec>? Bindings = null);
-public delegate Task<string?> FluxModuleSlotResolver(FluxModuleSpec module, CancellationToken cancellationToken);
 public sealed record FluxModuleManifest(string? SchemaVersion, IReadOnlyList<FluxModuleSpec> Modules, string? ProjectDirectory = null,
     string? Parent = null, string? WorldState = null, string? DeployState = null);
+
+/// <summary>
+/// What the deploy guard settled for one module (ROADMAP-9): added to the existing result shapes of
+/// <c>flux deploy</c>, <c>deploy-manifest</c> and <c>watch</c> as the <c>deploy</c> item.
+/// </summary>
+/// <param name="PreviousRootSlotId">The recorded previous module root the guard trusted and removed by exact ID, or null.</param>
+/// <param name="WriterCheck">Same value as <see cref="FluxDeployGuardPreconditions.WriterCheck"/>.</param>
+public sealed record FluxDeployGuardSummary(
+    string StateFile,
+    string OperationId,
+    string ModuleName,
+    string ParentSlotId,
+    string NewRootSlotId,
+    string? PreviousRootSlotId,
+    FluxPreviousRootRemoval PreviousRootRemoval,
+    FluxDeployStage Stage,
+    FluxDeploySessionRecord Session,
+    FluxDeployGuardPreconditions Preconditions,
+    string BindingReadback,
+    IReadOnlyList<FluxDeployBindingReadback> BindingEvidence,
+    string WriterCheck,
+    IReadOnlyList<FluxDiagnostic> Diagnostics)
+{
+    public IReadOnlyList<FluxWriterIdentityObservation> WriterObservations { get; init; } = [];
+    public FluxDeployWriterIdentity? ExpectedWriterIdentity { get; init; }
+    public static FluxDeployGuardSummary From(FluxDeployGuardResult result) => new(result.StateFile, result.OperationId,
+        result.ModuleName, result.ParentSlotId, result.NewRootSlotId, result.Preconditions.PreviousRootSlotId,
+        result.PreviousRootRemoval, result.Stage, result.Session, result.Preconditions, result.BindingReadback,
+        result.BindingEvidence, result.Preconditions.WriterCheck, result.Diagnostics)
+        { WriterObservations = result.WriterObservations, ExpectedWriterIdentity = result.ExpectedWriterIdentity };
+}
+
+/// <param name="ModuleSlotIdBefore">
+/// The module root recorded in the deploy state before this run (for a settled deployment: the recorded root the guard
+/// trusted and replaced). Never a Slot found by name.
+/// </param>
+/// <param name="ModuleSlotIdAfter">The new module root ID from the deployer's creation answer, or the unchanged root of a no-op.</param>
+/// <param name="Deploy">The guard's evidence for a settled deployment; null for a no-op or a stop.</param>
+/// <param name="Build">How the Flux-SDK build was judged (P9); null when no build ran (a no-op, or a stop before the build).</param>
+/// <param name="BuildDiagnostics">The build's diagnostics (errors and warnings, read from stdout); null when no build ran.</param>
+/// <param name="BindingTypes">The target type check of each binding; null when the module declares no binding.</param>
 public sealed record FluxModuleDeployment(string Name, string Action, string Reason, bool BuildSucceeded,
     bool Deployed, string? ModuleSlotIdBefore, string? ModuleSlotIdAfter, string? Error = null,
-    IReadOnlyList<FluxResolvedBinding>? Bindings = null);
+    IReadOnlyList<FluxResolvedBinding>? Bindings = null, FluxDeployGuardSummary? Deploy = null,
+    FluxBuildVerdict? Build = null, IReadOnlyList<FluxDiagnostic>? BuildDiagnostics = null,
+    IReadOnlyList<FluxBindingTypeCheck>? BindingTypes = null);
+
+public static class FluxBindingTypeStatus
+{
+    /// <summary>The target's type was read and is the port's type.</summary>
+    public const string Matched = "matched";
+    /// <summary>
+    /// The target's type could not be read, or the read could not show that it is the port's type. Reported as a
+    /// warning; the deployment continues and the guard's readback after it remains the final check. A target whose
+    /// type was read and differs stops with FLUX_BINDING_TYPE_MISMATCH instead.
+    /// </summary>
+    public const string Unknown = "unknown";
+}
+
+/// <summary>The pre-deployment type check of one binding target (ROADMAP-9 unit 5). Nothing is written.</summary>
+/// <param name="PortType">The port type as declared in the module source.</param>
+/// <param name="TargetType">The target type as resolved from the world (null when it was not read).</param>
+/// <param name="ExpectedType">The port type, normalized (assembly, namespace and scalar aliases removed).</param>
+/// <param name="ActualType">
+/// The target's actual type, normalized: <c>Slot</c> for a Slot, the component type for a component, and for a member
+/// the <c>T</c> it offers as <c>IValue&lt;T&gt;</c> / <c>IField&lt;T&gt;</c> (a field's value type, or the target
+/// type of a reference). Null when it could not be read.
+/// </param>
+/// <param name="Status">One of <see cref="FluxBindingTypeStatus"/>.</param>
+public sealed record FluxBindingTypeCheck(string Binding, string Mode, string PortType, string TargetKind,
+    string? TargetType, string ExpectedType, string? ActualType, string Status, string Detail);
+
+/// <summary>Why a manifest run or a watch stopped: the code and message of the error it ended with.</summary>
+/// <param name="Module">The manifest module being placed, or null when the run stopped before any module.</param>
+public sealed record FluxManifestStop(string? Module, string Code, string Message);
+
+/// <param name="StoppedBy">Set when the run (or the watch) ended with an error from the deploy state or the guard.</param>
 public sealed record FluxManifestResult(bool Success, string Manifest, string ParentSlotId,
-    IReadOnlyList<FluxModuleDeployment> Modules, bool Atomic, string Recovery, bool WatchStopped = false);
+    IReadOnlyList<FluxModuleDeployment> Modules, bool Atomic, string Recovery, bool WatchStopped = false,
+    FluxManifestStop? StoppedBy = null);
+
+/// <summary>
+/// Result of the single-module <c>flux deploy</c>. The first seven items keep the names of the former result
+/// (<see cref="FluxResult"/>); <paramref name="OutputPath"/> is the new module root ID. <paramref name="Deploy"/> is added.
+/// </summary>
+public sealed record FluxSingleDeployResult(bool Success, int ExitCode, string StandardOutput, string StandardError,
+    string OutputPath, IReadOnlyList<FluxDiagnostic> Diagnostics, IReadOnlyList<FluxDiagnostic> PrimaryDiagnostics,
+    FluxDeployGuardSummary Deploy);
+
+/// <summary>The single-module <c>flux deploy</c>: the same guard as the manifest, with its own default state (P4).</summary>
+public static class FluxSingleDeploy
+{
+    /// <summary>
+    /// Places one module below an exact parent through <see cref="FluxDeployGuard"/>. The state is
+    /// <see cref="FluxDeployStateStore.ResolveSingleDeployStatePath"/>. A missing parent or Root is refused by the
+    /// guard (FLUX_PARENT_ROOT_REFUSED). Returns only for a settled deployment; every other end is the guard's error.
+    /// </summary>
+    /// <param name="parentSlotId">Exact parent Slot ID, or null/empty when none was given.</param>
+    public static async Task<FluxSingleDeployResult> DeployAsync(IResoniteClient client, IFluxDeployer deployer,
+        string projectDirectory, string module, string? parentSlotId, Uri url, string? libraryPath, string? helperPath,
+        string? sdkVersion = null, CancellationToken cancellationToken = default)
+    {
+        var project = Path.GetFullPath(projectDirectory);
+        var statePath = FluxDeployStateStore.ResolveSingleDeployStatePath(project, module);
+        // The single deploy has no no-op, so no input hash is computed; the record keeps an empty one.
+        var result = await new FluxDeployGuard(client, deployer).DeployModuleAsync(new FluxDeployGuardRequest(
+            project, module, FluxDeployStateStore.SingleDeployModuleKey(module), parentSlotId ?? string.Empty, url,
+            libraryPath, helperPath, null, null, string.Empty, null, statePath, sdkVersion,
+            FluxDeployExecuteRequest.DefaultDeadline), cancellationToken);
+        return new FluxSingleDeployResult(true, 0, result.StandardOutput, result.StandardError, result.NewRootSlotId,
+            result.Diagnostics, result.Diagnostics.Where(diagnostic => diagnostic.IsPrimary).ToArray(),
+            FluxDeployGuardSummary.From(result));
+    }
+}
+
 public sealed record FluxManifestModuleValidation(string Name, string Source, string Module,
     int Ports, int Bindings, IReadOnlyList<string> DependsOn);
 public sealed record FluxManifestValidationResult(bool Valid, string Manifest, string ProjectDirectory,
     string? WorldState, string DeployState, IReadOnlyList<FluxManifestModuleValidation> Modules);
 
-public sealed class FluxManifestOrchestrator(IFluxTool flux)
+/// <summary>
+/// Builds the modules of a manifest and places each through <see cref="FluxDeployGuard"/> (ROADMAP-9). The guard owns
+/// the session lock, the Flux deploy state (v2), the observations and the pending record; this class only decides the
+/// order, the no-op and how a run is reported. It never looks a module up by name and never writes the state itself.
+/// </summary>
+public sealed class FluxManifestOrchestrator(IFluxTool flux, IFluxDeployer deployer, IResoniteClient client)
 {
-    public async Task<FluxManifestResult> DeployAsync(string manifestPath, string parentSlotId, Uri url,
-        string? libraryPath, string? helperPath, string? sessionId = null,
+    /// <summary>The context key under which a manifest error carries the run's <see cref="FluxManifestResult"/>.</summary>
+    public const string ReportContextKey = "report";
+
+    /// <summary>
+    /// Deploys the manifest's modules in dependency order. A build failure is reported in the result (nothing was
+    /// sent). An error from the deploy state or the guard ends the run as an <see cref="RLoopException"/> with the
+    /// guard's code and context plus <see cref="ReportContextKey"/>.
+    /// </summary>
+    /// <param name="parentSlotId">Exact parent Slot ID. Null/empty (no parent given) or Root is refused by the guard (P8).</param>
+    public async Task<FluxManifestResult> DeployAsync(string manifestPath, string? parentSlotId, Uri url,
+        string? libraryPath, string? helperPath,
         IReadOnlyDictionary<string, FluxResolvedModuleBindings>? resolvedBindings = null,
-        FluxModuleSlotResolver? resolveModuleSlot = null,
-        CancellationToken cancellationToken = default)
+        string? sdkVersion = null, CancellationToken cancellationToken = default)
     {
         var loaded = Load(manifestPath);
+        var parent = parentSlotId ?? string.Empty;
         var statePath = ResolveStatePath(loaded.Manifest, loaded.Path);
-        var state = LoadState(statePath);
-        var hashes = ComputeHashes(loaded.Manifest, loaded.Directory);
         var results = new List<FluxModuleDeployment>();
+        FluxManifestResult Report(bool success, FluxManifestStop? stop = null) => new(success, loaded.Path, parent, results.ToArray(), false,
+            $"Module replacement is non-atomic. Settled modules are recorded in {statePath}; an unsettled module stays pending there until it is inspected and discarded. Fix the error and re-run to converge.",
+            StoppedBy: stop);
+
+        // A v1 state is read as an unconfirmed migration (the guard confirms or drops each record, P6). An unknown
+        // version or kind stops here, before anything is built.
+        FluxDeployState state;
+        try
+        {
+            state = FluxDeployStateStore.Load(statePath);
+            if (state.Pending.Count > 0) throw FluxDeployStateStore.PendingExists(statePath, state);
+        }
+        catch (RLoopException error) { throw WithReport(error, Report(false, new(null, error.Code, error.Message))); }
+
+        var hashes = ComputeHashes(loaded.Manifest, loaded.Directory);
         foreach (var module in Topological(loaded.Manifest.Modules))
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -51,28 +187,28 @@ public sealed class FluxManifestOrchestrator(IFluxTool flux)
             state.Modules.TryGetValue(module.Name, out var previous);
             FluxResolvedModuleBindings? moduleBindings = null;
             _ = resolvedBindings?.TryGetValue(module.Name, out moduleBindings);
-            ValidateResolvedBindings(module, moduleBindings, source);
+            var preflight = await ValidateResolvedBindingsAsync(module, moduleBindings, source, cancellationToken);
+            var bindingTypes = preflight.TypeChecks;
             var hash = EffectiveHash(hashes[module.Name], moduleBindings);
-            var beforeSlotId = resolveModuleSlot is null
-                ? previous?.SlotId
-                : await resolveModuleSlot(module, cancellationToken);
-            if (previous?.Hash == hash && !string.IsNullOrWhiteSpace(beforeSlotId) &&
-                state.ParentSlotId == parentSlotId && (resolveModuleSlot is not null || state.SessionId == sessionId))
+            var action = previous is null ? "create" : "update";
+            var recordedRoot = previous?.RootSlotId;
+            if (await IsUnchangedAsync(state, previous, hash, parent, cancellationToken))
             {
-                if (previous.SlotId != beforeSlotId)
-                {
-                    state.Modules[module.Name] = new ModuleState(hash, beforeSlotId);
-                    SaveState(statePath, state);
-                }
-                results.Add(new FluxModuleDeployment(module.Name, "no-op", "source and transitive dependency hashes match deploy state",
-                    true, false, beforeSlotId, beforeSlotId, Bindings: moduleBindings?.Bindings));
+                results.Add(new FluxModuleDeployment(module.Name, "no-op",
+                    "source and transitive dependency hashes match the deploy state, and the recorded root is still the parent's child with its declared name",
+                    true, false, recordedRoot, recordedRoot, Bindings: moduleBindings?.Bindings, BindingTypes: bindingTypes));
                 continue;
             }
+            // P9: the build is an early check judged by its error diagnostics (warnings are reported and the run
+            // continues). What is placed is decided by the deployer's own compile inside the guard.
             var build = await flux.BuildAsync(new FluxBuildRequest(source, loaded.ProjectDirectory, null, libraryPath), cancellationToken);
-            if (!build.Success)
+            var verdict = FluxBuildJudgement.Of(build);
+            var buildDiagnostics = build.Diagnostics ?? FluxDiagnostics.Parse(build.StandardOutput, build.StandardError);
+            if (!verdict.Success)
             {
-                results.Add(new FluxModuleDeployment(module.Name, previous is null ? "create" : "update", "build failed; deploy was skipped",
-                    false, false, beforeSlotId, beforeSlotId, build.StandardError, moduleBindings?.Bindings));
+                results.Add(new FluxModuleDeployment(module.Name, action, "build failed; deploy was skipped",
+                    false, false, recordedRoot, recordedRoot, FluxBuildJudgement.DescribeFailure(verdict, build), moduleBindings?.Bindings,
+                    Build: verdict, BuildDiagnostics: buildDiagnostics, BindingTypes: bindingTypes));
                 return Report(false);
             }
             if (Regex.IsMatch(build.StandardOutput + "\n" + build.StandardError,
@@ -81,46 +217,87 @@ public sealed class FluxManifestOrchestrator(IFluxTool flux)
                     $"Module '{module.Name}' compiled successfully but contains zero ProtoFlux nodes.", ExitCodes.ValidationFailed,
                     new Dictionary<string, object?> { ["module"] = module.Name, ["source"] = source },
                     ["Keep a reachable entrypoint such as CallInput, a Dynamic Impulse receiver, LocalUpdate, or another consumer of the graph."]);
-            var deploy = await flux.DeployAsync(new FluxDeployRequest(loaded.ProjectDirectory, module.Module, parentSlotId, url,
-                libraryPath, helperPath, moduleBindings?.InputMap, moduleBindings?.OutputMap), cancellationToken);
-            if (!deploy.Success)
+
+            // The guard compiles in the deployer (errors send nothing), takes the URL lock, compares the parent's
+            // children with the record, records the pending deployment, calls the deployer and reads the result back.
+            FluxDeployGuardResult deployed;
+            try
             {
-                var partialSlotId = resolveModuleSlot is null ? null : await resolveModuleSlot(module, cancellationToken);
-                results.Add(new FluxModuleDeployment(module.Name, previous is null ? "create" : "update", "deploy failed after successful build",
-                    true, false, beforeSlotId, partialSlotId, deploy.StandardError, moduleBindings?.Bindings));
-                return Report(false);
+                // The manifest requires every port to be bound one-to-one (validate-manifest), so the guard checks the
+                // compiled ports with RequireAllPortsBound.
+                deployed = await new FluxDeployGuard(client, deployer).DeployModuleAsync(new FluxDeployGuardRequest(
+                    loaded.ProjectDirectory, module.Module, module.Name, parent, url, libraryPath, helperPath,
+                    moduleBindings?.InputMap, moduleBindings?.OutputMap, hash, null, statePath, sdkVersion,
+                    FluxDeployExecuteRequest.DefaultDeadline, RequireAllPortsBound: true)
+                    { DeclaredPorts = preflight.Ports }, cancellationToken);
             }
-            var afterSlotId = resolveModuleSlot is null
-                ? deploy.OutputPath
-                : await resolveModuleSlot(module, cancellationToken);
-            if (string.IsNullOrWhiteSpace(afterSlotId))
+            catch (RLoopException error)
             {
-                results.Add(new FluxModuleDeployment(module.Name, previous is null ? "create" : "update",
-                    "Flux-SDK reported success, but the generated module child could not be re-observed",
-                    true, false, beforeSlotId, null,
-                    $"Module child '{module.Module}' was not found directly below parent '{parentSlotId}'.",
-                    moduleBindings?.Bindings));
-                return Report(false);
+                results.Add(new FluxModuleDeployment(module.Name, action, $"the deploy guard stopped ({error.Code})",
+                    error.Code != "FLUX_COMPILE_FAILED", false, recordedRoot, null, error.Message, moduleBindings?.Bindings,
+                    Build: verdict, BuildDiagnostics: buildDiagnostics, BindingTypes: bindingTypes));
+                throw WithReport(error, Report(false, new(module.Name, error.Code, error.Message)));
             }
-            state.Modules[module.Name] = new ModuleState(hash, afterSlotId);
-            state.ParentSlotId = parentSlotId;
-            state.SessionId = sessionId;
-            SaveState(statePath, state);
-            results.Add(new FluxModuleDeployment(module.Name, previous is null ? "create" : "update",
-                previous is null ? "module has no deploy state" : "source or transitive dependency changed",
-                true, true, beforeSlotId, afterSlotId, Bindings: moduleBindings?.Bindings));
+            results.Add(new FluxModuleDeployment(module.Name, action,
+                previous is null ? "module has no deploy state" : "source or transitive dependency changed, or the record had to be confirmed",
+                true, true, deployed.Preconditions.PreviousRootSlotId, deployed.NewRootSlotId,
+                Bindings: moduleBindings?.Bindings, Deploy: FluxDeployGuardSummary.From(deployed),
+                Build: verdict, BuildDiagnostics: buildDiagnostics, BindingTypes: bindingTypes));
         }
         return Report(true);
-
-        FluxManifestResult Report(bool success) => new(success, loaded.Path, parentSlotId, results, false,
-            $"Module replacement is non-atomic. Successful modules are checkpointed in {statePath}; fix the error and re-run to converge.");
     }
 
-    public async Task<FluxManifestResult> WatchAsync(string manifestPath, string parentSlotId, Uri url,
-        string? libraryPath, string? helperPath, string? sessionId, TimeSpan pollInterval,
+    /// <summary>
+    /// A module is unchanged only when its record is a settled (<c>deployed</c>) one with the same input hash and the
+    /// same parent, was settled against this URL with a proven matched non-null <c>S-</c> ID, and its root, read by its
+    /// exact ID, is still a direct child of that parent with the declared name. Nothing is looked up by name and the
+    /// state is not changed; anything else goes to the guard. A <c>migrated-v1</c> record always goes to the guard,
+    /// which decides whether to trust it (P6).
+    /// </summary>
+    private async Task<bool> IsUnchangedAsync(FluxDeployState state, FluxDeployModuleRecord? record, string hash,
+        string parentSlotId, CancellationToken cancellationToken)
+    {
+        if (record is not { Origin: FluxDeployOrigins.Deployed, RootSlotId: { } rootId, ModuleName: { } moduleName } ||
+            !string.Equals(record.InputHash, hash, StringComparison.Ordinal) || string.IsNullOrWhiteSpace(parentSlotId) ||
+            !string.Equals(record.ParentSlotId, parentSlotId, StringComparison.Ordinal) || state.Session is not { } recorded)
+            return false;
+        var session = await client.GetSessionInfoAsync(cancellationToken);
+        if (!session.Connected) return false;
+        var observed = (client as IApplySessionObservation)?.ObserveApplySession() ?? ApplySessionObservation.Observe(session.Url);
+        // Keep this local to Flux: Core's mutation helpers remain internal. Unknown identity allows a first
+        // deployment, but does not prove ownership of any session-scoped root for a no-op.
+        if (recorded.IdentityStatus != "matched" || observed.IdentityStatus != "matched" ||
+            recorded.DiscoverSessionId is not { } recordedId || observed.DiscoverSessionId is not { } currentId ||
+            !recordedId.StartsWith("S-", StringComparison.Ordinal) ||
+            !string.Equals(recorded.NormalizedUrl, observed.NormalizedUrl, StringComparison.Ordinal) ||
+            !string.Equals(recordedId, currentId, StringComparison.Ordinal)) return false;
+        SlotInfo root;
+        try { root = await client.GetSlotAsync(rootId, 0, false, cancellationToken); }
+        catch (RLoopException error) when (error.Code == "SLOT_NOT_FOUND") { return false; }
+        return root is { IsReferenceOnly: false } && string.Equals(root.Id, rootId, StringComparison.Ordinal) &&
+            string.Equals(root.ParentId, parentSlotId, StringComparison.Ordinal) &&
+            string.Equals(root.Name, moduleName, StringComparison.Ordinal);
+    }
+
+    /// <summary>The same error with the run's report added to its context (code, message, exit code and suggestions are kept).</summary>
+    private static RLoopException WithReport(RLoopException error, FluxManifestResult report)
+    {
+        var context = new Dictionary<string, object?>(error.Context) { [ReportContextKey] = report };
+        return new RLoopException(error.Code, error.Message, error.ExitCode, context, error.Suggestions, error);
+    }
+
+    /// <summary>
+    /// Re-runs <see cref="DeployAsync"/> whenever the manifest or a module source changes. Each deployment goes through
+    /// the guard, which takes the URL lock for that one deployment and releases it after the readback and the state
+    /// update (P5); the lock is not held while polling or building. A build failure is reported and the watch waits
+    /// for the next change. Any error from the deploy state or the guard (a pending deployment, APPLY_SESSION_BUSY,
+    /// a refusal) stops the watch: there is no retry (P11). The error keeps its code and carries the report with
+    /// <see cref="FluxManifestResult.WatchStopped"/> and <see cref="FluxManifestResult.StoppedBy"/>.
+    /// </summary>
+    public async Task<FluxManifestResult> WatchAsync(string manifestPath, string? parentSlotId, Uri url,
+        string? libraryPath, string? helperPath, TimeSpan pollInterval,
         IReadOnlyDictionary<string, FluxResolvedModuleBindings>? resolvedBindings = null,
-        FluxModuleSlotResolver? resolveModuleSlot = null,
-        CancellationToken cancellationToken = default)
+        string? sdkVersion = null, CancellationToken cancellationToken = default)
     {
         FluxManifestResult? last = null;
         string? fingerprint = null;
@@ -133,8 +310,16 @@ public sealed class FluxManifestOrchestrator(IFluxTool flux)
                 var current = Fingerprint(loaded);
                 if (current != fingerprint)
                 {
-                    last = await DeployAsync(manifestPath, parentSlotId, url, libraryPath, helperPath, sessionId,
-                        resolvedBindings, resolveModuleSlot, cancellationToken);
+                    try
+                    {
+                        last = await DeployAsync(manifestPath, parentSlotId, url, libraryPath, helperPath, resolvedBindings,
+                            sdkVersion, cancellationToken);
+                    }
+                    catch (RLoopException error) when (error.Context.TryGetValue(ReportContextKey, out var value) &&
+                                                       value is FluxManifestResult stopped)
+                    {
+                        throw WithReport(error, stopped with { WatchStopped = true });
+                    }
                     fingerprint = current;
                 }
                 await Task.Delay(pollInterval, cancellationToken);
@@ -146,6 +331,17 @@ public sealed class FluxManifestOrchestrator(IFluxTool flux)
         }
     }
 
+    /// <summary>
+    /// The Flux deploy state of a manifest: <c>deployState</c> relative to the manifest, or
+    /// <c>&lt;manifest directory&gt;/.resoloop/flux-state/&lt;manifest name&gt;.json</c>. Reads only the manifest JSON,
+    /// so it works when module sources are missing (for <c>--discard-pending</c>).
+    /// </summary>
+    public static string ResolveDeployStatePath(string manifestPath)
+    {
+        var path = Path.GetFullPath(manifestPath);
+        return ResolveStatePath(ReadManifest(path), path);
+    }
+
     public static FluxModuleManifest Inspect(string manifestPath) => Load(manifestPath).Manifest;
 
     public static FluxManifestValidationResult ValidateManifest(string manifestPath)
@@ -155,7 +351,7 @@ public sealed class FluxManifestOrchestrator(IFluxTool flux)
         foreach (var module in Topological(loaded.Manifest.Modules))
         {
             var source = Path.GetFullPath(module.Source, loaded.Directory);
-            var ports = FluxModuleSignature.Parse(File.ReadAllText(source));
+            var ports = FluxModuleSignature.Parse(File.ReadAllText(source), source);
             ValidateDeclaredBindings(module, ports);
             modules.Add(new FluxManifestModuleValidation(module.Name, source, module.Module,
                 ports.Count, module.Bindings?.Count ?? 0, module.DependsOn ?? []));
@@ -175,16 +371,20 @@ public sealed class FluxManifestOrchestrator(IFluxTool flux)
         return null;
     }
 
-    private static void ValidateResolvedBindings(FluxModuleSpec module, FluxResolvedModuleBindings? resolved, string source)
+    private sealed record BindingPreflight(IReadOnlyList<FluxDeclaredPortExpectation> Ports, IReadOnlyList<FluxBindingTypeCheck>? TypeChecks);
+
+    private async Task<BindingPreflight> ValidateResolvedBindingsAsync(FluxModuleSpec module,
+        FluxResolvedModuleBindings? resolved, string source, CancellationToken cancellationToken)
     {
         var declared = module.Bindings ?? new Dictionary<string, FluxBindingSpec>();
-        var ports = FluxModuleSignature.Parse(File.ReadAllText(source));
+        var ports = FluxModuleSignature.Parse(File.ReadAllText(source), source);
         if (declared.Count > 0 && resolved is null)
             throw new RLoopException("FLUX_BINDINGS_UNRESOLVED",
                 $"Module '{module.Name}' declares bindings, but no resolved world targets were supplied.",
                 ExitCodes.ValidationFailed);
         ValidateDeclaredBindings(module, ports);
-        if (declared.Count == 0) return;
+        var expectations = ports.Select(port => new FluxDeclaredPortExpectation(port.Name, port.Direction, port.Type, port.Modifier)).ToArray();
+        if (declared.Count == 0) return new(expectations, null);
 
         var byName = resolved!.Bindings.ToDictionary(binding => binding.Name, StringComparer.Ordinal);
         var missing = declared.Keys.Where(name => !byName.ContainsKey(name)).ToArray();
@@ -207,17 +407,82 @@ public sealed class FluxManifestOrchestrator(IFluxTool flux)
 
         var portsByName = ports.ToDictionary(port => port.Name, StringComparer.Ordinal);
 
+        var checks = new List<FluxBindingTypeCheck>();
         foreach (var binding in resolved.Bindings)
         {
             var port = portsByName[binding.Name];
-            if (!TargetTypeCompatible(port.Type, binding.TargetKind, binding.TargetType))
+            var check = await CheckTargetTypeAsync(binding, port, cancellationToken);
+            if (check is null)
+            {
+                var actual = ActualTargetType(binding);
                 throw new RLoopException("FLUX_BINDING_TYPE_MISMATCH",
-                    $"Binding '{module.Name}.{binding.Name}' expects '{port.Type}', but '{binding.Selector}' resolves to '{binding.TargetType ?? binding.TargetKind}'.",
+                    $"Binding '{module.Name}.{binding.Name}' expects '{port.Type}', but '{binding.Selector}' resolves to '{binding.TargetType ?? binding.TargetKind}'. Nothing was built or deployed.",
                     ExitCodes.ValidationFailed, new Dictionary<string, object?> { ["module"] = module.Name,
                         ["binding"] = binding.Name, ["portType"] = port.Type, ["portModifier"] = port.Modifier,
-                        ["targetKind"] = binding.TargetKind, ["targetType"] = binding.TargetType });
+                        ["targetKind"] = binding.TargetKind, ["targetType"] = binding.TargetType,
+                        ["expectedType"] = FluxTypeNames.Normalize(port.Type), ["actualType"] = actual });
+            }
+            checks.Add(check);
         }
+        return new(expectations, checks);
     }
+
+    /// <summary>
+    /// Compares a binding target's actual type with the port type (ROADMAP-9 unit 5). A Slot target offers
+    /// <c>Slot</c>; a component target its component type (or, through the type information, a base type or an
+    /// interface it lists); a member target the <c>T</c> it offers as <c>IValue&lt;T&gt;</c> / <c>IField&lt;T&gt;</c>,
+    /// which is the value type of the field (or the target type of a reference) read from the live component when the
+    /// selector was resolved. Returns null for "read and different" (the caller stops with FLUX_BINDING_TYPE_MISMATCH);
+    /// a target whose type could not be read, or not shown to fit, is <see cref="FluxBindingTypeStatus.Unknown"/> and
+    /// continues: this check runs before anything is written, and the guard's readback after the deployment stays the
+    /// final check.
+    /// </summary>
+    private async Task<FluxBindingTypeCheck?> CheckTargetTypeAsync(FluxResolvedBinding binding, FluxModulePort port,
+        CancellationToken cancellationToken)
+    {
+        var expected = FluxTypeNames.Normalize(port.Type);
+        var actual = ActualTargetType(binding);
+        FluxBindingTypeCheck Result(string status, string detail) => new(binding.Name, binding.Mode, port.Type,
+            binding.TargetKind, binding.TargetType, expected, actual, status, detail);
+
+        if (actual is null)
+            return Result(FluxBindingTypeStatus.Unknown,
+                $"the type of '{binding.Selector}' ({binding.TargetKind}) was not read, so it is not known to be '{port.Type}'");
+        if (FluxTypeNames.SameType(expected, actual))
+            return Result(FluxBindingTypeStatus.Matched, $"'{binding.Selector}' is '{actual}'");
+        if (binding.TargetKind != "component" || string.IsNullOrWhiteSpace(binding.TargetType))
+            return null; // A Slot is a Slot; a member's value type was read and is another type.
+
+        // A component may still fit through a base type or an interface: read its type information.
+        var interfaceExpected = FluxTypeNames.IsInterfaceName(expected);
+        string? type = binding.TargetType;
+        for (var depth = 0; type is not null && depth < 32; depth++)
+        {
+            RLoop.Core.TypeInfo info;
+            try { info = await client.DescribeTypeAsync(type, cancellationToken); }
+            catch (Exception error) when (error is not OperationCanceledException)
+            {
+                return Result(FluxBindingTypeStatus.Unknown,
+                    $"'{binding.Selector}' is '{actual}'; whether it is a '{port.Type}' is unknown because the type information of '{type}' could not be read ({error.Message})");
+            }
+            if (info.Interfaces.Any(name => FluxTypeNames.SameType(expected, FluxTypeNames.Normalize(name))))
+                return Result(FluxBindingTypeStatus.Matched, $"'{binding.Selector}' is '{actual}', which implements '{expected}' (type information of '{type}')");
+            if (depth > 0 && FluxTypeNames.SameType(expected, FluxTypeNames.Normalize(info.FullTypeName)))
+                return Result(FluxBindingTypeStatus.Matched, $"'{binding.Selector}' is '{actual}', which derives from '{expected}'");
+            type = string.IsNullOrWhiteSpace(info.BaseType) ? null : info.BaseType;
+        }
+        // The base chain was read to its end without the expected class. The listed interfaces may omit inherited
+        // ones, so an interface that was not found is not proven absent.
+        return interfaceExpected || type is not null
+            ? Result(FluxBindingTypeStatus.Unknown,
+                $"'{binding.Selector}' is '{actual}'; the type information read does not show that it is a '{port.Type}'")
+            : null;
+    }
+
+    private static string? ActualTargetType(FluxResolvedBinding binding) =>
+        binding.TargetKind == "slot" ? "Slot"
+        : string.IsNullOrWhiteSpace(binding.TargetType) ? null
+        : FluxTypeNames.Normalize(binding.TargetType);
 
     private static void ValidateDeclaredBindings(FluxModuleSpec module, IReadOnlyList<FluxModulePort> ports)
     {
@@ -257,60 +522,12 @@ public sealed class FluxManifestOrchestrator(IFluxTool flux)
         }
     }
 
-    private static bool TargetTypeCompatible(string expected, string targetKind, string? actual)
-    {
-        var expectedName = CanonicalType(expected);
-        if (targetKind == "slot") return expectedName == "Slot";
-        if (string.IsNullOrWhiteSpace(actual)) return false;
-        var actualName = CanonicalType(actual);
-        if (expectedName.Equals(actualName, StringComparison.OrdinalIgnoreCase)) return true;
-        if (targetKind == "component" && IsInterfaceName(expectedName)) return true;
-        return false;
-    }
+    private static bool IsInterfaceName(string type) => FluxTypeNames.IsInterfaceName(FluxTypeNames.Normalize(type));
 
-    private static string CanonicalType(string type)
+    private static FluxModuleManifest ReadManifest(string path)
     {
-        var name = SimpleType(type);
-        return name.ToLowerInvariant() switch
-        {
-            "boolean" or "bool" => "Boolean",
-            "byte" or "uint8" => "Byte",
-            "sbyte" or "int8" => "SByte",
-            "short" or "int16" => "Int16",
-            "ushort" or "uint16" => "UInt16",
-            "int" or "int32" => "Int32",
-            "uint" or "uint32" => "UInt32",
-            "long" or "int64" => "Int64",
-            "ulong" or "uint64" => "UInt64",
-            "float" or "single" or "float32" => "Single",
-            "double" or "float64" => "Double",
-            "char" => "Char",
-            "string" => "String",
-            _ => name
-        };
-    }
-
-    private static bool IsInterfaceName(string type)
-    {
-        var name = SimpleType(type);
-        return name.Length > 1 && name[0] == 'I' && char.IsUpper(name[1]);
-    }
-
-    private static string SimpleType(string type)
-    {
-        var value = type.Trim();
-        var bracket = value.LastIndexOf(']');
-        if (bracket >= 0) value = value[(bracket + 1)..];
-        var dot = value.LastIndexOf('.');
-        return dot >= 0 ? value[(dot + 1)..] : value;
-    }
-
-    private static LoadedManifest Load(string manifestPath)
-    {
-        var path = Path.GetFullPath(manifestPath);
         if (!File.Exists(path)) throw new RLoopException("FLUX_MANIFEST_NOT_FOUND", $"Flux manifest '{path}' does not exist.", ExitCodes.NotFound);
-        FluxModuleManifest manifest;
-        try { manifest = JsonSerializer.Deserialize<FluxModuleManifest>(File.ReadAllText(path), JsonOptions) ?? throw new JsonException("Manifest was empty."); }
+        try { return JsonSerializer.Deserialize<FluxModuleManifest>(File.ReadAllText(path), JsonOptions) ?? throw new JsonException("Manifest was empty."); }
         catch (JsonException ex)
         {
             var suggestions = ex.Path?.Contains(".bindings", StringComparison.OrdinalIgnoreCase) == true
@@ -319,6 +536,12 @@ public sealed class FluxManifestOrchestrator(IFluxTool flux)
             throw new RLoopException("FLUX_MANIFEST_INVALID", $"Invalid Flux manifest: {ex.Message}", ExitCodes.ValidationFailed,
                 new Dictionary<string, object?> { ["manifest"] = path, ["jsonPath"] = ex.Path }, suggestions, ex);
         }
+    }
+
+    private static LoadedManifest Load(string manifestPath)
+    {
+        var path = Path.GetFullPath(manifestPath);
+        var manifest = ReadManifest(path);
         if (manifest.SchemaVersion != "1") throw new RLoopException("FLUX_MANIFEST_VERSION_UNSUPPORTED", "Flux manifest schemaVersion must be \"1\".", ExitCodes.ValidationFailed);
         if (manifest.Modules.Count == 0) throw new RLoopException("FLUX_MANIFEST_EMPTY", "Flux manifest requires at least one module.", ExitCodes.ValidationFailed);
         if (manifest.Modules.Select(x => x.Name).Distinct(StringComparer.Ordinal).Count() != manifest.Modules.Count)
@@ -405,28 +628,22 @@ public sealed class FluxManifestOrchestrator(IFluxTool flux)
     private static string ResolveStatePath(FluxModuleManifest manifest, string manifestPath) => Path.GetFullPath(
         manifest.DeployState ?? Path.Combine(".resoloop", "flux-state", Path.GetFileNameWithoutExtension(manifestPath) + ".json"),
         Path.GetDirectoryName(manifestPath)!);
-    private static DeployState LoadState(string path)
-    {
-        if (!File.Exists(path)) return new DeployState();
-        try { return JsonSerializer.Deserialize<DeployState>(File.ReadAllText(path), JsonOptions) ?? new DeployState(); }
-        catch (JsonException ex) { throw new RLoopException("FLUX_STATE_INVALID", $"Invalid Flux deploy state '{path}': {ex.Message}", ExitCodes.ValidationFailed, innerException: ex); }
-    }
-    private static void SaveState(string path, DeployState state)
-    {
-        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-        var temporary = path + ".tmp";
-        File.WriteAllText(temporary, JsonSerializer.Serialize(state, JsonOptions) + "\n", new UTF8Encoding(false));
-        File.Move(temporary, path, true);
-    }
 
     private sealed record LoadedManifest(string Path, string Directory, string ProjectDirectory, FluxModuleManifest Manifest);
-    private sealed class DeployState
-    {
-        public int SchemaVersion { get; set; } = 1;
-        public string? ParentSlotId { get; set; }
-        public string? SessionId { get; set; }
-        public Dictionary<string, ModuleState> Modules { get; set; } = new(StringComparer.Ordinal);
-    }
-    private sealed record ModuleState(string Hash, string? SlotId);
+    // Also the serializer of the binding part of the input hash; changing it would change every hash.
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNameCaseInsensitive = true, PropertyNamingPolicy = JsonNamingPolicy.CamelCase, WriteIndented = true, UnmappedMemberHandling = System.Text.Json.Serialization.JsonUnmappedMemberHandling.Disallow };
+}
+
+/// <summary>
+/// Normalizes the type names that meet in a binding check: ProtoGraph port types (<c>int</c>, <c>float3</c>,
+/// <c>Slot</c>), ResoniteLink type strings (<c>[FrooxEngine]FrooxEngine.IField&lt;[FrooxEngine]Elements.Core.float3&gt;</c>)
+/// and CLR full names (<c>System.Single</c>, <c>System.Nullable`1[[System.Single, …]]</c>). Assembly prefixes and
+/// namespaces are removed, generic arguments are normalized one by one, <c>T?</c> is <c>Nullable&lt;T&gt;</c>, and the
+/// scalar aliases are made equal (<c>int</c> = <c>Int32</c>). Names only: it never decides assignability.
+/// </summary>
+public static class FluxTypeNames
+{
+    public static string Normalize(string type) => FluxDeployTypeNames.Normalize(type);
+    public static bool SameType(string normalizedExpected, string normalizedActual) => FluxDeployTypeNames.SameType(normalizedExpected, normalizedActual);
+    public static bool IsInterfaceName(string normalized) => FluxDeployTypeNames.IsInterfaceName(normalized);
 }

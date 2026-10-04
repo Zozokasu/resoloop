@@ -12,7 +12,10 @@ public static class Program
 {
     public static Task<int> Main(string[] args) => RunAsync(args);
 
-    internal static async Task<int> RunAsync(string[] args, Func<CancellationToken, Task<IResoniteClient>>? connect = null)
+    /// <param name="fluxOverride">Tests only: the Flux-SDK tool and deployer to use instead of the real ones.</param>
+    internal static async Task<int> RunAsync(string[] args, Func<CancellationToken, Task<IResoniteClient>>? connect = null,
+        Func<Uri, IReadOnlyList<string>, CancellationToken, Task<CatalogSnapshot>>? captureCatalog = null,
+        (IFluxTool Tool, IFluxDeployer Deployer)? fluxOverride = null)
     {
         var parsed = ParsedArguments.Parse(args);
         using var output = new OutputWriter(parsed.Has("json"), parsed.Has("brief"));
@@ -49,7 +52,8 @@ public static class Program
             }
             if (parsed.Has("build-id") && !applyCommand)
                 throw new RLoopException("INVALID_OPTION", "--build-id is supported only by validate/diff/plan/apply.", ExitCodes.InvalidArguments);
-            if (parsed.Has("discard-pending"))
+            // flux deploy/deploy-manifest discard their own pending records in RunFlux (offline, like apply).
+            if (parsed.Has("discard-pending") && !parsed.Positionals[0].Equals("flux", StringComparison.OrdinalIgnoreCase))
             {
                 if (!parsed.Positionals[0].Equals("apply", StringComparison.OrdinalIgnoreCase) ||
                     new[] { "prune", "adopt", "set", "update" }.Any(parsed.Has) || parsed.Options("discard-pending").Count != 1)
@@ -142,6 +146,18 @@ public static class Program
                 return ExitCodes.Success;
             }
 
+            if (parsed.Positionals[0].Equals("catalog", StringComparison.OrdinalIgnoreCase))
+            {
+                var operation = parsed.Positional(1, "catalog subcommand");
+                if (operation.Equals("types", StringComparison.OrdinalIgnoreCase))
+                {
+                    CatalogCommands.Types(parsed, output);
+                    return ExitCodes.Success;
+                }
+                if (!operation.Equals("capture", StringComparison.OrdinalIgnoreCase))
+                    throw UnknownCommand(string.Join(' ', parsed.Positionals));
+            }
+
             var cliConfig = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase)
             {
                 ["url"] = parsed.Option("url"), ["timeout"] = parsed.Option("timeout"),
@@ -159,6 +175,12 @@ public static class Program
             commandCancellation.CancelAfter(TimeSpan.FromSeconds(resolution.Config.CommandTimeoutSeconds));
             var commandToken = commandCancellation.Token;
             if (parsed.Has("verbose")) Console.Error.WriteLine(JsonSerializer.Serialize(new { configSources = resolution.Sources }));
+
+            if (parsed.Positionals[0].Equals("catalog", StringComparison.OrdinalIgnoreCase))
+            {
+                await CatalogCommands.CaptureAsync(parsed, output, resolution.Config, commandToken, captureCatalog);
+                return ExitCodes.Success;
+            }
 
             if (parsed.Positionals[0].Equals("discover", StringComparison.OrdinalIgnoreCase))
             {
@@ -179,11 +201,12 @@ public static class Program
             if (parsed.Positionals[0].Equals("wb", StringComparison.OrdinalIgnoreCase))
                 return await RunWorkbench(parsed, output, resolution.Config, commandToken);
 
-            var flux = new FluxProcessTool(resolution.Config.FluxExecutable ?? "flux-sdk", new FluxSdkDeployer());
+            var deployer = fluxOverride?.Deployer ?? new FluxSdkDeployer();
+            var flux = fluxOverride?.Tool ?? new FluxProcessTool(resolution.Config.FluxExecutable ?? "flux-sdk");
             if (parsed.Positionals[0].Equals("doctor", StringComparison.OrdinalIgnoreCase))
                 return await RunDoctor(parsed, output, resolution.Config, flux, commandToken);
             if (parsed.Positionals[0].Equals("flux", StringComparison.OrdinalIgnoreCase))
-                return await RunFlux(parsed, output, resolution.Config, flux, commandToken);
+                return await RunFlux(parsed, output, resolution.Config, flux, deployer, connect, commandToken);
             if (parsed.Positionals[0].Equals("logs", StringComparison.OrdinalIgnoreCase))
                 return RunLogs(parsed, output, resolution.Config);
             if (parsed.Has("catalog") && !parsed.Positionals[0].Equals("validate", StringComparison.OrdinalIgnoreCase))
@@ -916,9 +939,36 @@ public static class Program
             (truncation?.Continuation is null ? string.Empty : $" | --cursor {truncation.Continuation}"));
     }
 
-    internal static bool IsDirectWrite(ParsedArguments args) => args.Positionals.Count >= 2 &&
-        (args.Positionals[0].ToLowerInvariant(), args.Positionals[1].ToLowerInvariant()) is
-            ("slot", "create" or "set" or "delete") or ("component", "add" or "set" or "remove");
+    /// <summary>Who takes the URL's session write lock for a command.</summary>
+    internal enum SessionLockEntry
+    {
+        /// <summary>The command does not write to the world (or only changes local state files).</summary>
+        None,
+        /// <summary>A direct write: the CLI's generic path takes the lock around the whole command.</summary>
+        Cli,
+        /// <summary>
+        /// A ProtoGraph deployment: FluxDeployGuard takes the lock itself, once per module deployment, and releases it
+        /// after the readback and the state update. The generic path must not take it too (that would make the
+        /// guard's own acquisition APPLY_SESSION_BUSY).
+        /// </summary>
+        FluxGuard
+    }
+
+    internal static SessionLockEntry SessionLockEntryOf(ParsedArguments args)
+    {
+        if (args.Positionals.Count < 2) return SessionLockEntry.None;
+        var (command, sub) = (args.Positionals[0].ToLowerInvariant(), args.Positionals[1].ToLowerInvariant());
+        if ((command, sub) is ("slot", "create" or "set" or "delete") or ("component", "add" or "set" or "remove"))
+            return SessionLockEntry.Cli;
+        if (command == "flux" && !args.Has("discard-pending") && (sub is "deploy" or "deploy-manifest" ||
+                sub == "watch" && args.Positionals.Count > 2 && IsFluxManifest(args.Positionals[2])))
+            return SessionLockEntry.FluxGuard;
+        return SessionLockEntry.None;
+    }
+
+    internal static bool IsDirectWrite(ParsedArguments args) => SessionLockEntryOf(args) == SessionLockEntry.Cli;
+
+    private static bool IsFluxManifest(string path) => path.EndsWith(".json", StringComparison.OrdinalIgnoreCase);
 
     private static async Task RunSlot(ParsedArguments args, OutputWriter output, IResoniteClient client, WorldService world, CancellationToken ct)
     {
@@ -1091,9 +1141,11 @@ public static class Program
         }
     }
 
-    private static async Task<int> RunFlux(ParsedArguments args, OutputWriter output, RLoopConfig config, IFluxTool flux, CancellationToken ct)
+    private static async Task<int> RunFlux(ParsedArguments args, OutputWriter output, RLoopConfig config, IFluxTool flux,
+        IFluxDeployer deployer, Func<CancellationToken, Task<IResoniteClient>>? connect, CancellationToken ct)
     {
         var sub = args.Positional(1, "flux subcommand").ToLowerInvariant();
+        if (args.Has("discard-pending")) return DiscardFluxPending(args, output, sub);
         if (sub == "validate-manifest")
         {
             var validation = FluxManifestOrchestrator.ValidateManifest(args.Positional(2, "Flux manifest"));
@@ -1155,28 +1207,33 @@ public static class Program
             }
             throw UnknownCommand($"flux node {operation}");
         }
-        if (sub == "deploy-manifest" || sub == "watch" && args.Positional(2, "Flux source or manifest").EndsWith(".json", StringComparison.OrdinalIgnoreCase))
+        // Placing modules: every path goes through FluxDeployGuard, which takes this URL's session lock for each
+        // deployment itself (SessionLockEntry.FluxGuard). The generic CLI lock is not taken here.
+        if (sub == "deploy-manifest" || sub == "watch" && IsFluxManifest(args.Positional(2, "Flux source or manifest")))
         {
             var manifestPath = Path.GetFullPath(args.Positional(2, "Flux manifest"));
             var manifest = FluxManifestOrchestrator.Inspect(manifestPath);
             var uri = await ResoniteClientFactory.ResolveConnectionUrlAsync(args, config, ct);
-            await using var client = await ResoniteClientFactory.ConnectAsync(args, config, ReflectionCacheFrom(args), ct, uri);
+            await using var client = connect is null
+                ? await ResoniteClientFactory.ConnectAsync(args, config, ReflectionCacheFrom(args), ct, uri)
+                : await connect(ct);
             var world = new WorldService(client, GeneratedContentMetadata.SourceForVersion(ProductVersion()));
             var currentSession = await client.GetSessionInfoAsync(ct);
             var fluxStatus = await flux.GetStatusAsync(ct);
             FluxRuntimeCompatibility.ThrowIfKnownIncompatible(manifestPath, currentSession.ResoniteVersion, fluxStatus.Version);
-            var parentSelector = args.Option("parent") ?? manifest.Parent ?? "Root";
+            // P8: no Root default. Without --parent or a manifest parent the guard refuses with FLUX_PARENT_ROOT_REFUSED.
+            var parentSelector = args.Option("parent") ?? manifest.Parent;
             var statePath = FluxManifestOrchestrator.ResolveWorldStatePath(manifestPath,
                 args.Option("state"), manifest.WorldState, Environment.CurrentDirectory);
-            string parentId;
-            if (parentSelector.StartsWith("$slot:", StringComparison.Ordinal))
+            string? parentId = null;
+            if (parentSelector?.StartsWith("$slot:", StringComparison.Ordinal) == true)
             {
                 if (string.IsNullOrWhiteSpace(statePath))
                     throw new RLoopException("FLUX_WORLD_STATE_REQUIRED", "A Flux parent using $slot:key requires worldState in the manifest or --state.", ExitCodes.ValidationFailed);
                 parentId = (await world.ResolveStableReferenceAsync(statePath, parentSelector,
                     currentSession.UniqueSessionId, ct)).Id;
             }
-            else parentId = await world.ResolveSlotIdAsync(parentSelector, ct);
+            else if (parentSelector is not null) parentId = await world.ResolveSlotIdAsync(parentSelector, ct);
 
             var resolvedBindings = new Dictionary<string, FluxResolvedModuleBindings>(StringComparer.Ordinal);
             foreach (var module in manifest.Modules.Where(module => module.Bindings is { Count: > 0 }))
@@ -1194,80 +1251,134 @@ public static class Program
                 }
                 resolvedBindings[module.Name] = new FluxResolvedModuleBindings(bindings);
             }
-            var orchestrator = new FluxManifestOrchestrator(flux);
-            async Task<string?> ResolveModuleSlot(FluxModuleSpec module, CancellationToken cancellationToken)
-            {
-                var parent = await client.GetSlotAsync(parentId, 1, false, cancellationToken);
-                var names = new[]
-                {
-                    module.Module,
-                    module.Module.Replace('\\', '/').Split('/', StringSplitOptions.RemoveEmptyEntries).LastOrDefault()
-                }.Where(name => !string.IsNullOrWhiteSpace(name)).Distinct(StringComparer.Ordinal).ToArray();
-                var matches = parent.Children.Where(child => names.Contains(child.Name, StringComparer.Ordinal)).ToArray();
-                if (matches.Length > 1)
-                    throw new RLoopException("FLUX_MODULE_SLOT_AMBIGUOUS",
-                        $"Module '{module.Name}' matched multiple direct children below '{parentId}'.",
-                        ExitCodes.ValidationFailed,
-                        new Dictionary<string, object?> { ["module"] = module.Name, ["ids"] = matches.Select(match => match.Id).ToArray() });
-                return matches.SingleOrDefault()?.Id;
-            }
+            var orchestrator = new FluxManifestOrchestrator(flux, deployer, client);
+            var libraryPath = args.Option("library-path") ?? config.ResoniteManagedDataPath;
             var report = sub == "watch"
-                ? await orchestrator.WatchAsync(manifestPath, parentId, uri, args.Option("library-path") ?? config.ResoniteManagedDataPath,
-                    config.FluxDeployerPath, currentSession.UniqueSessionId,
-                    TimeSpan.FromMilliseconds(args.IntOption("poll-ms", 500, 100, 10000)), resolvedBindings, ResolveModuleSlot, ct)
-                : await orchestrator.DeployAsync(manifestPath, parentId, uri, args.Option("library-path") ?? config.ResoniteManagedDataPath,
-                    config.FluxDeployerPath, currentSession.UniqueSessionId, resolvedBindings, ResolveModuleSlot, ct);
+                ? await orchestrator.WatchAsync(manifestPath, parentId, uri, libraryPath, config.FluxDeployerPath,
+                    TimeSpan.FromMilliseconds(args.IntOption("poll-ms", 500, 100, 10000)), resolvedBindings, fluxStatus.Version, ct)
+                : await orchestrator.DeployAsync(manifestPath, parentId, uri, libraryPath, config.FluxDeployerPath,
+                    resolvedBindings, fluxStatus.Version, ct);
             if (!report.Success)
                 throw new RLoopException("FLUX_MANIFEST_DEPLOY_FAILED", "One or more Flux modules failed; successful modules were checkpointed.", ExitCodes.ExternalToolFailed,
-                    new Dictionary<string, object?> { ["report"] = report }, [report.Recovery]);
+                    new Dictionary<string, object?> { [FluxManifestOrchestrator.ReportContextKey] = report }, [report.Recovery]);
             output.Success(report, writer =>
             {
-                foreach (var module in report.Modules) writer.WriteLine($"{module.Action,-7} {module.Name} build={module.BuildSucceeded} deploy={module.Deployed}");
+                foreach (var module in report.Modules)
+                {
+                    writer.WriteLine($"{module.Action,-7} {module.Name} build={module.BuildSucceeded} deploy={module.Deployed}" +
+                        (module.Deploy is { } deploy ? $" root={deploy.NewRootSlotId} operation={deploy.OperationId}" : ""));
+                    foreach (var warning in FluxPreDeployWarnings(module.Build, module.BindingTypes, module.Deploy?.Preconditions.BindingPorts))
+                        writer.WriteLine($"  warning: {warning}");
+                }
                 writer.WriteLine($"atomic={report.Atomic}; recovery={report.Recovery}");
             });
             return ExitCodes.Success;
         }
-        FluxResult result;
-        if (sub is "build" or "check" or "watch")
+        if (sub == "deploy")
         {
-            var request = new FluxBuildRequest(args.Positional(2, "ProtoGraph source"), args.Option("project"), args.Option("out"),
-                args.Option("library-path") ?? config.ResoniteManagedDataPath, !args.Has("full-errors"));
-            result = sub switch
-            {
-                "build" => await flux.BuildAsync(request, ct),
-                "check" => await flux.CheckAsync(request, ct),
-                _ => await flux.WatchAsync(request, ct)
-            };
-        }
-        else if (sub == "deploy")
-        {
-            var uri = await ResoniteClientFactory.ResolveConnectionUrlAsync(args, config, ct);
             var project = Path.GetFullPath(args.RequireOption("project"));
             var module = args.RequireOption("module");
-            await using var client = await ResoniteClientFactory.ConnectAsync(args, config, ReflectionCacheFrom(args), ct, uri);
-            var parentId = await new WorldService(client, GeneratedContentMetadata.SourceForVersion(ProductVersion()))
-                .ResolveSlotIdAsync(args.Option("parent") ?? "Root", ct);
-            result = await flux.DeployAsync(new FluxDeployRequest(project, module, parentId, uri,
-                args.Option("library-path") ?? config.ResoniteManagedDataPath, config.FluxDeployerPath), ct);
+            var uri = await ResoniteClientFactory.ResolveConnectionUrlAsync(args, config, ct);
+            await using var client = connect is null
+                ? await ResoniteClientFactory.ConnectAsync(args, config, ReflectionCacheFrom(args), ct, uri)
+                : await connect(ct);
+            // P8: no Root default. Without --parent the guard refuses with FLUX_PARENT_ROOT_REFUSED.
+            var parentId = args.Option("parent") is { } parentSelector
+                ? await new WorldService(client, GeneratedContentMetadata.SourceForVersion(ProductVersion())).ResolveSlotIdAsync(parentSelector, ct)
+                : null;
+            // P4: the same guard as the manifest; the state is <project>/.resoloop/flux-state/deploy/<module>.json.
+            var deployed = await FluxSingleDeploy.DeployAsync(client, deployer, project, module, parentId, uri,
+                args.Option("library-path") ?? config.ResoniteManagedDataPath, config.FluxDeployerPath, null, ct);
+            output.Success(deployed, writer =>
+            {
+                if (!string.IsNullOrWhiteSpace(deployed.StandardOutput)) writer.Write(deployed.StandardOutput);
+                if (!string.IsNullOrWhiteSpace(deployed.StandardError)) writer.Write(deployed.StandardError);
+                writer.WriteLine($"deployed {deployed.Deploy.ModuleName} -> {deployed.OutputPath} (operation {deployed.Deploy.OperationId}, state {deployed.Deploy.StateFile})");
+                foreach (var warning in FluxPreDeployWarnings(null, null, deployed.Deploy.Preconditions.BindingPorts))
+                    writer.WriteLine($"warning: {warning}");
+            });
+            return ExitCodes.Success;
         }
-        else throw UnknownCommand($"flux {sub}");
+        if (sub is not ("build" or "check" or "watch")) throw UnknownCommand($"flux {sub}");
 
-        if (!result.Success)
+        var request = new FluxBuildRequest(args.Positional(2, "ProtoGraph source"), args.Option("project"), args.Option("out"),
+            args.Option("library-path") ?? config.ResoniteManagedDataPath, !args.Has("full-errors"));
+        var result = sub switch
+        {
+            "build" => await flux.BuildAsync(request, ct),
+            "check" => await flux.CheckAsync(request, ct),
+            _ => await flux.WatchAsync(request, ct)
+        };
+        // P9: build and check are judged by their error diagnostics (FluxBuildJudgement), not by the exit code alone.
+        var verdict = sub == "watch" ? null : FluxBuildJudgement.Of(result);
+        if (verdict is { Success: false } || verdict is null && !result.Success)
         {
             var diagnosticChannels = (result.Diagnostics ?? []).Select(diagnostic => diagnostic.Channel).Distinct().ToArray();
-            throw new RLoopException("FLUX_COMMAND_FAILED", $"Flux-SDK {sub} failed with exit code {result.ExitCode}.", ExitCodes.ExternalToolFailed,
+            throw new RLoopException("FLUX_COMMAND_FAILED",
+                verdict is null ? $"Flux-SDK {sub} failed with exit code {result.ExitCode}." : $"Flux-SDK {sub} failed: {verdict.Detail}",
+                ExitCodes.ExternalToolFailed,
                 new Dictionary<string, object?>
                 {
                     ["exitCode"] = result.ExitCode, ["diagnostics"] = result.Diagnostics ?? [],
                     ["primaryDiagnostics"] = result.PrimaryDiagnostics ?? [],
-                    ["diagnosticChannels"] = diagnosticChannels,
+                    ["diagnosticChannels"] = diagnosticChannels, ["verdict"] = verdict,
                     ["stdout"] = result.StandardOutput, ["stderr"] = result.StandardError
                 },
                 diagnosticChannels.Length == 0
                     ? ["Inspect error.context.stdout and error.context.stderr for raw Flux-SDK output."]
                     : [$"Fix primaryDiagnostics first; parsed diagnostics came from {string.Join(" and ", diagnosticChannels)}."]);
         }
+        // A warnings-only build is a success: the JSON carries the verdict and the warnings in diagnostics.
+        if (verdict is not null) result = result with { Success = true, Verdict = verdict };
         output.Success(result, w => { if (!string.IsNullOrWhiteSpace(result.StandardOutput)) w.Write(result.StandardOutput); if (!string.IsNullOrWhiteSpace(result.StandardError)) w.Write(result.StandardError); });
+        return ExitCodes.Success;
+    }
+
+    /// <summary>The pre-deployment warnings of one module (unit 5) as text lines: build warnings, unknown binding types, unchecked or unbound ports.</summary>
+    private static IEnumerable<string> FluxPreDeployWarnings(FluxBuildVerdict? build, IReadOnlyList<FluxBindingTypeCheck>? bindingTypes,
+        FluxDeployBindingPortsCheck? bindingPorts)
+    {
+        if (build is { Success: true, WarningCount: > 0 }) yield return build.Detail;
+        foreach (var check in bindingTypes ?? [])
+            if (check.Status == FluxBindingTypeStatus.Unknown) yield return $"binding {check.Binding}: {check.Detail}";
+        if (bindingPorts is { Status: FluxDeployBindingPortsStatus.UnboundPortsAllowed or FluxDeployBindingPortsStatus.PortsUnknown })
+            yield return bindingPorts.Detail;
+    }
+
+    /// <summary>
+    /// <c>flux deploy|deploy-manifest --discard-pending OPERATION_ID --yes</c>: removes one pending deployment from the
+    /// same state the deployment would use. Offline, like apply's F10: no connection, no world write, no adoption.
+    /// </summary>
+    private static int DiscardFluxPending(ParsedArguments args, OutputWriter output, string sub)
+    {
+        if (sub is not ("deploy" or "deploy-manifest"))
+            throw new RLoopException("INVALID_OPTION", "--discard-pending is supported by apply, flux deploy and flux deploy-manifest.", ExitCodes.InvalidArguments);
+        if (args.Options("discard-pending").Count != 1)
+            throw new RLoopException("INVALID_OPTION", "--discard-pending takes exactly one OPERATION_ID.", ExitCodes.InvalidArguments);
+        var operationId = args.RequireOption("discard-pending");
+        if (!args.Has("yes"))
+            throw new RLoopException("CONFIRMATION_REQUIRED", $"flux {sub} --discard-pending requires --yes after inspecting the world.", ExitCodes.ValidationFailed);
+        string statePath;
+        if (sub == "deploy-manifest")
+        {
+            if (args.Positionals.Count > 3)
+                throw new RLoopException("UNEXPECTED_ARGUMENT", "flux deploy-manifest --discard-pending accepts one manifest.", ExitCodes.InvalidArguments);
+            statePath = FluxManifestOrchestrator.ResolveDeployStatePath(args.Positional(2, "Flux manifest"));
+        }
+        else
+        {
+            if (args.Positionals.Count > 2)
+                throw new RLoopException("UNEXPECTED_ARGUMENT", "flux deploy takes no positional arguments; use --project and --module.", ExitCodes.InvalidArguments);
+            statePath = FluxDeployStateStore.ResolveSingleDeployStatePath(args.RequireOption("project"), args.RequireOption("module"));
+        }
+        var discarded = FluxDeployPendingDiscard.Discard(statePath, operationId, true);
+        output.Success(discarded, writer =>
+        {
+            writer.WriteLine($"discarded {discarded.OperationId}: module '{discarded.Module}' ({discarded.ModuleName}) below '{discarded.ParentSlotId}', stage {discarded.Stage}");
+            writer.WriteLine($"candidate roots: {(discarded.CandidateRootIds.Count == 0 ? "none" : string.Join(", ", discarded.CandidateRootIds))}");
+            writer.WriteLine($"state: {discarded.StateFile}");
+            writer.WriteLine(discarded.Warning);
+        });
         return ExitCodes.Success;
     }
 
@@ -1339,6 +1450,15 @@ public static class Program
     {
         var detail = command?.ToLowerInvariant() switch
         {
+            "catalog" => """
+resoloop catalog capture --types FULL_NAMES.json --output CATALOG.json [--snapshot SNAPSHOT.json]
+  [--url ws://localhost:PORT | --url auto --session EXACT_SESSION_ID_OR_NAME]
+resoloop catalog types CATALOG.json [--output FILE.d.ts]
+
+Capture reads 1..512 explicit full Component names from a JSON array; it never writes world content.
+Types generates editor hints only from a trusted, nonsynthetic catalog; C# catalog validation remains authoritative.
+Default declaration output: project .resoloop/catalog-types.d.ts. JsonValue fallbacks are listed in output and comments.
+""",
             "apply" => """
 resoloop apply FILE [--build-id R] [--state FILE] [--require-state] [--adopt] [--profile] [--ndjson-progress] [--prune --yes]
 
@@ -1380,6 +1500,8 @@ Project setup:
   resoloop schema list | schema describe document|node|slot|component|camera|test|assertion|probe|reflection [--json]
   resoloop observe '$member:KEY.NAME' [...] --state WORLD_STATE [--json]
   resoloop type query --request FILE.json [--cache auto|off|refresh] [--cache-dir DIR] [--refresh] [--profile] [--json]
+  resoloop catalog capture --types FULL_NAMES.json --output CATALOG.json [--snapshot SNAPSHOT.json] [--json]
+  resoloop catalog types CATALOG.json [--output FILE.d.ts] [--json]
   resoloop type check --request FILE.json | --manifest FILE.json [--brief] [--profile] [--cache auto|off|refresh] [--json]
   Reflection cache options for connected commands: --cache auto|off|refresh --cache-dir DIR --refresh
   auto trusts matching endpoint/Resonite/ResoniteLink/CLI versions across restarts; no default expiry.
@@ -1459,9 +1581,15 @@ ProtoFlux (Flux-SDK):
   resoloop flux node describe NAME_OR_FULL_NAME [--library-path DIR]
   resoloop flux validate-manifest FILE.json [--resonite-version VERSION --flux-version VERSION]
   resoloop flux check|build|watch FILE.pg [--project DIR] [--out FILE] [--library-path DIR]
-  resoloop flux deploy --project DIR --module MODULE_PATH [--parent SLOT] [--library-path DIR]
+  resoloop flux deploy --project DIR --module MODULE_PATH --parent SLOT [--library-path DIR]
   resoloop flux deploy-manifest FILE.json [--parent SLOT|$slot:key] [--state WORLD_STATE]
   resoloop flux watch FILE.json [--parent SLOT|$slot:key] [--state WORLD_STATE] [--poll-ms 500]
+  A parent is required (--parent or the manifest's parent); Root is refused. Each deployment takes the URL's
+  session lock and records a pending operation in the Flux deploy state until it is read back. The single
+  deploy's state is DIR/.resoloop/flux-state/deploy/<module>.json. watch stops on a pending deployment or a busy lock.
+  resoloop flux deploy --project DIR --module MODULE_PATH --discard-pending OPERATION_ID --yes
+  resoloop flux deploy-manifest FILE.json --discard-pending OPERATION_ID --yes
+    (offline: removes that pending record only; inspect the world first, nothing is written to it)
 
 Diagnostics:
   resoloop doctor

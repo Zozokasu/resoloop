@@ -2,6 +2,19 @@
 
 # resoloop
 
+## Component カタログと TypeScript 補助
+
+通常のCLI作業では、Reflectionで正確なComponentの完全型名を確認し、JSON配列 `component-types.json` に記録します。既存のResoniteLink URL設定を利用して、読み取り専用のカタログを取得し、TypeScript用宣言を生成できます。
+
+```powershell
+resoloop catalog capture --types component-types.json --output catalog.json --url ws://localhost:<現在のport>
+resoloop catalog types catalog.json
+resoloop-jsx build content/main.tsx -o build/main.json
+resoloop validate build/main.json --catalog catalog.json --json
+```
+
+`--url`を省略すると、CLIの既存のURL・設定選択を使います。取得はLink backendで行い、sessionのwrite lockを取らず、実機へ書き込みません。取得前後のversionを照合し、入力型名512件・再帰依存を含む取得型512件・2分の上限を設けています。`catalog types`はoffline処理です。synthetic catalogと取得不完全なcatalogは拒否します。既定出力先は最寄りの `.resoloop.json` があるprojectの `.resoloop/catalog-types.d.ts` です。projectがなければ現在のdirectoryを基準にします。既定出力先は現在のdirectory基準で、`resoloop-jsx build` が自動で読むのは `.resoloop.json` のあるproject（または `--project-root`）の `.resoloop/` だけなので、そのproject内で実行するか `--output` を指定してください。生成宣言は `CatalogComponentRegistry` を拡張します。通常の `tsc` では `include` に指定するか、TypeScriptファイルから `/// <reference path="../.resoloop/catalog-types.d.ts" />` で参照してください。`resoloop-jsx build` はこの標準ファイルがあれば自動で読み込みます。TypeScriptの診断は編集時の補助です。生成される型が付くのは `<Component type="…">` の `fields` と `initialFields` だけです。`<Field>` は緩い型（JsonValue）のままで、member名と値はTypeScriptでは検査されません（存在しないmember名も `tsc` を通ります）。合否はC#のcatalog照合（`COMPONENT_MEMBER_NOT_FOUND` など）が決めます。最終的なcatalog判定はC#の `ApplyCatalogValidator` が行います。カタログ取得や型宣言だけではruntime動作を検証したことになりません。
+
 ## UIX制作の効率化
 
 新規制作では `children` に `{"$recipe":"button","$with":{"key":"accept","rect":{}}}` と直接記述できます。include/export不要で、生成キーは `uix-button--accept` を接頭辞にします。既存prototypeのキーは変わりません。適用済み宣言の移行にはキー変更の確認が必要です。
@@ -35,6 +48,8 @@ apply は各送信の直前に、計画時の値・型・接続を再確認し�
 
 Component の `propertyModes` は member ごとに `config`・`initial`・`runtime`・`driver-owned` を指定します。省略時は従来どおり、`fields` は設定、`initialFields` は作成時だけの初期値です。通常 apply は runtime と driver-owned を作成時にも書きません。宣言だけで driver の所有を認めることもありません。
 
+schema v1はComponentの任意`fieldAliases`とSlotの`tag`にも対応します。TSXでは`<Field>`子要素と`<Slot tag>`を使えます。alias参照はcanonicalな`$member`へ解決され、tagを省略すると既存値を保ちます。記法・診断・適用条件は[宣言の詳細](docs/DECLARATIVE.md)を参照してください。
+
 state v3 は確定済みの対応と保留を保存します。v1/v2 は読めますが、保存は v3 になり、古い CLI は v3 を拒否します。サーバが明示的に拒否した要求は保留を解消します。次の apply は、discovery の identity・受付・正確な ID・型・親・所有の証拠がそろった保留を照合し、一致した部分を確定します。確認できた不一致は保留を解消し、今の観測から再計画します。作成 ID や受付、identity が不明なら自動では解消しません。同名・型・順番による作成の回収も行いません。明示の `--url` で接続すると identity は不明になり、中断した保留を自動で確定できません。discovery 経由の接続なら一致を照合できます。
 
 失敗後は `context.reason`、`stateFile`、`operationId`、確定部分と completeness を読み、`inspect EXACT_SLOT_ID --members` または `component inspect EXACT_COMPONENT_ID` で実機を確認してください。そのうえで、指定した保留だけを破棄できます。
@@ -45,7 +60,7 @@ resoloop apply FILE --state STATE --discard-pending OPERATION_ID --yes
 
 この操作は接続せず、世界へ書きません。確定済みの対応は残ります。作成の候補を採用することはなく、実機で作成済みなら次の apply で重複する可能性があります。更新・削除の保留を破棄しても、確定済みの対応は管理対象として残るため、実機確認と再計画が必要です。
 
-直結の書込みは、正規化 URL を鍵に `<LocalApplicationData>/ResoLoop/write-locks/<hash>.lock` の排他的 handle を共有します。別 project でも host の大文字小文字、loopback アドレス（localhost、127.0.0.0/8 の 127.0.0.2 など、::1）、既定 port の表記ゆれは同じ鍵です。scheme・port・path・query が違えば別の鍵で、別の鍵が同じ world へ届くかは検証していません。apply とその asset import、直接の Slot/Component 編集・削除、画像 capture の一時カメラ、`test --probe` が参加します。読取りと offline SVG capture は lock を取りません。Flux deploy は対象外です。`APPLY_SESSION_BUSY`（終了コード7）は同じ URL の書込み競合、`APPLY_STATE_BUSY` は一つの project state の競合です。動いている writer が保持する lock を削除・奪取しないでください。
+直結の書込みは、正規化 URL を鍵に `<LocalApplicationData>/ResoLoop/write-locks/<hash>.lock` の排他的 handle を共有します。別 project でも host の大文字小文字、loopback アドレス（localhost、127.0.0.0/8 の 127.0.0.2 など、::1）、既定 port の表記ゆれは同じ鍵です。scheme・port・path・query が違えば別の鍵で、別の鍵が同じ world へ届くかは検証していません。apply とその asset import、`flux deploy`・`deploy-manifest`・manifest watch、直接の Slot/Component 編集・削除、画像 capture の一時カメラ、`test --probe` が参加します。Flux は配置ごとにlockを取り、配置後の読み直しとstate確定まで保持します。読取りと offline SVG capture は lock を取りません。`APPLY_SESSION_BUSY`（終了コード7）は同じ URL の書込み競合、`APPLY_STATE_BUSY` は一つの project state の競合です。動いている writer が保持する lock を削除・奪取しないでください。
 
 次の holder は最後の書込み元 state を確認します。ファイルまたは directory が無いと正確に分かれば、別 project の書込みも続行します。アクセス拒否は不在と扱いません。保留あり・読取り不能、または lock の所在情報が壊れている場合は `APPLY_WRITE_UNVERIFIED` で止め、context に `stateFile` と `lockFile` を返します。その state を直すか、元の project の宣言と state で保留を解決してください。指定保留を破棄する場合は、先に正確な対象を実機で確かめます。state を恒久的に失った場合は、ResoLoop の書込みが動いていないことと実機の状態を確かめたうえで、報告された `lockFile` を削除してください。cache 清掃で lock や保留は消えません。
 

@@ -116,6 +116,19 @@ public sealed partial class ApplyWorkflowTests
     }
 
     [Fact]
+    public void Bundle_LoadsCatalogWithLeadingUtf8Bom()
+    {
+        // Spec: a BOM-prefixed catalog (as written by Windows tools) is the same JSON; hashes cover the original text/bytes.
+        var bundle = NewBundle();
+        var withBom = "﻿" + bundle.Root["catalog"]!["text"]!.GetValue<string>();
+        File.WriteAllText(bundle.Catalog, withBom);
+        bundle.Root["catalog"] = BundlePayload(withBom);
+        bundle.Root["inputs"]!["files"]![2]!["sha256"] = BundleHash(withBom);
+        var loaded = ApplyDocument.Load(bundle.Save(), "R1");
+        Assert.NotNull(loaded);
+    }
+
+    [Fact]
     public void Bundle_RequestMismatchEvenWithIdenticalInputsAndMtime()
     {
         var bundle = NewBundle(); var time = File.GetLastWriteTimeUtc(bundle.Entry);

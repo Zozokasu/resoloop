@@ -59,7 +59,17 @@ internal sealed class SessionWriteLock : IDisposable
             if (currentState is not null && string.Equals(previous, System.IO.Path.GetFullPath(currentState), StringComparison.OrdinalIgnoreCase)) return;
             try
             {
-                using var json = JsonDocument.Parse(CheckpointFiles.Read(previous));
+                var text = CheckpointFiles.Read(previous);
+                using var json = JsonDocument.Parse(text);
+                // The state's kind selects the pending rule. A state without kind is an apply state (ownershipKey).
+                if (json.RootElement.TryGetProperty("kind", out var kind))
+                {
+                    if (kind.ValueKind != JsonValueKind.String || kind.GetString() != FluxDeployState.KindValue)
+                        throw new JsonException("Unknown state kind.");
+                    if (FluxDeployStateStore.Parse(text, previous).Pending.Count > 0)
+                        throw Blocked(previous, "previousFluxStatePending");
+                    return;
+                }
                 var ownership = json.RootElement.GetProperty("ownershipKey").GetString();
                 if (string.IsNullOrWhiteSpace(ownership)) throw new JsonException("Missing state ownership.");
                 var state = ApplyStateStore.Load(previous, ownership, requireState: true);

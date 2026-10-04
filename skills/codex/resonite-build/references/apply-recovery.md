@@ -50,7 +50,7 @@ different key. A hostname that resolves to the same Resonite process but is not 
 literal is a different key; whether two keys reach the same world is not verified. Locks live at `<LocalApplicationData>/ResoLoop/write-locks/<URL-hash>.lock`;
 cache cleanup does not touch them. Apply/imports, direct Slot/Component mutations, raster
 capture's temporary camera and authorized `test --probe` participate. Reads and offline SVG
-do not; Flux deployment is outside this lock. `APPLY_STATE_BUSY` is a separate lock on one
+do not; Flux deployment participates in this lock, holding it per deployment through readback and deploy-state commit. `APPLY_STATE_BUSY` is a separate lock on one
 project state. Wait for the active holder; never infer staleness from a filename or PID and
 never delete or steal a lock held by an active writer. OS handle release after process exit
 permits the next acquisition.

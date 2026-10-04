@@ -231,6 +231,7 @@ public sealed partial class WorldService
             var values = p.SlotValues!;
             var attributes = new Dictionary<string, object?>();
             if (values.Name is not null) attributes["name"] = slot.Name;
+            if (values.Tag is not null) attributes["tag"] = slot.Tag;
             if (values.ParentId is not null) attributes["parent"] = slot.ParentId;
             if (values.Position is not null) attributes["position"] = slot.Position;
             if (values.Rotation is not null) attributes["rotation"] = slot.Rotation;
@@ -240,6 +241,7 @@ public sealed partial class WorldService
             bool Check(string name, bool same) { if (same && target) p.Confirmed.Add(name); return same; }
             var complete = target;
             if (values.Name is not null) complete &= Check("name", slot.Name == values.Name);
+            if (values.Tag is not null) complete &= Check("tag", slot.Tag == values.Tag);
             if (values.ParentId is not null) complete &= Check("parent", slot.ParentId == values.ParentId);
             if (values.Position is not null) complete &= Check("position", VectorEquals(slot.Position, [values.Position.X, values.Position.Y, values.Position.Z]));
             if (values.Rotation is not null) complete &= Check("rotation", QuaternionEquals(slot.Rotation, [values.Rotation.X, values.Rotation.Y, values.Rotation.Z, values.Rotation.W]));
@@ -382,7 +384,7 @@ public sealed partial class WorldService
             ? new Dictionary<string, object?> { ["absence"] = "absent" }
             : p.SlotValues is { } slot
                 ? new Dictionary<string, object?> { ["name"] = slot.Name, ["parent"] = slot.ParentId,
-                    ["position"] = slot.Position, ["rotation"] = slot.Rotation, ["scale"] = slot.Scale }
+                    ["position"] = slot.Position, ["rotation"] = slot.Rotation, ["scale"] = slot.Scale, ["tag"] = slot.Tag }
                     .Where(v => v.Value is not null).ToDictionary()
                 : p.Members.ToDictionary(v => v.Key, v => (object?)v.Value);
         foreach (var value in values.Where(v => !p.Confirmed.Contains(v.Key)))

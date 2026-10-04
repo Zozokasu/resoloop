@@ -5,6 +5,8 @@
     <RootNamespace>RLoop.Flux.Deployer</RootNamespace>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="Boundary.fs" />
+    <Compile Include="Discovery.fs" />
     <Compile Include="Program.fs" />
   </ItemGroup>
   <ItemGroup>

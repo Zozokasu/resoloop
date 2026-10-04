@@ -20,11 +20,11 @@ public static class ApplyDocumentCompiler
         return CompileRoot(root, context);
     }
 
-    internal static Result CompileBundleIr(string text)
+    internal static Result CompileBundleIr(string text, ApplyBuildBundle? bundle = null)
     {
         var root = JsonNode.Parse(text) as JsonObject ?? throw new JsonException("The root must be an object.");
         if (root.ContainsKey("include")) ApplyBuildBundle.Fail("inputUnknown", "Bundle IR cannot read external includes.");
-        return CompileRoot(root, new Context());
+        return CompileRoot(root, new Context { Bundle = bundle });
     }
 
     private static Result CompileRoot(JsonObject root, Context context)
@@ -48,6 +48,7 @@ public static class ApplyDocumentCompiler
         if (root.ContainsKey("$draftKeys"))
             Fail("APPLY_DRAFT_KEY_UNSTABLE", "Draft index-derived keys cannot be validated or applied. Copy the intended effective keys into explicit key props and rebuild without generated keys.");
         ExpandScopes(root);
+        ResolveFieldAliases(root, context.Bundle);
         DetectStableKeyConflicts(root);
         context.ExpandedNodes = CountNodes(root);
         if (context.ExpandedNodes > context.NodeLimit)
@@ -312,13 +313,13 @@ public static class ApplyDocumentCompiler
                 foreach (var key in obj.Select(pair => pair.Key).ToArray())
                 {
                     if (obj[key] is JsonValue value && value.TryGetValue<string>(out var text))
-                        obj[key] = StableKeyScope.ResolveSelector(scope, text);
+                        obj[key] = QualifySelector(scope, text);
                     else Rewrite(obj[key], scope);
                 }
             else if (node is JsonArray array)
                 for (var i = 0; i < array.Count; i++)
                     if (array[i] is JsonValue value && value.TryGetValue<string>(out var text))
-                        array[i] = StableKeyScope.ResolveSelector(scope, text);
+                        array[i] = QualifySelector(scope, text);
                     else Rewrite(array[i], scope);
         }
         void Key(JsonObject spec, string scope, string path, string prefix)
@@ -343,6 +344,13 @@ public static class ApplyDocumentCompiler
                     if (components[i] is JsonObject component)
                     {
                         Key(component, scope, path + $".components[{i}]", "$component:");
+                        if (component["fieldAliases"] is JsonObject aliases && scope.Length > 0)
+                        {
+                            var qualified = new JsonObject();
+                            foreach (var alias in aliases)
+                                qualified[StableKeyScope.QualifyLocal(scope, alias.Key, path + $".components[{i}].fieldAliases")] = alias.Value?.DeepClone();
+                            component["fieldAliases"] = qualified;
+                        }
                         Rewrite(component["fields"], scope);
                         Rewrite(component["initialFields"], scope);
                     }
@@ -372,6 +380,128 @@ public static class ApplyDocumentCompiler
         Visit(root, "$");
     }
 
+    private static string QualifySelector(string scope, string text) =>
+        scope.Length > 0 && text.StartsWith("$field:", StringComparison.Ordinal) && !text[7..].Contains("::", StringComparison.Ordinal)
+            ? "$field:" + scope + "::" + text[7..] : StableKeyScope.ResolveSelector(scope, text);
+
+    private static void ResolveFieldAliases(JsonObject root, ApplyBuildBundle? bundle)
+    {
+        var aliases = new Dictionary<string, string>(StringComparer.Ordinal);
+        var components = new List<(JsonObject Spec, ApplyIssuePath Path)>();
+        void FailAlias(string code, string message, ApplyIssuePath path, string? key, string? member, bool value = false, string? originalValue = null)
+        {
+            var entry = bundle?.FindEntry(path.Segments, "component", key, member);
+            if (originalValue is not null && bundle?.MatchesOriginalString(path.Segments, originalValue) != true) entry = null;
+            var source = (value ? entry?.ValueSource : entry?.Source) ?? ApplyDiagnosticSource.Unknown;
+            var error = new RLoopException(code, message, ExitCodes.ValidationFailed,
+                new Dictionary<string, object?> { ["jsonPath"] = path.JsonPath });
+            var diagnostic = ApplyDiagnostics.Unknown(code, message, "compile", buildId: bundle?.BuildId);
+            diagnostic = diagnostic with
+            {
+                EntityKind = "component", Key = key, Member = member, JsonPath = path.JsonPath,
+                PathSegments = path.Segments, Source = source, Related = entry?.Related ?? [],
+                Completeness = new Dictionary<string, string>(diagnostic.Completeness)
+                { ["location"] = source.Status == "known" ? "complete" : "unknown" }
+            };
+            ApplyDiagnostics.AttachRuntime(error, [diagnostic]);
+            throw error;
+        }
+        void Visit(JsonObject node, ApplyIssuePath path)
+        {
+            if (node["components"] is JsonArray list)
+                for (var i = 0; i < list.Count; i++)
+                    if (list[i] is JsonObject spec) components.Add((spec, path.Property("components").Index(i)));
+            if (node["children"] is JsonArray children)
+                for (var i = 0; i < children.Count; i++)
+                    if (children[i] is JsonObject child) Visit(child, path.Property("children").Index(i));
+        }
+        Visit(root, ApplyIssuePath.Root);
+        foreach (var (spec, path) in components)
+        {
+            var key = spec["key"] is JsonValue k && k.TryGetValue<string>(out var s) ? s : null;
+            if (spec["fieldAliases"] is null) continue;
+            if (spec["fieldAliases"] is not JsonObject declared)
+                FailAlias("APPLY_FIELD_ALIAS_INVALID", "fieldAliases must be an object mapping aliases to member names.", path.Property("fieldAliases"), key, null);
+            foreach (var alias in (JsonObject)spec["fieldAliases"]!)
+            {
+                var member = alias.Value is JsonValue v && v.TryGetValue<string>(out var text) ? text : null;
+                var p = path.Property("fieldAliases").Property(alias.Key);
+                if (string.IsNullOrWhiteSpace(alias.Key) || string.IsNullOrWhiteSpace(member) || string.IsNullOrWhiteSpace(key))
+                    FailAlias("APPLY_FIELD_ALIAS_INVALID", "A field alias requires a non-empty alias, member name and explicit Component key.", p, key, alias.Key);
+                if ((spec["fields"] as JsonObject)?.ContainsKey(member!) != true &&
+                    (spec["initialFields"] as JsonObject)?.ContainsKey(member!) != true &&
+                    (spec["propertyModes"] as JsonObject)?.ContainsKey(member!) != true)
+                    FailAlias("APPLY_FIELD_ALIAS_MEMBER_UNDECLARED", $"Field alias '{alias.Key}' names undeclared member '{member}'.", p, key, alias.Key, originalValue: member);
+                if (!aliases.TryAdd(alias.Key, "$member:" + key + "." + member))
+                    FailAlias("APPLY_FIELD_ALIAS_DUPLICATE", $"Field alias '{alias.Key}' is declared more than once.", p, key, alias.Key, originalValue: member);
+            }
+        }
+        void Rewrite(JsonNode? node, ApplyIssuePath path, string? key, string member)
+        {
+            if (node is JsonObject obj)
+                foreach (var name in obj.Select(p => p.Key).ToArray())
+                {
+                    if (obj[name] is JsonValue v && v.TryGetValue<string>(out var text)) obj[name] = Resolve(text, path.Property(name), key, member);
+                    else Rewrite(obj[name], path.Property(name), key, member);
+                }
+            else if (node is JsonArray array)
+                for (var i = 0; i < array.Count; i++)
+                {
+                    if (array[i] is JsonValue v && v.TryGetValue<string>(out var text)) array[i] = Resolve(text, path.Index(i), key, member);
+                    else Rewrite(array[i], path.Index(i), key, member);
+                }
+        }
+        string Resolve(string text, ApplyIssuePath path, string? key, string member)
+        {
+            if (!text.StartsWith("$field:", StringComparison.Ordinal)) return text;
+            if (!aliases.TryGetValue(text[7..], out var selector))
+                FailAlias("APPLY_FIELD_ALIAS_NOT_FOUND", $"Field alias '{text[7..]}' is not declared.", path, key, member, value: true, originalValue: text);
+            bundle?.RecordLoweredSelector(path.Segments, text, selector!);
+            return selector!;
+        }
+        foreach (var (spec, path) in components)
+            foreach (var section in new[] { "fields", "initialFields" })
+                if (spec[section] is JsonObject fields)
+                    foreach (var member in fields.Select(p => p.Key).ToArray())
+                    {
+                        var p = path.Property(section).Property(member);
+                        var key = spec["key"]?.GetValue<string>();
+                        if (fields[member] is JsonValue v && v.TryGetValue<string>(out var text)) fields[member] = Resolve(text, p, key, member);
+                        else Rewrite(fields[member], p, key, member);
+                    }
+        if (root["tests"] is JsonArray tests)
+            for (var i = 0; i < tests.Count; i++)
+                if (tests[i] is JsonObject test)
+                {
+                    var path = ApplyIssuePath.Root.Property("tests").Index(i);
+                    void Target(JsonObject target, ApplyIssuePath p)
+                    {
+                        if (target["target"] is JsonValue v && v.TryGetValue<string>(out var text))
+                            target["target"] = Resolve(text, p.Property("target"), null, "target");
+                    }
+                    if (test["assertions"] is JsonArray assertions)
+                        for (var j = 0; j < assertions.Count; j++)
+                            if (assertions[j] is JsonObject assertion) Target(assertion, path.Property("assertions").Index(j));
+                    if (test["probe"] is JsonObject probe)
+                    {
+                        var p = path.Property("probe");
+                        Target(probe, p);
+                        if (probe["values"] is JsonObject values)
+                        {
+                            var resolved = new JsonObject();
+                            foreach (var value in values)
+                            {
+                                var selector = Resolve(value.Key, p.Property("values").Property(value.Key), null, value.Key);
+                                if (resolved.ContainsKey(selector))
+                                    FailAlias("APPLY_FIELD_DUPLICATE", $"Probe member '{selector}' is declared more than once.", p.Property("values").Property(value.Key), null, value.Key);
+                                resolved[selector] = value.Value?.DeepClone();
+                            }
+                            probe["values"] = resolved;
+                        }
+                    }
+                }
+    }
+
     private static int CountNodes(JsonNode node) => node switch
     {
         JsonObject obj => 1 + obj.Sum(x => x.Value is null ? 0 : CountNodes(x.Value)),
@@ -384,6 +514,7 @@ public static class ApplyDocumentCompiler
 
     private sealed class Context
     {
+        public ApplyBuildBundle? Bundle { get; init; }
         public HashSet<string> Files { get; } = new(StringComparer.OrdinalIgnoreCase);
         public int Prototypes { get; set; }
         public int Instances { get; set; }

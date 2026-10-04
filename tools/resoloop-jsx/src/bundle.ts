@@ -15,7 +15,7 @@ export function reserveBundleOutput(output: string): string {
 }
 
 export function publishBundle(document: ApplyDocument, inputs: InputFile[], catalogText: string, buildId: string, output: string): void {
-  const catalog = JSON.parse(catalogText);
+  const catalog = JSON.parse(catalogText.replace(/^\uFEFF/, ""));
   const types = new Set<string>();
   const entries: any[] = [];
   const add = (jsonPath: string, pathSegments: (string | number)[], entityKind: string, key: string,
@@ -47,6 +47,9 @@ export function publishBundle(document: ApplyDocument, inputs: InputFile[], cata
       for (const section of ["fields", "initialFields"])
         for (const field of Object.keys(component[section] ?? {}).sort()) values(component[section][field], p + "." + section + "[" + JSON.stringify(field) + "]", [...s, section, field], component.key, field,
           origin?.attributes[section]?.children?.[field], [...(origin?.attributes[section]?.related ?? []), ...(origin?.related ?? [])]);
+      for (const alias of Object.keys(component.fieldAliases ?? {}).sort())
+        add(p + '["fieldAliases"][' + JSON.stringify(alias) + "]", [...s, "fieldAliases", alias], "component", component.key, alias,
+          origin?.attributes.fieldAliases?.children?.[alias], origin?.related);
     }
     for (const [index, child] of (node.children ?? []).entries()) walk(child, `${jsonPath}.children[${index}]`, [...segments, "children", index]);
   };

@@ -1,0 +1,14 @@
+{
+  "schemaVersion": "1",
+  "ownership": { "key": "root" },
+  "slot": { "name": "Aliases", "key": "root", "parent": "Root", "tag": "alias-oracle" },
+  "components": [{ "type": "Test.Source", "key": "wire", "fields": { "Target": "$field:left::enabled" } }],
+  "children": [{
+    "slot": { "name": "Left", "key": "left::body" },
+    "components": [{
+      "type": "Test.Target", "key": "left::state", "identityFields": ["Seed"],
+      "fields": { "Enabled": false }, "fieldAliases": { "left::enabled": "Enabled", "left::seed": "Seed", "left::clock": "Clock", "left::driven": "Driven" },
+      "propertyModes": { "Seed": "initial", "Clock": "runtime", "Driven": "driver-owned" }, "initialFields": { "Seed": 17 }
+    }, { "type": "Test.Source", "key": "left::local-wire", "fields": { "Target": "$field:left::enabled" } }]
+  }]
+}

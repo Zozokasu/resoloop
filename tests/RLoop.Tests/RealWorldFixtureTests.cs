@@ -44,22 +44,24 @@ public sealed class RealWorldFixtureTests : IDisposable
             ["team-panel"] = new([new("TouchButton", "source", "$component:button", "C_Button", "component",
                 "FrooxEngine.PhysicalButton")])
         };
-        var tool = new FixtureFluxTool();
-        var orchestrator = new FluxManifestOrchestrator(tool);
+        var world = new FluxTestWorld();
+        var tool = new FluxTestDeployer(world);
+        tool.PreparedPorts["TeamPanel"] = [FluxTestDeployer.Port("TouchButton", "source",
+            "[FrooxEngine]FrooxEngine.ProtoFlux.GlobalReference<[FrooxEngine]FrooxEngine.PhysicalButton>", "element")];
+        var orchestrator = new FluxManifestOrchestrator(tool, tool, world);
 
         var broken = await Assert.ThrowsAsync<RLoopException>(() => orchestrator.DeployAsync(
-            Path.Combine(_temp, "broken.flux.json"), "S_Parent", new Uri("ws://localhost:1"), null, null,
-            "session", resolved));
-        var first = await orchestrator.DeployAsync(Path.Combine(_temp, "fixed.flux.json"), "S_Parent",
-            new Uri("ws://localhost:1"), null, null, "session", resolved);
-        var second = await orchestrator.DeployAsync(Path.Combine(_temp, "fixed.flux.json"), "S_Parent",
-            new Uri("ws://localhost:1"), null, null, "session", resolved);
+            Path.Combine(_temp, "broken.flux.json"), FluxTestWorld.Parent, new Uri(world.Url), null, null, resolved));
+        var first = await orchestrator.DeployAsync(Path.Combine(_temp, "fixed.flux.json"), FluxTestWorld.Parent,
+            new Uri(world.Url), null, null, resolved);
+        var second = await orchestrator.DeployAsync(Path.Combine(_temp, "fixed.flux.json"), FluxTestWorld.Parent,
+            new Uri(world.Url), null, null, resolved);
 
         Assert.Equal("FLUX_INTERFACE_GLOBAL_UNSUPPORTED", broken.Code);
         Assert.True(first.Success);
         Assert.True(Assert.Single(first.Modules).Deployed);
         Assert.Equal("no-op", Assert.Single(second.Modules).Action);
-        Assert.Single(tool.DeployRequests);
+        Assert.Single(tool.Executions);
     }
 
     private static string Fixture(params string[] parts) =>
@@ -68,21 +70,5 @@ public sealed class RealWorldFixtureTests : IDisposable
     public void Dispose()
     {
         if (Directory.Exists(_temp)) Directory.Delete(_temp, true);
-    }
-
-    private sealed class FixtureFluxTool : IFluxTool
-    {
-        public List<FluxDeployRequest> DeployRequests { get; } = [];
-        public Task<FluxResult> BuildAsync(FluxBuildRequest request, CancellationToken cancellationToken = default) =>
-            Task.FromResult(new FluxResult(true, 0, "Packing 1 ProtoFlux nodes and 0 comments.", ""));
-        public Task<FluxResult> CheckAsync(FluxBuildRequest request, CancellationToken cancellationToken = default) => BuildAsync(request, cancellationToken);
-        public Task<FluxResult> WatchAsync(FluxBuildRequest request, CancellationToken cancellationToken = default) => BuildAsync(request, cancellationToken);
-        public Task<FluxResult> DeployAsync(FluxDeployRequest request, CancellationToken cancellationToken = default)
-        {
-            DeployRequests.Add(request);
-            return Task.FromResult(new FluxResult(true, 0, "", "", "S_Module"));
-        }
-        public Task<FluxToolStatus> GetStatusAsync(CancellationToken cancellationToken = default) =>
-            Task.FromResult(new FluxToolStatus(true, "fixture", "1.9.0"));
     }
 }

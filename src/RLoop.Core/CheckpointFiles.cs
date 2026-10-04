@@ -51,6 +51,7 @@ internal static class CheckpointFiles
         path = Path.GetFullPath(path);
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         var temporary = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
+        Exception? writeFailure = null;
         try
         {
             using (var stream = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None))
@@ -59,12 +60,47 @@ internal static class CheckpointFiles
                 stream.Write(bytes);
                 stream.Flush(flushToDisk: true);
             }
-            if (File.Exists(path)) File.Replace(temporary, path, null);
+            if (File.Exists(path)) ReplaceWithContentionRetry(temporary, path);
             else File.Move(temporary, path);
+        }
+        catch (Exception ex)
+        {
+            writeFailure = ex;
+            throw;
         }
         finally
         {
-            if (File.Exists(temporary)) File.Delete(temporary);
+            try
+            {
+                if (File.Exists(temporary)) File.Delete(temporary);
+            }
+            catch (Exception cleanupFailure) when (writeFailure is not null && cleanupFailure is IOException or UnauthorizedAccessException)
+            {
+                // Keep the persistence failure and native error code if cleanup is also blocked.
+                writeFailure.Data["checkpointTemporaryFile"] = temporary;
+                writeFailure.Data["checkpointTemporaryFileCleanupError"] = cleanupFailure;
+            }
+        }
+    }
+
+    private static void ReplaceWithContentionRetry(string temporary, string path)
+    {
+        var timer = Stopwatch.StartNew();
+        for (var attempt = 0; ; attempt++)
+        {
+            try
+            {
+                File.Replace(temporary, path, null);
+                return;
+            }
+            catch (IOException ex) when (OperatingSystem.IsWindows()
+                && (ex.HResult & 0xffff) is 32 or 33 or 1175
+                && timer.Elapsed < TimeSpan.FromSeconds(2))
+            {
+                // Windows 1175 leaves both original names intact, like sharing/lock errors.
+                // Do not retry 1176/1177: they can move or remove the previous snapshot.
+                Thread.Sleep(Math.Min(10 * (attempt + 1), 100));
+            }
         }
     }
 }

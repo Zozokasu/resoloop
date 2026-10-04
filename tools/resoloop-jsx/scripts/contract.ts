@@ -56,6 +56,7 @@ const SUCCESS_FIXTURES: { file: string; draft?: boolean; error?: string }[] = [
   { file: "key-stability-inserted.tsx" },
   { file: "scoped.tsx" },
   { file: "scoped-inserted.tsx" },
+  { file: "field-aliases.tsx" },
   { file: "missing-key-draft.tsx", draft: true, error: "APPLY_DRAFT_KEY_UNSTABLE" },
 ];
 
@@ -122,6 +123,10 @@ async function main(): Promise<number> {
       { file: "scoped-collision.json", error: "APPLY_EXPANDED_KEY_CONFLICT" },
       { file: "scoped-separator.json", error: "APPLY_SCOPE_INVALID" },
       { file: "scoped-outside.json", error: "APPLY_REFERENCE_NOT_FOUND" },
+      { file: "field-aliases.handwritten.json", error: "" },
+      { file: "field-alias-unknown.json", error: "APPLY_FIELD_ALIAS_NOT_FOUND" },
+      { file: "field-alias-duplicate.json", error: "APPLY_FIELD_ALIAS_DUPLICATE" },
+      { file: "field-alias-undeclared.json", error: "APPLY_FIELD_ALIAS_MEMBER_UNDECLARED" },
     ]) {
       checked++;
       const run = spawnSync("dotnet", [dll, "validate", path.join(fixturesDir, fixture.file), "--json"], { cwd: repoRoot, encoding: "utf8" });
