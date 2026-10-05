@@ -116,14 +116,19 @@ test("declaration outside entry directory loads from explicit project root and o
   } finally { w.cleanup(); }
 });
 
-for (const [name, header, catalog] of [
-  ["mismatch", declarationText.replace("handwritten-catalog-hash", "stale"), '{"contentHash":"handwritten-catalog-hash"}'],
-  ["missing header", declarationText.replace(/^.*\n/, ""), '{"contentHash":"handwritten-catalog-hash"}'],
-  ["malformed header", declarationText.replace(/^.*\n/, "// resoloop-catalog-types: {broken}\n"), '{"contentHash":"handwritten-catalog-hash"}'],
-  ["nonstring catalog hash", declarationText, '{"contentHash":12}'],
-] as const) test(`hash ${name} fails before output reservation/publication`, async () => {
+for (const [lineEnding, declaration] of [
+  ["LF", declarationText.replace(/\r\n/g, "\n")],
+  ["CRLF", declarationText.replace(/\r?\n/g, "\r\n")],
+] as const) for (const [name, header, catalog] of [
+  ["mismatch", declaration.replace("handwritten-catalog-hash", "stale"), '{"contentHash":"handwritten-catalog-hash"}'],
+  ["missing header", declaration.replace(/^[^\r\n]*\r?\n/, ""), '{"contentHash":"handwritten-catalog-hash"}'],
+  ["malformed header", declaration.replace(/^[^\r\n]*\r?\n/, "// resoloop-catalog-types: {broken}\n"), '{"contentHash":"handwritten-catalog-hash"}'],
+  ["nonstring catalog hash", declaration, '{"contentHash":12}'],
+] as const) test(`hash ${name} (${lineEnding}) fails before output reservation/publication`, async () => {
   const w = workspace();
   try {
+    if (name === "missing header") ok(!header.includes("resoloop-catalog-types:"));
+    if (name === "malformed header") equal(header.split(/\r?\n/, 1)[0], "// resoloop-catalog-types: {broken}");
     fs.writeFileSync(w.types, header); fs.writeFileSync(w.catalog, catalog);
     const result = await buildFile(w.entry, { bundle: true, catalog: w.catalog, buildId: "request", output: w.output });
     equal(result.exitCode, 1); match(result.errors.join("\n"), /APPLY_CATALOG_TYPES_HASH_MISMATCH/);
