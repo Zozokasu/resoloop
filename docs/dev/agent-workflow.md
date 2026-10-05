@@ -104,3 +104,11 @@ devin --resume "<session-id>" --model swe-2-max --permission-mode accept-edits -
 ```
 
 指示ファイルには、役割、目的、編集範囲、既存の型・API契約、受け入れ条件、変更してはいけない事項、許可済みの検証コマンド、既存ユーザー変更の保持、commit/push/releaseの可否、`AGENTS.md`の規則（依存方向、Resonite安全規則、CLI挙動変更時のREADMEと`skills/codex/*`の同期）を書く。報告の先頭は`DONE` / `NEEDS_INPUT` / `BLOCKED`とし、変更内容、10行以内の検証要約、未解決事項を返させる。`NEEDS_INPUT`には既存の契約から答えて同じセッションを再開する。完了報告や終了コードだけで受け入れず、差分と検証結果を確認する。
+
+## 決定論的な検証を自動化する（2026-10-05）
+
+build、テスト実行、件数集計、差分・hash照合、merge前のGit状態確認だけを行うために、追加のエージェントを起動しない。マネージャが `pwsh -File scripts/agents/verify.ps1 -Profile All` を直接実行する。影響が限られる場合は `Dotnet`、`Jsx`、`JsxContract`、状態確認だけなら `Inspect` を選ぶ。使い方と対象範囲は [定型検証の手順](deterministic-verification.md) にまとめる。
+
+全文ログはファイルへ保存し、通常は `summary.json` と10行以内の実行結果だけを読む。失敗時は該当stepのログを調べ、修正が必要になった時点で実装担当へ渡す。成功したstepを理由なく繰り返さず、全体検証は最終候補にまとめる。TSのコンパイルを含む実行では、別のtypecheckを重ねない。
+
+製品コードの修正、原因の判断、設計、必要な独立レビュー、受け入れは既存の担当方針を維持する。このrunnerはoffline専用で、実機実行・merge・push・ブランチ削除は行わない。liveの許可と安全規則、検証再利用の一致条件も変えない。
