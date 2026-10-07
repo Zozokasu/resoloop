@@ -102,14 +102,12 @@ test("without declarations bundle identity comparison stays opt-in", async () =>
   } finally { w.cleanup(); }
 });
 
-test("declaration outside entry directory loads from explicit project root and only contentHash is compared", async () => {
+test("current declaration outside entry directory loads from explicit project root", async () => {
   const w = workspace();
   try {
     fs.mkdirSync(path.join(w.root, "source"));
     const nestedEntry = path.join(w.root, "source/main.tsx");
     fs.writeFileSync(nestedEntry, fs.readFileSync(w.entry, { encoding: "utf8" }));
-    fs.writeFileSync(w.types, declarationText.replace('"formatVersion":"1"', '"formatVersion":"future"')
-      .replace('"generatorVersion":"1"', '"generatorVersion":"future"'));
     const result = await buildFile(nestedEntry, { projectRoot: w.root, bundle: true,
       catalog: w.catalog, buildId: "request", output: w.output });
     equal(result.exitCode, 0, result.errors.join("\n"));
@@ -124,6 +122,9 @@ for (const [lineEnding, declaration] of [
   ["missing header", declaration.replace(/^[^\r\n]*\r?\n/, ""), '{"contentHash":"handwritten-catalog-hash"}'],
   ["malformed header", declaration.replace(/^[^\r\n]*\r?\n/, "// resoloop-catalog-types: {broken}\n"), '{"contentHash":"handwritten-catalog-hash"}'],
   ["nonstring catalog hash", declaration, '{"contentHash":12}'],
+  ["old generator with same hash", declaration.replace('"generatorVersion":"2"', '"generatorVersion":"1"'), '{"contentHash":"handwritten-catalog-hash"}'],
+  ["future generator with same hash", declaration.replace('"generatorVersion":"2"', '"generatorVersion":"future"'), '{"contentHash":"handwritten-catalog-hash"}'],
+  ["unsupported declaration format", declaration.replace('"formatVersion":"1"', '"formatVersion":"future"'), '{"contentHash":"handwritten-catalog-hash"}'],
 ] as const) test(`hash ${name} (${lineEnding}) fails before output reservation/publication`, async () => {
   const w = workspace();
   try {
@@ -185,5 +186,60 @@ test("<Field> stays loosely typed: a nonexistent member name and an unrelated va
   try {
     fs.writeFileSync(w.entry, 'import { Component, Field } from "resoloop-jsx";\nexport const loose = (\n  <Component key="loose" type="Synthetic.Strict">\n    <Field name="Missing" value={2} />\n    <Field name="Amount" value="not a number" />\n  </Component>\n);\n');
     deepEqual(diagnostics(w.entry, w.types), []);
+  } finally { w.cleanup(); }
+});
+
+const liveScalarFixtures = path.resolve(packageRoot, "../../tests/fixtures/catalog-scalars-v3");
+const light = "[FrooxEngine]FrooxEngine.Light";
+const valueField = "[FrooxEngine]FrooxEngine.ValueField<float>";
+const stringOwner = "[FrooxEngine]FrooxEngine.AudioDeviceIndexFinder";
+function scalarWorkspace(source: string) {
+  const w = workspace();
+  // C# compares this independent declaration byte-for-byte to generation from the same catalog.
+  fs.writeFileSync(w.types, fs.readFileSync(path.join(liveScalarFixtures, "declaration.handwritten.d.ts")));
+  fs.writeFileSync(w.catalog, fs.readFileSync(path.join(liveScalarFixtures, "catalog.handwritten.json")));
+  fs.writeFileSync(w.entry, source);
+  return w;
+}
+
+test("same live scalar catalog declaration accepts strict fields/initialFields and generic Value", async () => {
+  const w = scalarWorkspace(`import { Component, Slot } from "resoloop-jsx";
+export default <Slot key="root" name="Scalars">
+  <Component key="light" type=${JSON.stringify(light)} fields={{ Enabled: true, ShadowMapResolution: 42 }} initialFields={{ Enabled: false, ShadowMapResolution: 16 }} />
+  <Component key="value" type=${JSON.stringify(valueField)} fields={{ Value: 0.25 }} initialFields={{ Value: 0.5 }} />
+  <Component key="name" type=${JSON.stringify(stringOwner)} fields={{ DeviceName: "Default" }} initialFields={{ DeviceName: "Initial" }} />
+</Slot>;`);
+  try {
+    deepEqual(diagnostics(w.entry, w.types), []);
+    const result = await buildFile(w.entry, { bundle: true, catalog: w.catalog, buildId: "request", output: w.output });
+    equal(result.exitCode, 0, result.errors.join("\n"));
+    deepEqual(result.document!.components[0].fields, { Enabled: true, ShadowMapResolution: 42 });
+    deepEqual(result.document!.components[1].initialFields, { Value: 0.5 });
+  } finally { w.cleanup(); }
+});
+
+for (const surface of ["fields", "initialFields"]) for (const [owner, member, value, expected] of [
+  [light, "Enabled", '"true"', "boolean"],
+  [light, "ShadowMapResolution", '"42"', "number"],
+  [valueField, "Value", '"0.25"', "number"],
+  [stringOwner, "DeviceName", "42", "string"],
+] as const) test(`live scalar declaration rejects ${member} compatibility value on ${surface}`, () => {
+  const w = scalarWorkspace(`import { Component } from "resoloop-jsx";\nexport const wrong = <Component key="wrong" type=${JSON.stringify(owner)} ${surface}={{ ${member}: ${value} }} />;\n`);
+  try {
+    const errors = diagnostics(w.entry, w.types);
+    equal(errors.length, 1);
+    equal(errors[0].code, 2322);
+    match(ts.flattenDiagnosticMessageText(errors[0].messageText, "\n"), new RegExp(expected));
+  } finally { w.cleanup(); }
+});
+
+test("Field child keeps JsonValue and emits invalid Enabled for authoritative C# catalog validation", async () => {
+  const w = scalarWorkspace(`import { Component, Field, Slot } from "resoloop-jsx";
+export default <Slot key="root" name="Loose"><Component key="light" type=${JSON.stringify(light)}><Field name="Enabled" value="yes" /></Component></Slot>;`);
+  try {
+    deepEqual(diagnostics(w.entry, w.types), []);
+    const result = await buildFile(w.entry);
+    equal(result.exitCode, 0, result.errors.join("\n"));
+    equal(result.document!.components[0].fields!.Enabled, "yes");
   } finally { w.cleanup(); }
 });

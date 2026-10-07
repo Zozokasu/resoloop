@@ -23,7 +23,7 @@ public sealed record CatalogAcquisitionFailure(string Type, string Request, stri
 public sealed record ApplyCatalog(string FormatVersion, CatalogIdentity? Identity,
     CatalogIdentity? EvidenceIdentity, string Source, bool Synthetic, string ContentHash, CatalogContent Content)
 {
-    public const string CurrentMapperVersion = "2";
+    public const string CurrentMapperVersion = "3";
     public const string CurrentFormatVersion = "2";
     public static readonly JsonSerializerOptions Json = new()
     {
@@ -57,7 +57,7 @@ public sealed record ApplyCatalog(string FormatVersion, CatalogIdentity? Identit
 
     public string? UnavailableReason(CatalogIdentity? expectedIdentity = null)
     {
-        // Format 1 remains readable for existing mapper-2 fixtures without acquisition diagnostics.
+        // Format 1 remains readable without acquisition diagnostics; mapper identity is checked separately.
         if (FormatVersion is not ("1" or CurrentFormatVersion) ||
             FormatVersion == "1" && Content?.AcquisitionFailures is not null || Identity is null || EvidenceIdentity is null)
             return "Catalog format or acquisition identity is missing/unsupported.";
@@ -66,7 +66,7 @@ public sealed record ApplyCatalog(string FormatVersion, CatalogIdentity? Identit
             return "Catalog identity is incomplete.";
         if (Identity != EvidenceIdentity || expectedIdentity is not null && Identity != expectedIdentity ||
             Identity.MapperVersion != CurrentMapperVersion)
-            return "Catalog identity does not match acquisition/expected identity or mapper version.";
+            return "Catalog identity does not match acquisition/expected identity or mapper version. Recapture the catalog with the current mapper.";
         if (Source is not ("live" or "version-cache")) return "Catalog source is unverified.";
         if (Content?.Types is null || Content.Aliases is null || Content.Types.Any(t => t is null ||
             string.IsNullOrWhiteSpace(t.FullName) || t.Interfaces is null) ||

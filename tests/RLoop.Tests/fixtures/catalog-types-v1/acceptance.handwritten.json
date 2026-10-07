@@ -1,22 +1,22 @@
-﻿{
+{
     "formatVersion":  "2",
     "identity":  {
                      "resoniteVersion":  "OFFLINE-handwritten-fixture",
                      "resoniteLinkVersion":  "OFFLINE-handwritten-fixture",
                      "clientPackageVersion":  "0.13.1",
-                     "mapperVersion":  "2",
+                     "mapperVersion":  "3",
                      "retrievedAt":  "2026-10-03T00:00:00+00:00"
                  },
     "evidenceIdentity":  {
                              "resoniteVersion":  "OFFLINE-handwritten-fixture",
                              "resoniteLinkVersion":  "OFFLINE-handwritten-fixture",
                              "clientPackageVersion":  "0.13.1",
-                             "mapperVersion":  "2",
+                             "mapperVersion":  "3",
                              "retrievedAt":  "2026-10-03T00:00:00+00:00"
                          },
     "source":  "version-cache",
     "synthetic":  false,
-    "contentHash":  "608223ad9b382c68898852c246213b6bb37d03dd74de86b1110bb40e78bff76f",
+    "contentHash":  "cf87cd033004d14b066640d92eca3a8d3b25cc6f2bca25adba0ddc2aa9155d24",
     "content":  {
                     "types":  [
                                   {
@@ -155,7 +155,7 @@
                                       "isGeneric":  false,
                                       "members":  null,
                                       "membersComplete":  false,
-                                      "representation":  "other",
+                                      "representation":  "boolean",
                                       "elementType":  null,
                                       "tupleSize":  0,
                                       "enumValues":  null,

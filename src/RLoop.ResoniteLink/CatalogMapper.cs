@@ -14,7 +14,8 @@ public sealed record CatalogSnapshotContent(IReadOnlyList<Link.ComponentDefiniti
     IReadOnlyList<CatalogAcquisitionFailure>? AcquisitionFailures = null);
 public sealed record CatalogEnum(IReadOnlyDictionary<string, long> Values, bool IsFlags);
 public sealed record CatalogSnapshot(CatalogIdentity? Identity, CatalogIdentity? EvidenceIdentity,
-    string Source, bool Synthetic, string ContentHash, CatalogSnapshotContent Content);
+    string Source, bool Synthetic, string ContentHash, CatalogSnapshotContent Content,
+    int? AcquisitionBudgetUsed = null, bool AcquisitionTruncated = false);
 
 /// <summary>SDK definitions are retained in the acquisition snapshot, and mapped only at this boundary.</summary>
 public static class CatalogMapper
@@ -90,8 +91,17 @@ public static class CatalogMapper
             !(type.BaseType?.IsGenericParameter ?? false) && !(type.Interfaces?.Any(p => p.IsGenericParameter) ?? true),
         ModelMapper.Render(type.BaseType), (type.Interfaces ?? []).Select(ModelMapper.Render).Cast<string>().ToArray(),
         type.IsGenericType, Representation: type.IsEnum ? "enum" :
-            type.FullTypeName is "System.Single" or "[mscorlib]System.Single" or "[System.Private.CoreLib]System.Single" ? "single" :
-            type.IsValueType || type.IsEnginePrimitive ? "unknown" : "other");
+            ScalarRepresentation(type.FullTypeName) ??
+            (type.IsValueType || type.IsEnginePrimitive ? "unknown" : "other"));
+
+    private static string? ScalarRepresentation(string name) => name switch
+    {
+        "float" or "System.Single" or "[mscorlib]System.Single" or "[System.Private.CoreLib]System.Single" => "single",
+        "bool" or "System.Boolean" or "[mscorlib]System.Boolean" or "[System.Private.CoreLib]System.Boolean" => "boolean",
+        "int" or "System.Int32" or "[mscorlib]System.Int32" or "[System.Private.CoreLib]System.Int32" => "int32",
+        "string" or "System.String" or "[mscorlib]System.String" or "[System.Private.CoreLib]System.String" => "string",
+        _ => null
+    };
 
     private static CatalogMember MapMember(Link.MemberDefinition definition, Dictionary<string, CatalogType> types)
     {
@@ -115,14 +125,13 @@ public static class CatalogMapper
         if (reference is null || reference.IsGenericParameter) return null;
         var name = ModelMapper.Render(reference)!;
         // Exact SDK wire aliases only; never strip an arbitrary namespace/assembly or guess arguments.
-        var kind = reference.Type switch
+        var kind = ScalarRepresentation(reference.Type) ?? (reference.Type switch
         {
-            "float" or "System.Single" or "[mscorlib]System.Single" or "[System.Private.CoreLib]System.Single" => "single",
             "float2" or "float3" or "float4" or "floatQ" or "floatq" or "color" or "colorX" or "colorx" => "tuple",
             "Nullable<>" or "System.Nullable<>" when reference.GenericArguments?.Count == 1 => "nullable",
-            "bool" or "byte" or "sbyte" or "short" or "ushort" or "int" or "uint" or "long" or "ulong" or "double" or "string" or "Uri" or "Type" => "other",
+            "byte" or "sbyte" or "short" or "ushort" or "uint" or "long" or "ulong" or "double" or "Uri" or "Type" => "other",
             _ => null
-        };
+        });
         if (kind is null) return name; // Requires a separately acquired TypeDefinition.
         var element = kind == "nullable" ? ValueType(reference.GenericArguments![0], types) : kind == "tuple" ? ValueType(new Link.TypeReference { Type = "float" }, types) : null;
         var size = reference.Type switch { "float2" => 2, "float3" => 3, _ => 4 };

@@ -1,4 +1,4 @@
-// resoloop-catalog-types: {"formatVersion":"1","contentHash":"handwritten-catalog-hash","generatorVersion":"1"}
+// resoloop-catalog-types: {"formatVersion":"1","contentHash":"handwritten-catalog-hash","generatorVersion":"2"}
 import "resoloop-jsx";
 import type { JsonValue } from "resoloop-jsx";
 export {};
@@ -7,7 +7,7 @@ declare module "resoloop-jsx" {
     "Synthetic.Strict": {
       members: {
         Amount: number;
-        Enabled: JsonValue;
+        Enabled: boolean;
         Caption: number | null;
         Position: [number, number, number] | { x: number; y: number; z: number } | { r: number; g: number; b: number };
         Mode: "Fast" | "Slow" | number;

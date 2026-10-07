@@ -1,4 +1,4 @@
-// resoloop-catalog-types: {"formatVersion":"1","contentHash":"91bd5b53e5f843d63c9afa86ac7b96371d88a82ca1fe76260ef9fe39c588e66b","generatorVersion":"1"}
+// resoloop-catalog-types: {"formatVersion":"1","contentHash":"91bd5b53e5f843d63c9afa86ac7b96371d88a82ca1fe76260ef9fe39c588e66b","generatorVersion":"2"}
 import "resoloop-jsx";
 import type { JsonValue } from "resoloop-jsx";
 export {};

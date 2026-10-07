@@ -10,7 +10,7 @@ public sealed record CatalogTypesDeclaration(string Text, string ContentHash, st
 /// <summary>Editor hints from acquired catalog evidence; ApplyCatalogValidator remains authoritative.</summary>
 public static class CatalogTypesGenerator
 {
-    public const string GeneratorVersion = "1";
+    public const string GeneratorVersion = "2";
 
     public static CatalogTypesDeclaration Generate(ApplyCatalog catalog)
     {
@@ -36,11 +36,11 @@ public static class CatalogTypesGenerator
             foreach (var (memberName, member) in (owner.Members ?? new Dictionary<string, CatalogMember>()).OrderBy(p => p.Key, StringComparer.Ordinal))
             {
                 string? value = null;
-                if (owner.Confirmed && (!owner.IsGeneric || owner.ClosureComplete) && member is { Confirmed: true })
+                if (owner.Confirmed && member is { Confirmed: true })
                     value = member.Kind switch
                     {
                         "field" => Value(member.ValueType, []),
-                        "reference" when !UnclosedGenericTarget(member.TargetType) => "string | null",
+                        "reference" when (!owner.IsGeneric || owner.ClosureComplete) && !UnclosedGenericTarget(member.TargetType) => "string | null",
                         _ => null
                     };
                 if (value is null) fallbacks.Add(new(name, memberName, "Value remains JsonValue: unsupported or unconfirmed member/value evidence or generic closure."));
@@ -66,6 +66,9 @@ public static class CatalogTypesGenerator
                 switch (type.Representation)
                 {
                     case "single": return "number";
+                    case "boolean": return "boolean";
+                    case "int32": return "number";
+                    case "string": return "string";
                     case "nullable":
                         var element = Value(type.ElementType, active);
                         return element is null ? null : $"({element}) | null";
