@@ -13,7 +13,21 @@ resoloop-jsx build content/main.tsx -o build/main.json
 resoloop validate build/main.json --catalog catalog.json --json
 ```
 
-`--url`を省略すると、CLIの既存のURL・設定選択を使います。取得はLink backendで行い、sessionのwrite lockを取らず、実機へ書き込みません。取得前後のversionを照合し、入力型名512件・再帰依存を含む取得型512件・2分の上限を設けています。`catalog types`はoffline処理です。synthetic catalogと取得不完全なcatalogは拒否します。既定出力先は最寄りの `.resoloop.json` があるprojectの `.resoloop/catalog-types.d.ts` です。projectがなければ現在のdirectoryを基準にします。既定出力先は現在のdirectory基準で、`resoloop-jsx build` が自動で読むのは `.resoloop.json` のあるproject（または `--project-root`）の `.resoloop/` だけなので、そのproject内で実行するか `--output` を指定してください。生成宣言は `CatalogComponentRegistry` を拡張します。通常の `tsc` では `include` に指定するか、TypeScriptファイルから `/// <reference path="../.resoloop/catalog-types.d.ts" />` で参照してください。`resoloop-jsx build` はこの標準ファイルがあれば自動で読み込みます。TypeScriptの診断は編集時の補助です。生成される型が付くのは `<Component type="…">` の `fields` と `initialFields` だけです。`<Field>` は緩い型（JsonValue）のままで、member名と値はTypeScriptでは検査されません（存在しないmember名も `tsc` を通ります）。合否はC#のcatalog照合（`COMPONENT_MEMBER_NOT_FOUND` など）が決めます。最終的なcatalog判定はC#の `ApplyCatalogValidator` が行います。カタログ取得や型宣言だけではruntime動作を検証したことになりません。
+`--url`を省略すると、CLIの既存のURL・設定選択を使います。取得はLink backendで行い、sessionのwrite lockを取らず、実機へ書き込みません。取得前後のversionを照合し、入力名は512件まで、再帰依存を含む取得試行名は失敗分も含めalias正規化前で一意512件まで、取得時間は2分までです。
+
+要求したComponent/typeが欠けるか、取得が件数・時間上限で打ち切られた場合は、部分catalogを保存して `CATALOG_CAPTURE_INCOMPLETE`（exit 6）を返します。依存型だけの取得失敗は診断情報として残りますが、それだけではこのエラーになりません。JSONエラーでは元の取得結果を `error.context.result` に保持し、text出力でも複数行の結果と件数を残します。
+
+`requestedTypes` は重複を含む入力名数、`acquisitionBudgetUsed` は失敗も含む取得試行済みの一意な名前数（alias正規化前）、`acquisitionBudgetLimit` は512です。`outputTypes` はexportされた型数で、既知scalarの合成により512を超えることがあります。budget情報のない旧snapshotは `acquisitionBudgetUsed: "unknown"` と報告します。
+
+`catalog types`はoffline処理です。synthetic catalogと、identity・出典・hashなどの検査で `UnavailableReason` が返るcatalogを拒否します。取得が不完全でも、この検査を通る部分catalogからは型宣言を生成できます。確認済みで対応しているfield値には型を付け、未確認・未対応の値は `JsonValue` に残します。部分catalogを使う場合も、対象文書に必要なmetadataが足りるかC#のcatalog検証で確認してください。catalog formatは2のまま、mapperは2から3へ、generatorは1から2へ更新されます。mapper 2のcatalogは `APPLY_CATALOG_UNAVAILABLE` で拒否されます。明示認可のあるlive取得で作り直し、型宣言を再生成してください。generator/header/hash不一致は `APPLY_CATALOG_TYPES_HASH_MISMATCH` です。同じhashでもgenerator 1の宣言は再生成してください。
+
+既定出力先は最寄りの `.resoloop.json` があるprojectの `.resoloop/catalog-types.d.ts` です。projectがなければ現在のdirectoryを基準にします。既定出力先は現在のdirectory基準で、`resoloop-jsx build` が自動で読むのは `.resoloop.json` のあるproject（または `--project-root`）の `.resoloop/` だけなので、そのproject内で実行するか `--output` を指定してください。生成宣言は `CatalogComponentRegistry` を拡張します。通常の `tsc` では `include` に指定するか、TypeScriptファイルから `/// <reference path="../.resoloop/catalog-types.d.ts" />` で参照してください。`resoloop-jsx build` はこの標準ファイルがあれば自動で読み込みます。
+
+型は `<Component type="…">` の `fields` と `initialFields` にだけ付与されます。`<Field>` は緩い型（JsonValue）のままで、member名と値はTypeScriptでは検査されません（存在しないmember名も `tsc` を通ります）。確認済みmember値の型をownerのgeneric closure未完了だけを理由に捨てることはありませんが、未知の型やmemberは推測しません。
+
+TypeScriptはboolean/number/stringを厳密に扱います。たとえばbooleanの `true` と文字列 `"true"`、int32の `42` と文字列 `"42"` はTypeScript上で別の型です。C# runtime変換は両者を受け入れる場合があります。C#のstring変換はraw値の文字列表現を使うため、TypeScriptのstringより広く受理されます。整数の範囲・有限性などC#側の変換検査も残ります。最終的なcatalog判定はC#の `ApplyCatalogValidator` が行います。
+
+カタログ取得や型宣言だけではruntime動作を検証したことになりません。
 
 ## UIX制作の効率化
 
@@ -166,7 +180,7 @@ TSX の受け渡しでは build 前に毎回新しい要求 ID R を生成し、
 
 ## catalog を使う offline 検証
 
-`resoloop validate content/panel.json --catalog catalog.json --json` は接続・Node なしで展開済み IR を検証します。catalog は明示したファイルだけを読み、自動検索・live 取得はしません。取得 identity と mapper version、内容 hash を確認し、Single の変換失敗・非有限・表現範囲外を `VALUE_CONVERSION_FAILED`、確認済み型閉包から証明できた参照不適合を `APPLY_REFERENCE_TYPE_MISMATCH` で拒否します。通常の丸め・精度損失は許容し、member 固有の 0〜1 等の範囲は推測しません。欠落・未確認・識別不一致・閉包不足・外部 ID／asset／Slot member 等の型不明は `APPLY_CATALOG_UNAVAILABLE` で停止し、既存 issues に型・member・JSON path を返します。終了コードは既存の検証失敗と同じ 6 です。
+`resoloop validate content/panel.json --catalog catalog.json --json` は接続・Node なしで展開済み IR を検証します。catalog は明示したファイルだけを読み、自動検索・live 取得はしません。取得 identity と mapper version、内容 hash を確認し、Single の変換失敗・非有限・表現範囲外を `VALUE_CONVERSION_FAILED`、確認済み型閉包から証明できた参照不適合を `APPLY_REFERENCE_TYPE_MISMATCH` で拒否します。boolean は `true` または文字列 `"true"`、int32 は整数 `42` または文字列 `"42"` を受け入れます。`yes`、小数、int32範囲外は受け入れず、その他の数値型も新たな対応対象ではありません。string fieldはruntime値のraw textで変換されるため、TypeScriptのstringより広く受理される場合があります。通常の丸め・精度損失は許容し、member 固有の0〜1等の範囲は推測しません。欠落・未確認・識別不一致・閉包不足・外部 ID／asset／Slot member等の型不明は `APPLY_CATALOG_UNAVAILABLE` で停止し、既存issuesに型・member・JSON pathを返します。終了コードは既存の検証失敗と同じ6です。mapper 2の旧catalogは `APPLY_CATALOG_UNAVAILABLE` で拒否されます。live取得が明示認可された作業で再取得し、型宣言も再生成してください。generator/header/hash不一致は `APPLY_CATALOG_TYPES_HASH_MISMATCH` となり、hashが同じでも旧generatorの宣言を再生成します。
 
 成功しても `strict: false` のままです。`--catalog --strict` は catalog preflight 後に従来の live strict を実行し、接続先の version も照合します。live 実行は別途認可が必要です。catalog 未指定の validate・diff・plan・apply、schema/state、出力 JSON は変更しません。catalog の hash は改変検出用で、実機取得の証明ではありません。識別情報のない旧 reflection cache は catalog に昇格できません。V11 の固定原本・identity/hash・手書き診断表は合成 fixture で、実 Component の検証結果ではありません。[開発用 export/import tool](tools/RLoop.CatalogExport/README.md) を参照してください。Reflection、範囲を絞った現況観測、変更後 inspection は引き続き必要です。
 
