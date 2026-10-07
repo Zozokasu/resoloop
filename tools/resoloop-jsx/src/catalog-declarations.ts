@@ -18,13 +18,21 @@ export function verifyCatalogDeclaration(file: string, text: string, catalogText
   const prefix = "// resoloop-catalog-types: ";
   if (!required && !firstLine.startsWith(prefix)) return;
   let declarationHash: unknown;
+  let declarationFormat: unknown;
+  let declarationGenerator: unknown;
   let catalogHash: unknown;
   try {
-    if (firstLine.startsWith(prefix)) declarationHash = JSON.parse(firstLine.slice(prefix.length)).contentHash;
+    if (firstLine.startsWith(prefix)) {
+      const header = JSON.parse(firstLine.slice(prefix.length));
+      declarationHash = header.contentHash;
+      declarationFormat = header.formatVersion;
+      declarationGenerator = header.generatorVersion;
+    }
     catalogHash = JSON.parse(catalogText.replace(/^\uFEFF/, "")).contentHash;
   } catch {
     // A malformed identity cannot match; leave catalog validation to C#.
   }
-  if (typeof declarationHash !== "string" || typeof catalogHash !== "string" || declarationHash !== catalogHash)
-    throw new BuildError("APPLY_CATALOG_TYPES_HASH_MISMATCH", `Catalog declarations at '${file}' do not match --catalog contentHash; regenerate catalog types.`);
+  if (declarationFormat !== "1" || declarationGenerator !== "2" ||
+    typeof declarationHash !== "string" || typeof catalogHash !== "string" || declarationHash !== catalogHash)
+    throw new BuildError("APPLY_CATALOG_TYPES_HASH_MISMATCH", `Catalog declarations at '${file}' do not match the current declaration format/generator or --catalog contentHash; regenerate catalog types.`);
 }

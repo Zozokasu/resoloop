@@ -6,6 +6,7 @@ namespace RLoop.ResoniteLink;
 /// <summary>Bounded, read-only metadata acquisition shared by the CLI and development exporter.</summary>
 public static class CatalogCapture
 {
+    public const int AcquisitionBudgetLimit = 512;
     // A narrow internal seam keeps fake acquisition on the same bounded path as the SDK.
     internal sealed record Reader(
         Func<string, Task<Link.ComponentDefinitionData>> Component,
@@ -55,15 +56,18 @@ public static class CatalogCapture
             // A deadline in the final identity read must also leave a reviewable snapshot.
             var content = snapshot.Content with { AcquisitionFailures = [.. snapshot.Content.AcquisitionFailures ?? [],
                 new("*", "session", "time-limit: final session identity was not rechecked")] };
-            snapshot = snapshot with { Content = content, ContentHash = CatalogMapper.SnapshotHash(content), Source = "unverified" };
+            // The observed initial identity still describes this live acquisition. Retain it
+            // so the partial catalog is usable, with the failed recheck recorded explicitly.
+            snapshot = snapshot with { Content = content, ContentHash = CatalogMapper.SnapshotHash(content), AcquisitionTruncated = true };
         }
+        ct.ThrowIfCancellationRequested();
         if (!reader.Connected()) throw new RLoopException("APPLY_CATALOG_UNAVAILABLE", "Connection lost during acquisition.", ExitCodes.ValidationFailed);
         return snapshot;
     }
 
     private static void ValidateNames(IReadOnlyList<string> names)
     {
-        if (names.Count is 0 or > 512 || names.Any(string.IsNullOrWhiteSpace))
+        if (names.Count is 0 or > AcquisitionBudgetLimit || names.Any(string.IsNullOrWhiteSpace))
             throw new ArgumentException("Require 1..512 explicit, nonempty full Component names.");
     }
 
@@ -74,6 +78,7 @@ public static class CatalogCapture
         var components = new List<Link.ComponentDefinition>(); var types = new List<Link.TypeDefinition>(); var syncs = new List<Link.SyncObjectDefinition>();
         var aliases = new Dictionary<string, string>(StringComparer.Ordinal); var enums = new Dictionary<string, CatalogEnum>(StringComparer.Ordinal);
         var failures = new List<CatalogAcquisitionFailure>();
+        var truncated = false;
         static string Reason(string? error, string fallback) => string.IsNullOrWhiteSpace(error) ? fallback : error;
         var pending = new Queue<(string Name, string Kind)>();
         var seen = new HashSet<(string Name, string Kind)>();
@@ -114,9 +119,10 @@ public static class CatalogCapture
             ct.ThrowIfCancellationRequested();
             var (name, kind) = pending.Dequeue();
             if (!seen.Add((name, kind))) continue;
-            if (deadline.IsCancellationRequested) { failures.Add(new(name, kind, "time-limit: acquisition reached two minutes")); continue; }
-            if (!typeBudget.Contains(name) && typeBudget.Count >= 512)
-            { failures.Add(new(name, kind, "type-limit: acquisition reached 512 types")); continue; }
+            if (deadline.IsCancellationRequested)
+            { truncated = true; failures.Add(new(name, kind, "time-limit: acquisition reached two minutes")); continue; }
+            if (!typeBudget.Contains(name) && typeBudget.Count >= AcquisitionBudgetLimit)
+            { truncated = true; failures.Add(new(name, kind, "type-limit: acquisition reached 512 types")); continue; }
             typeBudget.Add(name);
             try
             {
@@ -152,12 +158,14 @@ public static class CatalogCapture
             catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
             catch (Exception ex) when (reader.Connected())
             {
+                truncated |= deadline.IsCancellationRequested;
                 failures.Add(new(name, kind, deadline.IsCancellationRequested
                     ? "time-limit: acquisition reached two minutes" : $"{ex.GetType().Name}: {ex.Message}"));
             }
             if (!reader.Connected()) throw new RLoopException("APPLY_CATALOG_UNAVAILABLE", "Connection lost during acquisition.", ExitCodes.ValidationFailed);
         }
         var content = new CatalogSnapshotContent(components, types, syncs, aliases, enums, failures);
-        return new(identity, identity, "live", false, CatalogMapper.SnapshotHash(content), content);
+        return new(identity, identity, "live", false, CatalogMapper.SnapshotHash(content), content,
+            AcquisitionBudgetUsed: typeBudget.Count, AcquisitionTruncated: truncated);
     }
 }

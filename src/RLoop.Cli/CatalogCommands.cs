@@ -45,7 +45,7 @@ internal static class CatalogCommands
         var names = LoadNames(typesPath);
         var uri = await ResoniteClientFactory.ResolveConnectionUrlAsync(args, config, token);
         var snapshot = await (capture ?? CatalogCapture.ReadAsync)(uri, names, token);
-        // Keep bounded partial acquisition evidence reviewable even when export refuses its trust status.
+        // Keep the raw bounded acquisition evidence alongside the mapped partial catalog.
         if (snapshotPath is not null)
         {
             Directory.CreateDirectory(Path.GetDirectoryName(snapshotPath)!);
@@ -54,15 +54,40 @@ internal static class CatalogCommands
         var catalog = CatalogMapper.Export(snapshot);
         Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
         catalog.Save(destination);
-        output.Success(new { output = destination, snapshot = snapshotPath, catalog.ContentHash, catalog.FormatVersion,
-            catalog.Identity, requestedTypes = names.Count, acquisitionFailures = catalog.Content.AcquisitionFailures }, writer =>
+        object acquisitionBudgetUsed = snapshot.AcquisitionBudgetUsed is { } used ? used : "unknown";
+        var result = new { output = destination, snapshot = snapshotPath, catalog.ContentHash, catalog.FormatVersion,
+            catalog.Identity, requestedTypes = names.Count, acquisitionBudgetUsed,
+            acquisitionBudgetLimit = CatalogCapture.AcquisitionBudgetLimit, outputTypes = catalog.Content.Types.Count,
+            acquisitionFailures = catalog.Content.AcquisitionFailures };
+        var failures = snapshot.Content.AcquisitionFailures ?? [];
+        var missing = names.Distinct(StringComparer.Ordinal).Where(name =>
+            !snapshot.Content.Components.Any(component => component.Type?.FullTypeName == name) ||
+            !snapshot.Content.Types.Any(type => type.FullTypeName == (snapshot.Content.Aliases.GetValueOrDefault(name) ?? name)) ||
+            failures.Any(failure => failure.Type == name && failure.Request is "component" or "type")).ToArray();
+        // Dependency failures alone remain diagnostic evidence. Requested component/type
+        // failures and any budget/deadline truncation make capture incomplete.
+        var truncated = snapshot.AcquisitionTruncated || snapshot.AcquisitionBudgetUsed is null && failures.Any(failure =>
+            failure.Reason.StartsWith("type-limit:", StringComparison.Ordinal) ||
+            failure.Reason.StartsWith("time-limit:", StringComparison.Ordinal));
+        void WriteResult(TextWriter writer)
         {
             writer.WriteLine($"catalog: {destination}");
             if (snapshotPath is not null) writer.WriteLine($"snapshot: {snapshotPath}");
             writer.WriteLine($"catalog hash: {catalog.ContentHash}; requested types: {names.Count}");
+            writer.WriteLine($"acquisition budget used: {snapshot.AcquisitionBudgetUsed?.ToString() ?? "unknown"}/{CatalogCapture.AcquisitionBudgetLimit} unique attempted names; output types: {catalog.Content.Types.Count}");
             foreach (var failure in catalog.Content.AcquisitionFailures ?? [])
                 writer.WriteLine($"  unverified {failure.Type} ({failure.Request}): {failure.Reason}");
-        });
+        }
+        if (missing.Length > 0 || truncated)
+        {
+            using var details = new StringWriter();
+            WriteResult(details);
+            throw new RLoopException("CATALOG_CAPTURE_INCOMPLETE",
+                $"Partial catalog saved; {missing.Length} requested names lack acquired component/type metadata; acquisition truncated: {truncated.ToString().ToLowerInvariant()}." +
+                Environment.NewLine + details.ToString().TrimEnd(),
+                ExitCodes.ValidationFailed, new Dictionary<string, object?> { ["result"] = result });
+        }
+        output.Success(result, WriteResult);
     }
 
     internal static IReadOnlyList<string> LoadNames(string path)

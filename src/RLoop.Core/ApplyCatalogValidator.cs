@@ -83,6 +83,17 @@ public static class ApplyCatalogValidator
             {
                 switch (type.Representation)
                 {
+                    case "boolean":
+                        if (!bool.TryParse(value.ValueKind == JsonValueKind.String ? value.GetString() : value.GetRawText(), out _))
+                            Add("VALUE_CONVERSION_FAILED", $"Cannot convert type '{owner}', member '{member}' to Boolean.", path);
+                        break;
+                    case "int32":
+                        if (!int.TryParse(value.ValueKind == JsonValueKind.String ? value.GetString() : value.GetRawText(),
+                            NumberStyles.Integer, CultureInfo.InvariantCulture, out _))
+                            Add("VALUE_CONVERSION_FAILED", $"Cannot convert type '{owner}', member '{member}' to Int32.", path);
+                        break;
+                    // Runtime Field_string receives the unquoted string or JSON raw text, including "null".
+                    case "string": break;
                     case "single":
                         var raw = value.ValueKind == JsonValueKind.String ? value.GetString() : value.GetRawText();
                         if (!double.TryParse(raw, NumberStyles.Float, CultureInfo.InvariantCulture, out var number) ||

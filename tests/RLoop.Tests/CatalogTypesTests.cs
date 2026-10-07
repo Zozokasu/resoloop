@@ -39,7 +39,7 @@ public sealed class CatalogTypesTests : IDisposable
         Assert.Equal("91bd5b53e5f843d63c9afa86ac7b96371d88a82ca1fe76260ef9fe39c588e66b", catalog.ContentHash);
         var generated = CatalogTypesGenerator.Generate(catalog);
         Assert.Equal(HandwrittenDeclaration(), generated.Text);
-        Assert.Equal("1", generated.GeneratorVersion);
+        Assert.Equal("2", generated.GeneratorVersion);
         Assert.Equal(3, generated.Fallbacks.Count);
         Assert.Equal(generated.Text, CatalogTypesGenerator.Generate(catalog).Text);
         Assert.Equal(generated.Text, CatalogTypesGenerator.Generate(ApplyCatalog.Load(Fixture("catalog.handwritten.json"))).Text);
@@ -75,7 +75,7 @@ public sealed class CatalogTypesTests : IDisposable
             ["Position"] = new("field", ValueType: "Fixture.Tuple"),
             ["Mode"] = new("field", ValueType: "Fixture.Enum"),
             ["Flags"] = new("field", ValueType: "Fixture.Flags"),
-            ["Opaque"] = new("field", ValueType: "System.Boolean"),
+            ["Opaque"] = new("field", ValueType: "Missing.Value"),
             ["Unknown"] = new("field", ValueType: "System.Single", Confirmed: false),
             ["UnsafeGeneric"] = new("field", ValueType: "Fixture.Generic<float>"),
             ["UnsafeTarget"] = new("reference", TargetType: "Fixture.Generic<float>"),
@@ -85,7 +85,7 @@ public sealed class CatalogTypesTests : IDisposable
         var owner = new CatalogType("Fixture.Incomplete", true, true, null, [], Members: members, MembersComplete: false);
         var catalog = Catalog(new([owner, owner with { FullName = "Fixture.Unconfirmed", Confirmed = false, MembersComplete = true },
             owner with { FullName = "Fixture.Owner<float>", IsGeneric = true, ClosureComplete = false, MembersComplete = true },
-            Scalar("System.Single"), Scalar("System.Boolean", "other"), Scalar("Fixture.Nullable", "nullable") with { ElementType = "System.Single" },
+            Scalar("System.Single"), Scalar("System.Boolean", "boolean"), Scalar("Fixture.Nullable", "nullable") with { ElementType = "System.Single" },
             Scalar("Fixture.Tuple", "tuple") with { ElementType = "System.Single", TupleSize = 3 },
             Scalar("Fixture.Enum", "enum") with { EnumValues = new Dictionary<string, long> { ["On"] = 1, ["Off"] = 0 }, IsFlags = false },
             Scalar("Fixture.Flags", "enum") with { EnumValues = new Dictionary<string, long> { ["On"] = 1 }, IsFlags = true },
@@ -101,7 +101,8 @@ public sealed class CatalogTypesTests : IDisposable
             Assert.Contains($"\"{name}\": JsonValue;", generated.Text);
         Assert.Contains(generated.Fallbacks, f => f.Type == "Fixture.Incomplete" && f.Member is null);
         Assert.Contains(generated.Fallbacks, f => f.Type == "Fixture.Unconfirmed" && f.Member == "Position");
-        Assert.Contains(generated.Fallbacks, f => f.Type == "Fixture.Owner<float>" && f.Member == "Optional");
+        Assert.DoesNotContain(generated.Fallbacks, f => f.Type == "Fixture.Owner<float>" && f.Member == "Optional");
+        Assert.Contains(generated.Fallbacks, f => f.Type == "Fixture.Owner<float>" && f.Member == "UnsafeTarget");
     }
 
     [Fact]
@@ -139,7 +140,7 @@ public sealed class CatalogTypesTests : IDisposable
     public void SharedAcceptanceCatalogProvidesIndependentCrossLanguageDiagnosticCases()
     {
         var catalog = ApplyCatalog.Load(Fixture("acceptance.handwritten.json"));
-        Assert.Equal("608223ad9b382c68898852c246213b6bb37d03dd74de86b1110bb40e78bff76f", catalog.ContentHash);
+        Assert.Equal("cf87cd033004d14b066640d92eca3a8d3b25cc6f2bca25adba0ddc2aa9155d24", catalog.ContentHash);
         Assert.Null(catalog.UnavailableReason());
         ApplyDocument Document(string member, object value) => new("1", new("fixture"), new("Root", null, null, null, null, "root"),
             [new("Synthetic.Strict", new Dictionary<string, JsonElement> { [member] = JsonSerializer.SerializeToElement(value) }, "strict")]);
@@ -148,7 +149,7 @@ public sealed class CatalogTypesTests : IDisposable
         Assert.Equal("VALUE_CONVERSION_FAILED", Assert.Single(ApplyCatalogValidator.Validate(Document("Amount", "bad"), catalog)).Code);
         Assert.Equal("APPLY_CATALOG_UNAVAILABLE", Assert.Single(ApplyCatalogValidator.Validate(Document("Unsupported", true), catalog)).Code);
         var generated = CatalogTypesGenerator.Generate(catalog);
-        Assert.Contains("\"Enabled\": JsonValue;", generated.Text);
+        Assert.Contains("\"Enabled\": boolean;", generated.Text);
         Assert.Contains("\"Target\": string | null;", generated.Text);
         Assert.Contains(generated.Fallbacks, f => f.Type == "Synthetic.Open" && f.Member is null);
         Assert.DoesNotContain(generated.Fallbacks, f => f.Type == "Synthetic.Empty");
@@ -177,7 +178,7 @@ public sealed class CatalogTypesTests : IDisposable
             _ => throw new InvalidOperationException("offline types must not connect"));
         Assert.Equal(ExitCodes.Success, exit);
         Assert.Equal(HandwrittenDeclaration(), File.ReadAllText(destination));
-        Assert.Contains("\"generatorVersion\":\"1\"", File.ReadAllText(report));
+        Assert.Contains("\"generatorVersion\":\"2\"", File.ReadAllText(report));
         Assert.False(Program.IsDirectWrite(ParsedArguments.Parse(["catalog", "types", input])));
     }
 
@@ -237,9 +238,10 @@ public sealed class CatalogTypesTests : IDisposable
             if (++reads == 1) return Task.FromResult(Identity);
             deadline.Cancel(); return new TaskCompletionSource<CatalogIdentity>().Task;
         }, deadline: deadline.Token);
-        Assert.Equal("unverified", snapshot.Source);
+        Assert.Equal("live", snapshot.Source);
+        Assert.True(snapshot.AcquisitionTruncated);
         Assert.Contains(snapshot.Content.AcquisitionFailures!, f => f.Request == "session");
-        Assert.Equal("APPLY_CATALOG_UNAVAILABLE", Assert.Throws<RLoopException>(() => CatalogMapper.Export(snapshot)).Code);
+        Assert.Null(CatalogMapper.Export(snapshot).UnavailableReason());
     }
 
     [Theory]

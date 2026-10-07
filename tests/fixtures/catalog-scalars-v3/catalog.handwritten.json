@@ -1,0 +1,28 @@
+{
+  "formatVersion": "2",
+  "identity": { "resoniteVersion": "2026.9.18.82", "resoniteLinkVersion": "0.13.1.0", "clientPackageVersion": "0.13.1", "mapperVersion": "3", "retrievedAt": "2026-10-03T00:00:00+00:00" },
+  "evidenceIdentity": { "resoniteVersion": "2026.9.18.82", "resoniteLinkVersion": "0.13.1.0", "clientPackageVersion": "0.13.1", "mapperVersion": "3", "retrievedAt": "2026-10-03T00:00:00+00:00" },
+  "source": "live",
+  "synthetic": false,
+  "contentHash": "7c4931e13cf0983ae63da0f7412b0fed399fffbde029021d545dca4a527789b1",
+  "content": {
+    "types": [
+      { "fullName": "[FrooxEngine]FrooxEngine.AudioDeviceIndexFinder", "confirmed": true, "closureComplete": false, "baseType": "[FrooxEngine]FrooxEngine.Component", "interfaces": [], "isGeneric": false,
+        "members": { "DeviceName": { "kind": "field", "memberType": "[FrooxEngine]FrooxEngine.Sync<string>", "valueType": "string", "targetType": null, "element": null, "keyType": null, "confirmed": true } },
+        "membersComplete": false, "representation": "other", "elementType": null, "tupleSize": 0, "enumValues": null, "isFlags": null },
+      { "fullName": "[FrooxEngine]FrooxEngine.Light", "confirmed": true, "closureComplete": false, "baseType": "[FrooxEngine]FrooxEngine.ChangeHandlingRenderableComponent", "interfaces": ["[FrooxEngine]FrooxEngine.IRenderable"], "isGeneric": false,
+        "members": {
+          "Enabled": { "kind": "field", "memberType": "[FrooxEngine]FrooxEngine.Sync<bool>", "valueType": "bool", "targetType": null, "element": null, "keyType": null, "confirmed": true },
+          "ShadowMapResolution": { "kind": "field", "memberType": "[FrooxEngine]FrooxEngine.Sync<int>", "valueType": "int", "targetType": null, "element": null, "keyType": null, "confirmed": true }
+        }, "membersComplete": false, "representation": "other", "elementType": null, "tupleSize": 0, "enumValues": null, "isFlags": null },
+      { "fullName": "[FrooxEngine]FrooxEngine.ValueField<float>", "confirmed": true, "closureComplete": false, "baseType": "[FrooxEngine]FrooxEngine.Component", "interfaces": ["[FrooxEngine]FrooxEngine.IValueSource<float>", "[FrooxEngine]FrooxEngine.IValueSource"], "isGeneric": true,
+        "members": { "Value": { "kind": "field", "memberType": "[FrooxEngine]FrooxEngine.Sync<float>", "valueType": "float", "targetType": null, "element": null, "keyType": null, "confirmed": true } },
+        "membersComplete": false, "representation": "other", "elementType": null, "tupleSize": 0, "enumValues": null, "isFlags": null },
+      { "fullName": "bool", "confirmed": true, "closureComplete": false, "baseType": null, "interfaces": [], "isGeneric": false, "members": null, "membersComplete": false, "representation": "boolean", "elementType": null, "tupleSize": 0, "enumValues": null, "isFlags": null },
+      { "fullName": "float", "confirmed": true, "closureComplete": false, "baseType": null, "interfaces": [], "isGeneric": false, "members": null, "membersComplete": false, "representation": "single", "elementType": null, "tupleSize": 0, "enumValues": null, "isFlags": null },
+      { "fullName": "int", "confirmed": true, "closureComplete": false, "baseType": null, "interfaces": [], "isGeneric": false, "members": null, "membersComplete": false, "representation": "int32", "elementType": null, "tupleSize": 0, "enumValues": null, "isFlags": null },
+      { "fullName": "string", "confirmed": true, "closureComplete": false, "baseType": null, "interfaces": [], "isGeneric": false, "members": null, "membersComplete": false, "representation": "string", "elementType": null, "tupleSize": 0, "enumValues": null, "isFlags": null }
+    ],
+    "aliases": {}
+  }
+}
