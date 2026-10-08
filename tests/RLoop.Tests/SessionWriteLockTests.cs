@@ -90,21 +90,37 @@ public sealed class SessionWriteLockTests(ITestOutputHelper output) : IDisposabl
             "$b = [System.Text.Encoding]::UTF8.GetBytes('" + Quote(JsonSerializer.Serialize(statePath)) + "'); " +
             "$h.Write($b, 0, $b.Length); $h.SetLength($b.Length); $h.Flush($true); [Console]::WriteLine('held'); [Console]::ReadLine() | Out-Null; $h.Dispose()";
         using var holder = StartPowerShell(script);
+        var timeline = new List<string>();
         try
         {
             Assert.Equal("held", await holder.StandardOutput.ReadLineAsync().WaitAsync(TimeSpan.FromSeconds(15)));
+            timeline.Add($"held {DateTime.UtcNow:O}");
             output.WriteLine($"Holder PID {holder.Id}; contender testhost PID {Environment.ProcessId}; lock {lockPath}");
-            var e = Assert.Throws<RLoopException>(() => SessionWriteLock.Acquire("ws://127.0.0.1:80", root));
-            Assert.Equal("APPLY_SESSION_BUSY", e.Code);
+            {
+                var e = Assert.Throws<RLoopException>(() => SessionWriteLock.Acquire("ws://127.0.0.1:80", root));
+                Assert.Equal("APPLY_SESSION_BUSY", e.Code);
+            }
+            timeline.Add($"kill {DateTime.UtcNow:O}");
             holder.Kill(entireProcessTree: true);
             await holder.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(15));
-            using var next = SessionWriteLock.Acquire("WS://LOCALHOST:80", root);
-            var pending = Assert.Throws<RLoopException>(() => next.CheckPreviousState(Path.Combine(root, "other-state.json")));
-            Assert.Equal("APPLY_WRITE_UNVERIFIED", pending.Code);
-            Assert.Equal("previousStatePending", pending.Context["reason"]);
-            Assert.Equal(statePath, pending.Context["stateFile"]);
-            next.CheckPreviousState(statePath); // Original project is allowed to inspect its own journal.
-            output.WriteLine("After kill: handle acquired; foreign pending blocked; original project may reconcile.");
+            timeline.Add($"exited {DateTime.UtcNow:O}");
+            SessionWriteLock next;
+            timeline.Add($"acquire {DateTime.UtcNow:O}");
+            try { next = SessionWriteLock.Acquire("WS://LOCALHOST:80", root); }
+            catch (RLoopException e)
+            {
+                LockFileDiagnostics.Report(output, LockFileDiagnostics.Capture(lockPath, e, timeline, holder));
+                throw;
+            }
+            using (next)
+            {
+                var pending = Assert.Throws<RLoopException>(() => next.CheckPreviousState(Path.Combine(root, "other-state.json")));
+                Assert.Equal("APPLY_WRITE_UNVERIFIED", pending.Code);
+                Assert.Equal("previousStatePending", pending.Context["reason"]);
+                Assert.Equal(statePath, pending.Context["stateFile"]);
+                next.CheckPreviousState(statePath); // Original project is allowed to inspect its own journal.
+                output.WriteLine("After kill: handle acquired; foreign pending blocked; original project may reconcile.");
+            }
         }
         finally { if (!holder.HasExited) { holder.Kill(entireProcessTree: true); await holder.WaitForExitAsync(); } }
     }
@@ -266,6 +282,12 @@ public sealed class SessionWriteLockTests(ITestOutputHelper output) : IDisposabl
         // Delete only the exact, independently created test directory.
         var full = Path.GetFullPath(root);
         if (!full.StartsWith(Path.GetFullPath(Path.GetTempPath()), StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException();
-        Directory.Delete(full, recursive: true);
+        try { Directory.Delete(full, recursive: true); }
+        catch (IOException e)
+        {
+            foreach (var file in Directory.GetFiles(full, "*.lock", SearchOption.AllDirectories))
+                LockFileDiagnostics.Report(output, LockFileDiagnostics.Capture(file, e, [], null));
+            throw;
+        }
     }
 }
