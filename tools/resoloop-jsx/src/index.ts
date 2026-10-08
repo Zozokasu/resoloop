@@ -34,3 +34,18 @@ export type {
   ApplyComponentSpec,
   ApplyNodeSpec,
 } from "./evaluate.js";
+
+// Experimental type-only exports used by catalog declarations and runtime tables.
+export type {
+  FieldRef,
+  UncheckedReference,
+  ScalarRepresentation,
+  ScalarValue,
+  RepresentationOf,
+  InstanceHandle,
+} from "./object-refs.js";
+
+export type {
+  CatalogRuntimeTable,
+  CatalogMemberRuntime,
+} from "./catalog-runtime.js";
