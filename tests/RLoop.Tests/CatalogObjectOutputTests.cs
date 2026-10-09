@@ -207,7 +207,7 @@ public sealed class CatalogObjectOutputTests : IDisposable
         Assert.True(File.Exists(runtime));
         var declarationText = File.ReadAllText(declaration, Encoding.UTF8);
         var runtimeBytes = File.ReadAllBytes(runtime);
-        Assert.Equal(File.ReadAllText(Fixture("runtime.handwritten.ts"), Encoding.UTF8), Encoding.UTF8.GetString(runtimeBytes));
+        Assert.Equal(File.ReadAllText(Fixture("runtime.handwritten.ts"), Encoding.UTF8).Replace("\r\n", "\n"), Encoding.UTF8.GetString(runtimeBytes));
         Assert.DoesNotContain('\uFEFF', Encoding.UTF8.GetString(runtimeBytes));
         Assert.DoesNotContain('\r', Encoding.UTF8.GetString(runtimeBytes));
         using var header = JsonDocument.Parse(declarationText.Split('\n', 2)[0]["// resoloop-catalog-types: ".Length..]);

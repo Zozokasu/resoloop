@@ -34,7 +34,7 @@ public sealed class CatalogScalarTypesTests
         Assert.NotNull(generated.RuntimeText);
         Assert.Equal(File.ReadAllText(Fixture("declaration.handwritten.d.ts")).Replace("\r\n", "\n"),
             generated.Text);
-        Assert.Equal(File.ReadAllText(Fixture("runtime.handwritten.ts")),
+        Assert.Equal(File.ReadAllText(Fixture("runtime.handwritten.ts")).Replace("\r\n", "\n"),
             generated.RuntimeText);
     }
 

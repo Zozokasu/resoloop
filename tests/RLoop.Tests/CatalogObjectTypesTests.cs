@@ -51,7 +51,7 @@ public sealed class CatalogObjectTypesTests
         var catalog = Catalog();
         Assert.Equal("13290e8b7558a80e35940b524e70d833ee24fbc842756e52793051b056e0ea4f", catalog.ContentHash);
         var generated = CatalogTypesGenerator.Generate(catalog);
-        var expectedRuntime = File.ReadAllText(Fixture("runtime.handwritten.ts"), Encoding.UTF8);
+        var expectedRuntime = File.ReadAllText(Fixture("runtime.handwritten.ts"), Encoding.UTF8).Replace("\r\n", "\n");
         Assert.Equal(expectedRuntime, generated.RuntimeText);
         Assert.Equal("3", generated.GeneratorVersion);
         Assert.Equal(catalog.ContentHash, generated.ContentHash);
@@ -61,7 +61,7 @@ public sealed class CatalogObjectTypesTests
         Assert.Equal(generated.Fallbacks.ToArray(), again.Fallbacks.ToArray());
         Assert.DoesNotContain('\r', generated.RuntimeText!);
         Assert.DoesNotContain('\uFEFF', generated.RuntimeText!);
-        Assert.True(generated.RuntimeText!.EndsWith("\n", StringComparison.Ordinal));
+        Assert.EndsWith("\n", generated.RuntimeText!, StringComparison.Ordinal);
 
         var headerJson = generated.Text.Split('\n', 2)[0]["// resoloop-catalog-types: ".Length..];
         using var header = JsonDocument.Parse(headerJson);

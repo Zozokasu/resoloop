@@ -40,7 +40,7 @@ public sealed class CatalogTypesTests : IDisposable
         var generated = CatalogTypesGenerator.Generate(catalog);
         Assert.Equal(HandwrittenDeclaration(), generated.Text);
         Assert.Equal("3", generated.GeneratorVersion);
-        Assert.Equal(File.ReadAllText(Fixture("runtime.handwritten.ts")), generated.RuntimeText);
+        Assert.Equal(File.ReadAllText(Fixture("runtime.handwritten.ts")).Replace("\r\n", "\n"), generated.RuntimeText);
         Assert.Equal(3, generated.Fallbacks.Count);
         Assert.Equal(generated.Text, CatalogTypesGenerator.Generate(catalog).Text);
         Assert.Equal(generated.Text, CatalogTypesGenerator.Generate(ApplyCatalog.Load(Fixture("catalog.handwritten.json"))).Text);
@@ -182,7 +182,7 @@ public sealed class CatalogTypesTests : IDisposable
             "\"runtimeFile\":\"catalog.fields.ts\"", StringComparison.Ordinal);
         Assert.Equal(expectedDeclaration, File.ReadAllText(destination));
         var runtime = Path.Combine(Path.GetDirectoryName(destination)!, "catalog.fields.ts");
-        Assert.Equal(File.ReadAllText(Fixture("runtime.handwritten.ts")), File.ReadAllText(runtime));
+        Assert.Equal(File.ReadAllText(Fixture("runtime.handwritten.ts")).Replace("\r\n", "\n"), File.ReadAllText(runtime));
         using var reportJson = JsonDocument.Parse(File.ReadAllText(report));
         var data = reportJson.RootElement.GetProperty("data");
         Assert.Equal("3", data.GetProperty("generatorVersion").GetString());
