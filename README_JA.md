@@ -19,15 +19,73 @@ resoloop validate build/main.json --catalog catalog.json --json
 
 `requestedTypes` は重複を含む入力名数、`acquisitionBudgetUsed` は失敗も含む取得試行済みの一意な名前数（alias正規化前）、`acquisitionBudgetLimit` は512です。`outputTypes` はexportされた型数で、既知scalarの合成により512を超えることがあります。budget情報のない旧snapshotは `acquisitionBudgetUsed: "unknown"` と報告します。
 
-`catalog types`はoffline処理です。synthetic catalogと、identity・出典・hashなどの検査で `UnavailableReason` が返るcatalogを拒否します。取得が不完全でも、この検査を通る部分catalogからは型宣言を生成できます。確認済みで対応しているfield値には型を付け、未確認・未対応の値は `JsonValue` に残します。部分catalogを使う場合も、対象文書に必要なmetadataが足りるかC#のcatalog検証で確認してください。catalog formatは2のまま、mapperは2から3へ、generatorは1から2へ更新されます。mapper 2のcatalogは `APPLY_CATALOG_UNAVAILABLE` で拒否されます。明示認可のあるlive取得で作り直し、型宣言を再生成してください。generator/header/hash不一致は `APPLY_CATALOG_TYPES_HASH_MISMATCH` です。同じhashでもgenerator 1の宣言は再生成してください。
+`catalog types`はoffline処理です。synthetic catalogと、identity・出典・hashなどの検査で `UnavailableReason` が返るcatalogを拒否します。取得が不完全でも、この検査を通る部分catalogからは型宣言を生成できます。確認済みで対応しているfield値には型を付け、未確認・未対応の値は `JsonValue` に残します。部分catalogを使う場合も、対象文書に必要なmetadataが足りるかC#のcatalog検証で確認してください。catalog formatは2、mapperは3のままです。生成器はversion 3で、宣言のheader formatは1です。mapper 2のcatalogは `APPLY_CATALOG_UNAVAILABLE` で拒否されます。明示認可のあるlive取得で作り直し、型宣言を再生成してください。
 
-既定出力先は最寄りの `.resoloop.json` があるprojectの `.resoloop/catalog-types.d.ts` です。projectがなければ現在のdirectoryを基準にします。既定出力先は現在のdirectory基準で、`resoloop-jsx build` が自動で読むのは `.resoloop.json` のあるproject（または `--project-root`）の `.resoloop/` だけなので、そのproject内で実行するか `--output` を指定してください。生成宣言は `CatalogComponentRegistry` を拡張します。通常の `tsc` では `include` に指定するか、TypeScriptファイルから `/// <reference path="../.resoloop/catalog-types.d.ts" />` で参照してください。`resoloop-jsx build` はこの標準ファイルがあれば自動で読み込みます。
+既定出力は最寄りの `.resoloop.json` があるprojectの `.resoloop/catalog-types.d.ts` と `.resoloop/catalog-fields.ts` です。projectがなければ現在のdirectoryを基準にします。既定出力先は現在のdirectory基準です。`--output X.d.ts` は `X.fields.ts` も生成し、別のsuffixでは宣言だけを書いてwarningを出します。宣言headerはformat 1、generator 3、catalog content hash、runtime file名とSHA-256を持ちます。runtime SHAはBOMなしUTF-8で計算し、CRLFはLFへ正規化します。`resoloop-jsx build` が自動で読むのは `.resoloop.json` のあるproject（または `--project-root`）の `.resoloop/` だけです。そのproject内で実行するか `--output` を指定してください。生成宣言は `CatalogComponentRegistry` を拡張します。通常の `tsc` では `include` に指定するか、TypeScriptファイルから `/// <reference path="../.resoloop/catalog-types.d.ts" />` で参照してください。buildで使うruntime tableは `content/main.tsx` から `../.resoloop/catalog-fields.js` のように明示importします。generator 3の宣言だけの旧形式は型補助に使えますが、`componentFields` にはruntime tableが必要です。
 
-型は `<Component type="…">` の `fields` と `initialFields` にだけ付与されます。`<Field>` は緩い型（JsonValue）のままで、member名と値はTypeScriptでは検査されません（存在しないmember名も `tsc` を通ります）。確認済みmember値の型をownerのgeneric closure未完了だけを理由に捨てることはありませんが、未知の型やmemberは推測しません。
+生成型は `<Component type="…">` の `fields` と `initialFields` に付与されます。従来の `<Field>` は `JsonValue` のままで、member名と値をTypeScriptでは検査しません。catalog-bound APIでは `componentFields(type, catalog)` が返す `Lamp.Field` を使うと、確認済みmember名と値を検査できます。確認済みmember値の型をownerのgeneric closure未完了だけを理由に捨てることはありませんが、未知の型やmemberは推測しません。
 
 TypeScriptはboolean/number/stringを厳密に扱います。たとえばbooleanの `true` と文字列 `"true"`、int32の `42` と文字列 `"42"` はTypeScript上で別の型です。C# runtime変換は両者を受け入れる場合があります。C#のstring変換はraw値の文字列表現を使うため、TypeScriptのstringより広く受理されます。整数の範囲・有限性などC#側の変換検査も残ります。最終的なcatalog判定はC#の `ApplyCatalogValidator` が行います。
 
 カタログ取得や型宣言だけではruntime動作を検証したことになりません。
+
+## 実験的なObject合成
+
+`defineObject<P>()({ exports, body })` は再利用するbodyと公開referenceを定義します。`Def.instance(id)` は配置ごとのhandleを返し、JSXでは `<Def handle={handle} ...props />` と使います。`handle` は予約済みpropなので、利用者prop `P` に含められません。`ref.export(handle, name)` は定義した公開名だけを参照し、戻り値にも型が付きます。`componentFields(type, catalog)` は生成runtime tableからmemberと値を結び付けます。厳密なreference型は `boolean`、`int32`、`string`、`single` に限られ、数値値はTypeScriptの `number` です。reference型では `int32` と `single` を区別します。
+
+次の例は架空のoffline `Fixture.Objects.Lamp` と `Fixture.Objects.Toggle` を使います。これらの型やmemberがResoniteに存在する証拠ではありません。実際に使うcatalogはReflectionで確認し、CLI生成のruntime tableを読み込んでください。生成tableを製品コードで手書き代用しないでください。
+
+<!-- object-example -->
+~~~tsx
+import { Slot, Component, defineObject, componentFields, ref } from "resoloop-jsx";
+import { catalog } from "../.resoloop/catalog-fields.js";
+
+const Lamp = componentFields("Fixture.Objects.Lamp", catalog);
+export const ownership = { key: "object-fixture" };
+
+const Light = defineObject<{ name: string; intensity: number }>()({
+  exports: { enabled: Lamp.ref("light", "Enabled") },
+  body: ({ name, intensity }) => (
+    <Slot key="root" name={name}>
+      <Component
+        key="light"
+        type="Fixture.Objects.Lamp"
+        fields={{ Intensity: intensity }}
+        initialFields={{ Enabled: true }}
+      />
+    </Slot>
+  ),
+});
+
+const desk = Light.instance("desk-lamp");
+const ceiling = Light.instance("ceiling-lamp");
+
+export default (
+  <Slot key="scene" name="Objects">
+    <Light handle={desk} name="Desk" intensity={1.5} />
+    <Light handle={ceiling} name="Ceiling" intensity={4} />
+    <Component
+      key="toggle"
+      type="Fixture.Objects.Toggle"
+      fields={{ Target: ref.export(desk, "enabled") }}
+    />
+  </Slot>
+);
+~~~
+
+Object instance IDは `^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$` に一致し、文書全体で一意でなければなりません。body内のSlotとComponentには明示keyが必要です。展開後のkeyは `id::localKey` となり、`Scope` はさらに `::` segmentを加えます。`id::` namespaceは展開文書で予約されます。body内のtargetはprivateです。公開targetであっても生のreferenceでは使えず、定義済み公開名を `ref.export` で指定してください。Objectの入れ子は未対応です。生成IRはschema version 1、ownershipは単一key、apply stateはversion 3のままです。
+
+TSX buildのObject/Field検査はexit 1で、`APPLY_OBJECT_INVALID`、`APPLY_OBJECT_DUPLICATE`、`APPLY_OBJECT_EXPORT_INVALID`、`APPLY_OBJECT_EXPORT_UNKNOWN`、`APPLY_OBJECT_TYPE_MISMATCH`、`APPLY_OBJECT_PRIVATE_REFERENCE`、`APPLY_FIELD_TYPE_MISMATCH` を返します。TypeScript診断はexit 2です。C# `validate` は値変換・参照適合性・catalog evidenceの最終判定を行い、`VALUE_CONVERSION_FAILED`、`APPLY_REFERENCE_TYPE_MISMATCH`、`APPLY_CATALOG_UNAVAILABLE` は既存のexit 6を使います。
+
+利用者が参照している間はinstance IDとexport名を維持してください。export名を保てばconsumer側のsourceは維持できます。Componentのowner移動、type/key変更、target差替えでruntime reference IDは変わり得るため、export先をObject定義内で確認し、必要なら対象contentを作り直してください。`initialFields` はComponent作成時だけの値です。Object APIは実機の所有関係を証明せず、再作成後もruntime値が保たれるとは保証しません。offlineではtoken/contextの反復・並行buildを確認していますが、ESM cache回収やwatch modeは保証対象外です。APIはexperimentalです。runtime tableやcatalog evidenceが不足すると `APPLY_CATALOG_UNAVAILABLE` でTSX buildがexit 1になります。Object APIは実機のResoniteでは未検証で、実物のToggleのComponentとその参照先のmemberもReflectionでは確かめていません。
+
+
+
+明示import先のruntime fileを解決できない場合は `TS2307`（build exit 2）です。declaration header、hash、runtime companionの不一致や古さは `APPLY_CATALOG_TYPES_HASH_MISMATCH`（exit 1）になります。`tsc`単独ではheader/hashの整合、元JSONに対する鮮度、definition identity、配置、Object privacyを検証しません。通常buildも元catalog JSONの鮮度や実機との一致は保証せず、入力JSONとのbindingは既存bundle modeの `--catalog` だけが行います。computed literalの `__proto__` だけは狭い既存例外で、他のprototype-key形式へ範囲を広げません。
+
+確認済みで非nullableのscalar field targetだけが、`boolean`、`int32`、`string`、`single` の `FieldRef<T, R>` として厳密に型付きされます。nullableやその他のreferenceは既存の `string | null` または `UncheckedReference` fallbackを保ちます。通常のstring referenceと従来の `ref.*` helperは互換ですが、raw internal referenceはObject boundaryを越えられません。Object境界外からは宣言した公開名を `ref.export` で参照します。
+
+project-rootの解決ではentryが明示 `projectRoot` 内なら、そのrootをauthoring pathとproject catalog読込に使います。entryがroot外なら従来どおりentry directoryをrootにし、relative `authoring.source`（例: `../project/content/main.tsx`）を保ちます。外部projectのcatalog importはTypeScript `TS6059` になる場合があります。
 
 ## UIX制作の効率化
 
