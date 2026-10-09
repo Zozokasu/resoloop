@@ -4,6 +4,10 @@
 
 import type { ApplyDocument, ApplyOwnershipSpec, ApplySlotSpec, ApplyComponentSpec, ApplyNodeSpec } from "./generated/apply-types.js";
 import { copyComponent, copySlot } from "./generated/apply-copy.js";
+import type { CatalogMemberRuntime, CatalogRuntimeTable } from "./catalog-runtime.js";
+import { catalogMember, verifyRuntimeTable } from "./catalog-runtime.js";
+import { boundFieldMetadata, checkBoundFieldParent } from "./bound-field.js";
+import { expandObjects } from "./object-expand.js";
 export type { ApplyDocument, ApplyOwnershipSpec, ApplySlotSpec, ApplyComponentSpec, ApplyNodeSpec } from "./generated/apply-types.js";
 import { copyOrigin, bindIr, markBuildError, markBuildErrorOrigin, originOfElement, bindIrOrigin, unknown, type Origin } from "./source-map.js";
 import { scopeKey, scopeValue } from "./scope.js";
@@ -19,11 +23,71 @@ export class BuildError extends Error {
   }
 }
 
+function sameBoundDescriptor(left: CatalogMemberRuntime, right: CatalogMemberRuntime): boolean {
+  const a = left.fieldTarget;
+  const b = right.fieldTarget;
+  const sameTarget = a === null && b === null || a !== null && b !== null &&
+    a.representation === b.representation && a.valueType === b.valueType && a.targetType === b.targetType;
+  return left.kind === right.kind && left.catalogKind === right.catalogKind && left.confirmed === right.confirmed &&
+    left.memberType === right.memberType && left.valueType === right.valueType && left.targetType === right.targetType &&
+    left.scalar === right.scalar && left.fieldInterface === right.fieldInterface && sameTarget;
+}
+
+function sameBoundTable(left: CatalogRuntimeTable, right: CatalogRuntimeTable): boolean {
+  if (left.formatVersion !== right.formatVersion || left.generatorVersion !== right.generatorVersion ||
+      left.contentHash !== right.contentHash) return false;
+  const leftTypes = Object.keys(left.types).sort();
+  const rightTypes = Object.keys(right.types).sort();
+  if (leftTypes.length !== rightTypes.length || leftTypes.some((type, index) => type !== rightTypes[index])) return false;
+  for (const type of leftTypes) {
+    const a = left.types[type];
+    const b = right.types[type];
+    if (a.canonicalType !== b.canonicalType || a.confirmed !== b.confirmed || a.membersComplete !== b.membersComplete) return false;
+    const leftMembers = Object.keys(a.members).sort();
+    const rightMembers = Object.keys(b.members).sort();
+    if (leftMembers.length !== rightMembers.length || leftMembers.some((member, index) => member !== rightMembers[index])) return false;
+    for (const member of leftMembers) if (!sameBoundDescriptor(a.members[member], b.members[member])) return false;
+  }
+  return true;
+}
+
+function unavailableBound(type: string, member: string): never {
+  throw new BuildError("APPLY_CATALOG_UNAVAILABLE",
+    `Type '${type}', member '${member}': runtime catalog evidence is missing or unconfirmed.`);
+}
+
+function validateBoundField(field: object, parent: object, parentType: string,
+  catalogs: readonly CatalogRuntimeTable[]): void {
+  const bound = boundFieldMetadata(field);
+  if (!bound) return;
+  const fieldOrigin = originOfElement(field);
+  const parentOrigin = originOfElement(parent);
+  const primary = fieldOrigin?.attributes.name?.valueSource ?? unknown;
+  const parentValue = parentOrigin?.attributes.type?.valueSource ?? unknown;
+  const related = [
+    ...(fieldOrigin?.attributes.name?.related ?? []), ...(fieldOrigin?.related ?? []), parentValue,
+    ...(parentOrigin?.attributes.type?.related ?? []), ...(parentOrigin?.related ?? []),
+  ];
+  try {
+    const matching = catalogs.filter(table => table.contentHash === bound.catalogHash).map(verifyRuntimeTable);
+    if (matching.length === 0) unavailableBound(bound.type, bound.member);
+    if (matching.some(table => !sameBoundTable(matching[0], table))) unavailableBound(bound.type, bound.member);
+    const actual = catalogMember(matching[0], bound.type, bound.member);
+    if (!sameBoundDescriptor(bound.descriptor, actual)) unavailableBound(bound.type, bound.member);
+    checkBoundFieldParent(field, parentType, catalogs);
+  } catch (error) {
+    if (error instanceof BuildError)
+      markBuildErrorOrigin(error, { source: primary, valueSource: primary, related });
+    throw error;
+  }
+}
+
 /* ---- element internals ---- */
 
 interface RawElement {
   kind: string;
   scope?: string;
+  absoluteScope?: boolean;
   props?: Record<string, any> | null;
 }
 
@@ -59,7 +123,7 @@ function flattenChildren(value: any, path: string, out: RawElement[], scope = ""
     }
     if (value.kind === "scope") {
       let nested: string;
-      try { nested = scopeKey(scope, value.props?.instanceKey, `${path}.instanceKey`); }
+      try { nested = scopeKey(value.absoluteScope === true ? "" : scope, value.props?.instanceKey, `${path}.instanceKey`); }
       catch (error) { if (error instanceof Error) markBuildError(error, value, "instanceKey"); throw error; }
       if (scopes.has(nested)) {
         const error = new BuildError("DUPLICATE_KEY", `Instance scope '${nested}' is repeated at ${path}`);
@@ -90,6 +154,11 @@ function slug(s: string): string {
   return s.toLowerCase().replace(/[^a-z0-9_-]/g, "_");
 }
 
+function scopedMigrateFrom(value: unknown, scope: string): unknown {
+  if (!scope || typeof value !== "string") return value;
+  return value.startsWith("$") ? scopeValue(value, scope) : value;
+}
+
 /** Recursively verify that every number in a JSON-bound value is finite;
  *  JSON.stringify would otherwise silently emit NaN/Infinity as null. */
 function assertFiniteNumbers(value: unknown, path: string): void {
@@ -114,6 +183,7 @@ function assertFiniteNumbers(value: unknown, path: string): void {
 export interface EvaluateOptions {
   ownership?: unknown;
   draft?: boolean;
+  catalogs?: readonly CatalogRuntimeTable[];
 }
 
 export interface EvaluateResult {
@@ -138,6 +208,9 @@ export function evaluate(
       Object.keys(ownership).length !== 1 || !("key" in ownership) ||
       typeof ownership.key !== "string" || ownership.key.trim().length === 0))
     throw new Error("ownership export must be an object containing one non-empty string key");
+  const inputRoot = root;
+  root = expandObjects(root, options.catalogs ?? []);
+  const objectPassRan = root !== inputRoot;
   const draft = options.draft === true;
   const warnings: string[] = [];
   const scopes = new Set<string>();
@@ -204,6 +277,8 @@ export function evaluate(
     const key = resolveKey("component", props, type, parentKey, siblingIndex, path, el.scope ?? "");
     registerKey(componentKeys, key, "component", path);
     const spec = copyComponent(props, key, path, el.scope ?? "", false, { assertFiniteNumbers, scopeValue });
+    if (objectPassRan && props.migrateFrom !== undefined)
+      spec.migrateFrom = scopedMigrateFrom(props.migrateFrom, el.scope ?? "") as string;
     const source = originOfElement(el);
     const attributes = { ...(source?.attributes ?? {}) };
     function addOrigin(section: string, member: string, origin: Origin | undefined): void {
@@ -230,6 +305,7 @@ export function evaluate(
         const error = new BuildError(code, message); markBuildError(error, value, attribute); throw error;
       }
       if (typeof name !== "string" || !name.trim()) fail("APPLY_FIELD_INVALID", `Field at ${path} requires a non-empty name`, "name");
+      validateBoundField(value, el, type, options.catalogs ?? []);
       if (members.has(name)) fail("APPLY_FIELD_DUPLICATE", `Member '${name}' at ${path} is declared more than once`, "name");
       members.add(name);
       const mode = field.mode ?? spec.propertyModes?.[name] ?? "config";
@@ -318,6 +394,8 @@ export function evaluate(
     }
 
     const spec = copySlot(props, key, path, el.scope ?? "", isRoot, { assertFiniteNumbers, scopeValue });
+    if (objectPassRan && props.migrateFrom !== undefined)
+      spec.migrateFrom = scopedMigrateFrom(props.migrateFrom, el.scope ?? "") as string;
 
     bindIr(el, spec);
     const components: ApplyComponentSpec[] = [];

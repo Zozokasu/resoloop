@@ -3,7 +3,7 @@ import { jsx } from "./jsx-runtime.js";
 export type Source = { status: "unknown" } | { status: "known"; file: string; sha256: string;
   range: { start: { offset: number; line: number; column: number }; end: { offset: number; line: number; column: number } } };
 export interface Origin { source: Source; valueSource?: Source; related?: Source[];
-  forward?: string; forwardFrom?: object; children?: Record<string, Origin> }
+  forward?: string; forwardFrom?: object; forwardFunctionId?: string; children?: Record<string, Origin> }
 export interface ElementOrigin { source: Source; attributes: Record<string, Origin>; related?: Source[] }
 export const unknown: Source = { status: "unknown" };
 const origins = new WeakMap<object, ElementOrigin>();
@@ -11,7 +11,8 @@ const irOrigins = new WeakMap<object, ElementOrigin>();
 const propsOrigins = new WeakMap<object, Record<string, { origin: Origin; snapshot: string | undefined }>>();
 const buildErrors = new WeakMap<object, { source: Source; related: Source[] }>();
 let current: ElementOrigin | undefined;
-let caller: { props: object; related: Source[] } | undefined;
+let caller: { props: object; related: Source[]; functionIdentity?: string } | undefined;
+const functionIdentities = new WeakMap<Function, string>();
 
 function dataValue(value: unknown, key: string): unknown {
   if (value === null || typeof value !== "object") return Symbol();
@@ -53,7 +54,10 @@ export function originJsx(type: unknown, props: any, key: string | undefined, me
 export function sourceElement(thunk: () => any, metadata: ElementOrigin, values?: any): any {
   const previous = current;
   function resolve(origin: Origin, value: unknown): Origin {
-    const captured = origin.forward && origin.forwardFrom ? propsOrigins.get(origin.forwardFrom)?.[origin.forward] : undefined;
+    const fromProps = origin.forwardFrom ? propsOrigins.get(origin.forwardFrom) : undefined;
+    const fromCaller = origin.forwardFunctionId && caller?.functionIdentity === origin.forwardFunctionId
+      ? propsOrigins.get(caller.props) : undefined;
+    const captured = origin.forward ? fromProps?.[origin.forward] ?? fromCaller?.[origin.forward] : undefined;
     const forwarded = captured?.snapshot !== undefined && captured.snapshot === snapshot(value) ? captured.origin : undefined;
     return { ...origin, valueSource: origin.forward ? forwarded?.valueSource ?? unknown : origin.valueSource,
       children: origin.forward ? forwarded?.children : origin.children && Object.fromEntries(Object.entries(origin.children).map(([k, v]) => [k, resolve(v, dataValue(value, k))])),
@@ -64,11 +68,30 @@ export function sourceElement(thunk: () => any, metadata: ElementOrigin, values?
   try { return thunk(); } finally { current = previous; }
 }
 export function captureElement(element: object): void { if (current) origins.set(element, current); }
+export function sourceFunction<T extends Function>(fn: T, identity: string): T {
+  functionIdentities.set(fn, identity);
+  return fn;
+}
+function attachDefinition<T extends object>(value: T, metadata: ElementOrigin): T {
+  origins.set(value, metadata);
+  return value;
+}
+export function sourceDefinition<T extends object>(thunk: () => T, metadata: ElementOrigin): T {
+  const previousCurrent = current;
+  const previousCaller = caller;
+  current = metadata;
+  try { return attachDefinition(thunk(), metadata); }
+  finally { current = previousCurrent; caller = previousCaller; }
+}
+export function sourceDefinitionValue<T extends object>(value: T, metadata: ElementOrigin): T {
+  return attachDefinition(value, metadata);
+}
 export function callComponent(fn: (props: any) => any, props: object): any {
   const previous = caller;
   if (current) propsOrigins.set(props, Object.fromEntries(Object.entries(current.attributes)
     .map(([k, origin]) => [k, { origin, snapshot: snapshot(dataValue(props, k)) }])));
-  caller = { props, related: current ? [current.source, ...(current.related ?? [])] : [] };
+  caller = { props, related: current ? [current.source, ...(current.related ?? [])] : [],
+    functionIdentity: functionIdentities.get(fn) };
   try { return fn(props); } finally { caller = previous; }
 }
 export function copyOrigin(from: object, to: object): void { const origin = origins.get(from); if (origin) origins.set(to, origin); }
@@ -83,6 +106,9 @@ export function markBuildError(error: object, element: object, attribute: string
 }
 export function markBuildErrorOrigin(error: object, origin: Origin | undefined): void {
   buildErrors.set(error, { source: origin?.valueSource ?? origin?.source ?? unknown, related: origin?.related ?? [] });
+}
+export function buildErrorOrigin(error: object): { source: Source; related: Source[] } | undefined {
+  return buildErrors.get(error);
 }
 export function buildErrorLocation(error: object): string {
   const source = buildErrors.get(error)?.source ?? unknown;
