@@ -9,6 +9,8 @@
 import type { SlotScalarProps, ComponentScalarProps } from "./generated/apply-types.js";
 import type { JsonValue } from "./generated/apply-types.js";
 import type { CatalogComponentRegistry } from "./index.js";
+import type { ObjectDescriptor } from "./object-definition.js";
+import type { InstanceHandle, PublicRefs } from "./object-refs.js";
 export type { JsonValue, ManagedField, RelocationTransform } from "./generated/apply-types.js";
 
 /** Generated scalar props plus JSX children, which are classified by the evaluator. */
@@ -39,6 +41,12 @@ export interface FieldProps {
   key?: string;
 }
 export interface FieldElement { kind: "field"; props: FieldProps }
+
+/** Internal element object produced by an Object definition. */
+export interface ObjectElement {
+  kind: "object";
+  props: { handle: InstanceHandle<PublicRefs>; body: JsxNode; definition: ObjectDescriptor };
+}
 
 /** Internal element object produced by the JSX runtime for <Slot>. */
 export interface SlotElement {
@@ -71,7 +79,7 @@ export interface ScopeElement {
 }
 
 /** Any element object produced by the JSX runtime. */
-export type JsxElement = SlotElement | ComponentElement | FragmentElement | ScopeElement | FieldElement;
+export type JsxElement = SlotElement | ComponentElement | FragmentElement | ScopeElement | FieldElement | ObjectElement;
 
 /** Anything that may legally appear as a JSX child / function-component
  *  return value. Arrays may be nested arbitrarily; falsy values are dropped

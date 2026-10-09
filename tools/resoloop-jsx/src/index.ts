@@ -8,6 +8,13 @@ export { Fragment } from "./jsx-runtime.js";
 export { ref } from "./ref.js";
 export { BuildError, evaluate } from "./evaluate.js";
 
+/** @experimental Define typed Object bodies and definition-owned handles. */
+export { defineObject } from "./object-definition.js";
+/** @experimental Bind fields and references to runtime catalog declarations.
+ * Static types use catalog metadata; parent, placement, and boundary checks run during evaluation.
+ */
+export { componentFields } from "./bound-field.js";
+
 export type {
   JsonValue,
   ManagedField,
@@ -44,6 +51,9 @@ export type {
   RepresentationOf,
   InstanceHandle,
 } from "./object-refs.js";
+
+/** @experimental Object definition call and instance API. */
+export type { ObjectDefinition } from "./object-definition.js";
 
 export type {
   CatalogRuntimeTable,

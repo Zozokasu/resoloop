@@ -6,8 +6,13 @@
 //   $slot-member:key.Member  -> Slot's own exposed field ID
 
 import { scopeKey } from "./scope.js";
+import { exportReference } from "./object-refs.js";
 
 export const ref = {
+  /** @experimental Export a typed reference from a definition-owned Object handle.
+   * Placement and definition identity are verified during evaluation.
+   */
+  export: exportReference,
   /** Source-only alias, resolved by the C# compiler to a member selector. */
   field: (key: string) => `$field:${key}`,
   /** Compose an absolute scoped key, including nested instance segments. */
