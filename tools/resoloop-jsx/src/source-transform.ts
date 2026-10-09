@@ -143,6 +143,11 @@ export function sourceTransformer(program: ts.Program, inputs: InputFile[]): ts.
       if (!ts.isCallExpression(node) || !ts.isPropertyAccessExpression(node.expression)) return false;
       return node.expression.name.text !== "" && isImported(node.expression.expression, "ref", ["resoloop-jsx", "resoloop-jsx/draft"]);
     }
+    function buildCall(node: ts.CallExpression): boolean {
+      if (ts.isIdentifier(node.expression) && isImported(node.expression, "componentFields", ["resoloop-jsx"])) return true;
+      return ts.isPropertyAccessExpression(node.expression) && node.expression.name.text === "export" &&
+        isImported(node.expression.expression, "ref", ["resoloop-jsx", "resoloop-jsx/draft"]);
+    }
     function definitionMetadata(node: ts.CallExpression): ElementOrigin | undefined {
       if (node.arguments.length !== 1 || !ts.isObjectLiteralExpression(node.arguments[0]) ||
           !ts.isCallExpression(node.expression) || node.expression.arguments.length !== 0 ||
@@ -298,6 +303,14 @@ export function sourceTransformer(program: ts.Program, inputs: InputFile[]): ts.
         return ts.visitEachChild(node, visit, context);
       }
       if (ts.isCallExpression(node)) {
+        if (buildCall(node)) {
+          state.instrumented = true;
+          const callee = ts.visitNode(node.expression, visit) as ts.Expression;
+          const args = node.arguments.map(argument => ts.visitNode(argument, visit) as ts.Expression);
+          const origin: Origin = { source: source(node), valueSource: source(node), related: [source(node)] };
+          return f.createCallExpression(f.createPropertyAccessExpression(helper, "sourceBuildCall"), undefined,
+            [callee, f.createArrayLiteralExpression(args), literal(origin, f)]);
+        }
         const definition = definitionMetadata(node);
         if (definition) {
           state.instrumented = true;

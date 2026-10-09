@@ -86,6 +86,16 @@ export function sourceDefinition<T extends object>(thunk: () => T, metadata: Ele
 export function sourceDefinitionValue<T extends object>(value: T, metadata: ElementOrigin): T {
   return attachDefinition(value, metadata);
 }
+export function sourceBuildCall<T>(fn: (...args: any[]) => T, args: any[], origin: Origin): T {
+  try { return fn(...args); }
+  catch (error) {
+    if ((typeof error === "object" && error !== null) || typeof error === "function") {
+      const target = error as object;
+      if (!buildErrors.has(target)) markBuildErrorOrigin(target, origin);
+    }
+    throw error;
+  }
+}
 export function callComponent(fn: (props: any) => any, props: object): any {
   const previous = caller;
   if (current) propsOrigins.set(props, Object.fromEntries(Object.entries(current.attributes)
