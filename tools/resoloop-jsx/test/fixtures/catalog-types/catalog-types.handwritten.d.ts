@@ -1,4 +1,4 @@
-// resoloop-catalog-types: {"formatVersion":"1","contentHash":"handwritten-catalog-hash","generatorVersion":"2"}
+// resoloop-catalog-types: {"formatVersion":"1","contentHash":"handwritten-catalog-hash","generatorVersion":"3"}
 import "resoloop-jsx";
 import type { JsonValue } from "resoloop-jsx";
 export {};

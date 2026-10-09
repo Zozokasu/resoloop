@@ -20,7 +20,7 @@ import { sourceTransformer } from "./source-transform.js";
 import { buildErrorLocation } from "./source-map.js";
 import { snapshotInputs } from "./input-snapshot.js";
 import { reserveBundleOutput, publishBundle } from "./bundle.js";
-import { catalogDeclaration, verifyCatalogDeclaration } from "./catalog-declarations.js";
+import { catalogDeclaration, catalogRuntimeTables } from "./catalog-declarations.js";
 
 export interface BuildOptions {
   draft?: boolean;
@@ -125,9 +125,7 @@ export async function buildFile(
       declaration: false,
     });
 
-    if (catalogText !== undefined)
-      for (const source of program.getSourceFiles())
-        if (source.isDeclarationFile) verifyCatalogDeclaration(source.fileName, source.text, catalogText);
+    catalogRuntimeTables(program, catalogText);
     const bundleOutput = opts.bundle ? reserveBundleOutput(opts.output!) : undefined;
 
     const inputs = opts.bundle ? snapshotInputs(program, projectRoot, opts.catalog!) : undefined;
@@ -200,8 +198,10 @@ export async function buildFile(
     }
     return { exitCode: 0, errors, warnings, document };
   } catch (err: any) {
-    if (err instanceof BuildError)
-      return { exitCode: 1, errors: [`${err.code}: ${err.message}${opts.bundle ? `; TSX ${buildErrorLocation(err)}` : ""}`], warnings };
+    if (err instanceof BuildError) {
+      const located = err.code === "APPLY_CATALOG_TYPES_HASH_MISMATCH" || err.code === "APPLY_CATALOG_UNAVAILABLE";
+      return { exitCode: 1, errors: [`${err.code}: ${err.message}${opts.bundle || located ? `; TSX ${buildErrorLocation(err)}` : ""}`], warnings };
+    }
     return {
       exitCode: 1,
       errors: [`${err?.message ?? String(err)}`],
