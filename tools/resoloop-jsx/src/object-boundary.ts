@@ -2,9 +2,9 @@ import { BuildError } from "./evaluate.js";
 import { catalogMember, verifyRuntimeTable, type CatalogMemberRuntime, type CatalogRuntimeTable } from "./catalog-runtime.js";
 import { copyBoundFieldMetadata } from "./bound-field.js";
 import type { ObjectBuildContext, DeclaredTarget, ObjectPlacement } from "./object-expand.js";
-import { decodeReference, type DecodedReference, type ScalarRepresentation } from "./object-refs.js";
+import { decodeReference, isReferenceToken, type DecodedReference, type ScalarRepresentation } from "./object-refs.js";
 import { copyOrigin, markBuildErrorOrigin, originOfElement, unknown, type Origin, type Source } from "./source-map.js";
-import { scopeKey, scopeValue } from "./scope.js";
+import { scopeKey } from "./scope.js";
 
 export type ExpectedReference =
   | { kind: "reference"; representation: ScalarRepresentation }
@@ -40,7 +40,9 @@ function mismatch(expected: string, observed: string, origin?: Origin): never {
 }
 
 function selectorOf(value: string): Selector | undefined {
-  const match = /^\$(slot|component|ref|member|slot-member|field):(.+)$/.exec(value);
+  // StableSelectorSyntax in Core accepts any non-empty key/member text and
+  // splits member selectors at their final dot, including across line breaks.
+  const match = /^\$(slot|component|ref|member|slot-member|field):([\s\S]+)$/.exec(value);
   if (!match) return undefined;
   const kind = match[1] as Selector["kind"];
   if (kind === "member" || kind === "slot-member") {
@@ -49,6 +51,14 @@ function selectorOf(value: string): Selector | undefined {
     return { kind, key: match[2].slice(0, dot), member: match[2].slice(dot + 1) };
   }
   return { kind, key: match[2] };
+}
+
+function objectScopeValue(value: string, scope: string): string {
+  if (!scope) return value;
+  const parsed = selectorOf(value);
+  if (!parsed || parsed.key.includes("::")) return value;
+  const prefix = value.slice(0, value.indexOf(":") + 1);
+  return `${prefix}${scope}::${parsed.key}${parsed.member === undefined ? "" : `.${parsed.member}`}`;
 }
 
 function selectorKey(selector: Selector): string {
@@ -217,7 +227,7 @@ function memberTarget(target: DeclaredTarget, context: ObjectBuildContext, origi
 
 function typedTarget(reference: Extract<DecodedReference, { kind: "target" }>, owner: string | undefined, scope: string,
   context: ObjectBuildContext, origin?: Origin): { resolved: ResolvedTarget; evidence: FieldEvidence } {
-  const selector = scopeValue(reference.selector, scope) as string;
+  const selector = objectScopeValue(reference.selector, scope);
   const parsed = selectorOf(selector);
   if (!parsed || parsed.kind !== "member")
     return fail("APPLY_OBJECT_EXPORT_INVALID", "Object '<invalid>' export '<invalid>': malformed typed target token.", origin);
@@ -306,7 +316,7 @@ export function validateObjectExports(context: ObjectBuildContext): void {
         try { ref = decoded(value, context, origin); }
         catch { return exportInvalid(placement, name, "malformed typed target token"); }
         if (ref.kind !== "target") exportInvalid(placement, name, "malformed typed target token");
-        selector = scopeValue(ref.selector, placement.id) as string;
+        selector = objectScopeValue(ref.selector, placement.id);
         const exportedTarget = declaredTarget(selector, context);
         if (!exportedTarget || exportedTarget.owner !== placement.id || exportedTarget.kind !== "member")
           exportInvalid(placement, name, "target is not a declared internal Slot, Component or Field");
@@ -317,7 +327,7 @@ export function validateObjectExports(context: ObjectBuildContext): void {
         if (!parsed) exportInvalid(placement, name, "target is not a declared internal Slot, Component or Field");
         if (parsed.kind === "slot-member")
           exportInvalid(placement, name, "target is not a declared internal Slot, Component or Field");
-        selector = scopeValue(value, placement.id) as string;
+        selector = objectScopeValue(value, placement.id);
         const found = declaredTarget(selector, context);
         if (!found || found.owner !== placement.id ||
             !(found.kind === "slot" || found.kind === "component" || found.kind === "member" || found.kind === "field"))
@@ -346,7 +356,7 @@ function compareExportTarget(target: DeclaredTarget, expected: ExpectedReference
 }
 
 function containsReference(value: unknown, seen = new WeakSet<object>()): boolean {
-  if (typeof value === "string") return value.startsWith("$object-target:") || value.startsWith("$export:");
+  if (typeof value === "string") return isReferenceToken(value);
   if (value === null || typeof value !== "object" || seen.has(value)) return false;
   seen.add(value);
   return Array.isArray(value) ? value.some(item => containsReference(item, seen)) :
@@ -362,14 +372,14 @@ function preflightPrivacy(value: unknown, owner: string | undefined, scope: stri
   context: ObjectBuildContext, seen = new WeakSet<object>()): void {
   origin = normalizeConsumerOrigin(origin);
   if (typeof value === "string") {
-    if (value.startsWith("$object-target:")) {
+    if (isReferenceToken(value) && value.startsWith("$object-target:")) {
       const ref = decoded(value, context, origin);
       if (ref.kind !== "target") return;
-      const qualified = scopeValue(ref.selector, scope) as string;
+      const qualified = objectScopeValue(ref.selector, scope);
       const parsed = selectorOf(qualified);
       if (parsed && otherObject(parsed.key, owner, context))
         fail("APPLY_OBJECT_PRIVATE_REFERENCE", `Private Object target '${ref.selector}'; use ref.export(handle, name).`, origin);
-    } else if (value.startsWith("$export:")) {
+    } else if (isReferenceToken(value) && value.startsWith("$export:")) {
       const ref = decoded(value, context, origin);
       if (ref.kind !== "export") return unknownExport("<invalid>", "<invalid>", origin);
       const placement = context.objects.get(ref.instanceId);
@@ -378,7 +388,7 @@ function preflightPrivacy(value: unknown, owner: string | undefined, scope: stri
     } else {
       const parsed = selectorOf(value);
       if (parsed) {
-        const qualified = scopeValue(value, scope) as string;
+        const qualified = objectScopeValue(value, scope);
         const scoped = selectorOf(qualified);
         if (scoped && otherObject(scoped.key, owner, context))
           fail("APPLY_OBJECT_PRIVATE_REFERENCE", `Private Object target '${value}'; use ref.export(handle, name).`, origin);
@@ -396,10 +406,10 @@ function preflightPrivacy(value: unknown, owner: string | undefined, scope: stri
 
 export function resolveObjectValue(value: unknown, owner: string | undefined, scope: string,
   origin: Origin | undefined, expected: ExpectedReference | undefined,
-  context: ObjectBuildContext): unknown {
+  context: ObjectBuildContext, strictReferencePrefixes = false): unknown {
   origin = normalizeConsumerOrigin(origin);
   if (typeof value === "string") {
-    if (value.startsWith("$object-target:")) {
+    if (value.startsWith("$object-target:") && (strictReferencePrefixes || isReferenceToken(value))) {
       const ref = decoded(value, context, origin);
       if (ref.kind !== "target") return fail("APPLY_OBJECT_EXPORT_INVALID", "Object '<invalid>' export '<invalid>': malformed typed target token.", origin);
       const checked = typedTarget(ref, owner, scope, context, origin);
@@ -409,7 +419,7 @@ export function resolveObjectValue(value: unknown, owner: string | undefined, sc
       }
       return checked.resolved.selector;
     }
-    if (value.startsWith("$export:")) {
+    if (value.startsWith("$export:") && (strictReferencePrefixes || isReferenceToken(value))) {
       const ref = decoded(value, context, origin);
       if (ref.kind !== "export") return unknownExport("<invalid>", "<invalid>", origin);
       const placement = context.objects.get(ref.instanceId);
@@ -422,7 +432,7 @@ export function resolveObjectValue(value: unknown, owner: string | undefined, sc
     }
     const parsed = selectorOf(value);
     if (!parsed) return value;
-    const qualified = scopeValue(value, scope) as string;
+    const qualified = objectScopeValue(value, scope);
     const resolved = targetFor(qualified, owner, context, origin);
     return resolved?.selector ?? qualified;
   }
@@ -446,10 +456,10 @@ function migrateValue(value: unknown, kind: "slot" | "component", owner: string 
   origin: Origin | undefined, context: ObjectBuildContext): unknown {
   if (typeof value !== "string") return value;
   if (value.startsWith("$export:") || value.startsWith("$object-target:"))
-    return resolveObjectValue(value, owner, scope, origin, undefined, context);
+    return resolveObjectValue(value, owner, scope, origin, undefined, context, true);
   const prefix = kind === "slot" ? "$slot:" : "$component:";
   const selectorInput = value.startsWith("$") ? value : `${prefix}${value}`;
-  const scoped = scopeValue(selectorInput, scope) as string;
+  const scoped = objectScopeValue(selectorInput, scope);
   const parsed = selectorOf(scoped);
   if (parsed && otherObject(parsed.key, owner, context))
     fail("APPLY_OBJECT_PRIVATE_REFERENCE", `Private Object target '${selectorInput}'; use ref.export(handle, name).`, origin);

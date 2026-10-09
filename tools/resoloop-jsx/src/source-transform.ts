@@ -14,6 +14,32 @@ interface Forward { name: string; fromProps?: string; functionId?: string }
 // Run before TS's JSX lowering, against the original SourceFile only.
 export function sourceTransformer(program: ts.Program, inputs: InputFile[]): ts.CustomTransformers {
   const metadata = new Map<string, FileTransform>();
+  const checker = program.getTypeChecker();
+  const objectDefinitionInstanceDeclarations = new Set<ts.Declaration>();
+  const publicObjectModules = new Set<ts.Symbol>();
+  for (const source of program.getSourceFiles()) {
+    if (!ts.isExternalModule(source)) continue;
+    const collectImport = (node: ts.Node): void => {
+      if (ts.isImportDeclaration(node) && ts.isStringLiteral(node.moduleSpecifier) &&
+          (node.moduleSpecifier.text === "resoloop-jsx" || node.moduleSpecifier.text === "resoloop-jsx/draft")) {
+        let moduleSymbol = checker.getSymbolAtLocation(node.moduleSpecifier);
+        if (moduleSymbol && moduleSymbol.flags & ts.SymbolFlags.Alias) moduleSymbol = checker.getAliasedSymbol(moduleSymbol);
+        if (moduleSymbol) publicObjectModules.add(moduleSymbol);
+      }
+      ts.forEachChild(node, collectImport);
+    };
+    collectImport(source);
+  }
+  for (const moduleSymbol of publicObjectModules) {
+    for (let exported of checker.getExportsOfModule(moduleSymbol)) {
+      if (exported.name !== "ObjectDefinition") continue;
+      if (exported.flags & ts.SymbolFlags.Alias) exported = checker.getAliasedSymbol(exported);
+      try {
+        const instance = checker.getPropertyOfType(checker.getDeclaredTypeOfSymbol(exported), "instance");
+        for (const declaration of instance?.getDeclarations() ?? []) objectDefinitionInstanceDeclarations.add(declaration);
+      } catch { /* An unrelated malformed ObjectDefinition export is not a trusted runtime API. */ }
+    }
+  }
   const before: ts.TransformerFactory<ts.SourceFile> = context => file => {
     if (file.isDeclarationFile) return file;
     const positions = new Map<string, ElementOrigin>();
@@ -21,7 +47,6 @@ export function sourceTransformer(program: ts.Program, inputs: InputFile[]): ts.
     const helper = f.createUniqueName("__resoloopOrigin");
     const state: FileTransform = { positions, helper, instrumented: false };
     metadata.set(file.fileName, state);
-    const checker = program.getTypeChecker();
     const sha256 = inputs.find(i => i.path === path.resolve(file.fileName))?.sha256 ?? hashText(file.text);
     function source(node: ts.Node): Source {
       const point = (offset: number) => { const p = file.getLineAndCharacterOfPosition(offset); return { offset, line: p.line + 1, column: p.character + 1 }; };
@@ -144,9 +169,13 @@ export function sourceTransformer(program: ts.Program, inputs: InputFile[]): ts.
       return node.expression.name.text !== "" && isImported(node.expression.expression, "ref", ["resoloop-jsx", "resoloop-jsx/draft"]);
     }
     function buildCall(node: ts.CallExpression): boolean {
-      if (ts.isIdentifier(node.expression) && isImported(node.expression, "componentFields", ["resoloop-jsx"])) return true;
-      return ts.isPropertyAccessExpression(node.expression) && node.expression.name.text === "export" &&
-        isImported(node.expression.expression, "ref", ["resoloop-jsx", "resoloop-jsx/draft"]);
+      if (ts.isIdentifier(node.expression) && isImported(node.expression, "componentFields", ["resoloop-jsx", "resoloop-jsx/draft"])) return true;
+      if (!ts.isPropertyAccessExpression(node.expression)) return false;
+      if (node.expression.name.text === "export" &&
+          isImported(node.expression.expression, "ref", ["resoloop-jsx", "resoloop-jsx/draft"])) return true;
+      if (node.expression.name.text !== "instance") return false;
+      const instanceSymbol = checker.getSymbolAtLocation(node.expression.name);
+      return !!instanceSymbol?.getDeclarations()?.some(declaration => objectDefinitionInstanceDeclarations.has(declaration));
     }
     function definitionMetadata(node: ts.CallExpression): ElementOrigin | undefined {
       if (node.arguments.length !== 1 || !ts.isObjectLiteralExpression(node.arguments[0]) ||
@@ -335,7 +364,7 @@ export function sourceTransformer(program: ts.Program, inputs: InputFile[]): ts.
       const output: ts.Statement[] = [];
       for (const statement of input) {
         const visited = ts.visitNode(statement, visit) as ts.Statement;
-        if (ts.isFunctionDeclaration(statement) && statement.name && statement.parameters[0] &&
+        if (ts.isFunctionDeclaration(statement) && statement.body && statement.name && statement.parameters[0] &&
             ts.isObjectBindingPattern(statement.parameters[0].name))
           output.push(registration(statement.name, identity(statement)));
         output.push(visited);

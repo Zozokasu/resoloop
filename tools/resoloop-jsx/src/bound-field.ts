@@ -3,7 +3,7 @@ import { catalogMember, verifyRuntimeTable, type CatalogMemberRuntime, type Cata
 import { BuildError } from "./evaluate.js";
 import type { FieldProps, JsxNode } from "./elements.js";
 import { markBuildError, captureElement } from "./source-map.js";
-import { targetReference, type FieldRef, type ScalarRepresentation } from "./object-refs.js";
+import { isReferenceToken, targetReference, type FieldRef, type ScalarRepresentation } from "./object-refs.js";
 
 type Registry<T extends keyof CatalogComponentRegistry & string> = CatalogComponentRegistry[T];
 type Members<T extends keyof CatalogComponentRegistry & string> =
@@ -37,8 +37,6 @@ export interface BoundFieldMetadata {
 }
 
 const metadata = new WeakMap<object, BoundFieldMetadata>();
-const typedTokenPrefixes = ["$object-target:", "$export:"];
-
 function unavailable(type: string, member: string): never {
   throw new BuildError("APPLY_CATALOG_UNAVAILABLE",
     `Type '${type}', member '${member}': runtime catalog evidence is missing or unconfirmed.`);
@@ -60,7 +58,7 @@ function observedKind(value: unknown): string {
 }
 
 function validateScalarValue(value: unknown, representation: ScalarRepresentation, element: object): void {
-  if (typeof value === "string" && typedTokenPrefixes.some(prefix => value.startsWith(prefix))) return;
+  if (isReferenceToken(value)) return;
   const valid = representation === "boolean" ? typeof value === "boolean" :
     representation === "string" ? typeof value === "string" : typeof value === "number";
   if (valid) return;

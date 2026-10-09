@@ -113,6 +113,29 @@ function decodeEnvelope(value: string): unknown {
   catch { return undefined; }
 }
 
+/** Recognize only complete reference tokens; ordinary strings may share a prefix. */
+export function isReferenceToken(value: unknown): boolean {
+  if (typeof value !== "string") return false;
+  if (value.startsWith("$object-target:")) {
+    const payload = decodeEnvelope(value.slice("$object-target:".length));
+    if (!isRecord(payload) || !hasExactKeys(payload, ["v", "selector", "componentType", "member", "representation", "catalogHash"]) ||
+        payload.v !== 1 || typeof payload.selector !== "string" || typeof payload.componentType !== "string" ||
+        typeof payload.member !== "string" || typeof payload.representation !== "string" ||
+        typeof payload.catalogHash !== "string" || !payload.componentType || !payload.member || !payload.catalogHash ||
+        !scalarRepresentations.has(payload.representation as ScalarRepresentation)) return false;
+    const selectorBody = payload.selector.startsWith("$member:") ? payload.selector.slice("$member:".length) : "";
+    const separator = selectorBody.lastIndexOf(".");
+    return separator > 0 && separator < selectorBody.length - 1 && selectorBody.slice(separator + 1) === payload.member;
+  }
+  if (value.startsWith("$export:")) {
+    const payload = decodeEnvelope(value.slice("$export:".length));
+    return isRecord(payload) && hasExactKeys(payload, ["v", "instanceId", "definitionId", "name"]) && payload.v === 1 &&
+      typeof payload.instanceId === "string" && typeof payload.definitionId === "string" && typeof payload.name === "string" &&
+      idPattern.test(payload.instanceId) && !!payload.definitionId && payload.name.trim().length > 0 && !controlCharacters.test(payload.name);
+  }
+  return false;
+}
+
 export function targetReference<T extends ScalarValue, R extends ScalarRepresentation>(
   componentKey: string,
   member: string,

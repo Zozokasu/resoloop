@@ -3,7 +3,7 @@ import type { CatalogRuntimeTable } from "./catalog-runtime.js";
 import { boundFieldMetadata, copyBoundFieldMetadata } from "./bound-field.js";
 import type { ObjectDescriptor } from "./object-definition.js";
 import type { ObjectElement } from "./elements.js";
-import { handleDefinitionIdentity, type DecodedReference } from "./object-refs.js";
+import { handleDefinitionIdentity, isReferenceToken, type DecodedReference } from "./object-refs.js";
 import { copyOrigin, markBuildErrorOrigin, originOfElement, unknown, type Origin } from "./source-map.js";
 import { scopeKey } from "./scope.js";
 import { validateObjectBoundaries as applyObjectBoundaries, validateObjectExports } from "./object-boundary.js";
@@ -88,14 +88,14 @@ function scopedKey(scope: string, value: unknown, path: string, element: object,
   }
 }
 
-function isReferenceToken(value: unknown): value is string {
+function hasReferencePrefix(value: unknown): value is string {
   return typeof value === "string" && reservedPrefixes.some(prefix => value.startsWith(prefix));
 }
 
 function scanValues(value: unknown, seen: WeakSet<object>, visit: (element: RawElement) => void,
-  activate: () => void): void {
+  activate: (value?: string) => void): void {
   if (typeof value === "string") {
-    if (isReferenceToken(value)) activate();
+    if (hasReferencePrefix(value)) activate(value);
     return;
   }
   if (value === null || typeof value !== "object") return;
@@ -185,7 +185,8 @@ export function collectObjects(root: unknown, catalogs: readonly CatalogRuntimeT
   const activate = (): void => { context.needsPass = true; };
 
   walkObjectValues(root, element => {
-    if (element.kind === "object" || boundFieldMetadata(element)) activate();
+    if (element.kind === "object") activate();
+    if (boundFieldMetadata(element)) activate();
     if (element.kind !== "object") return;
     const objectElement = element as ObjectElement;
     const handle = objectElement.props?.handle as { id?: unknown } | undefined;
@@ -379,6 +380,15 @@ export function collectObjects(root: unknown, catalogs: readonly CatalogRuntimeT
 
 /** Expand roadmap-5 Objects into absolute, source-only scopes before evaluation. */
 export function expandObjects(root: unknown, catalogs: readonly CatalogRuntimeTable[]): unknown {
+  let requiresPass = false;
+  walkObjectValues(root, element => {
+    if (element.kind === "object" || boundFieldMetadata(element)) requiresPass = true;
+  });
+  if (!requiresPass) scanValues(root, new WeakSet(), () => {}, value => {
+    if (value !== undefined && isReferenceToken(value)) requiresPass = true;
+  });
+  if (!requiresPass) return root;
+
   const context = collectObjects(root, catalogs);
   if (!context.needsPass) return root;
   validateObjectExports(context);

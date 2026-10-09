@@ -8,12 +8,17 @@ import { verifyRuntimeTable, type CatalogRuntimeTable } from "./catalog-runtime.
 
 const declarationPrefix = "// resoloop-catalog-types: ";
 const runtimePrefix = "// resoloop-catalog-fields: ";
-const declarationMarker = "resoloop-catalog-types:";
-const runtimeMarker = "resoloop-catalog-fields:";
 const mismatchText = "Catalog declarations/runtime at '{file}' do not match format/generator/contentHash/runtimeSha256; regenerate catalog types.";
 type Header = { formatVersion: "1"; generatorVersion: "3"; contentHash: string; runtimeFile?: string; runtimeSha256?: string };
 type Bytes = { readonly length: number; readonly [index: number]: number; toString(): string };
 declare const TextEncoder: new () => { encode(text: string): Uint8Array };
+
+function hasHeaderCandidate(text: string, prefix: string): boolean {
+  const lines = text.split(/\r?\n/, 2).map(line => line.replace(/^\uFEFF/, ""));
+  const candidate = prefix.slice(0, -1);
+  return lines[0].startsWith(candidate) ||
+    lines[0].startsWith("//") && lines[0].includes(candidate.slice(3)) && (lines[1] ?? "").startsWith(candidate);
+}
 
 function mismatch(file: string, bytes?: Bytes): BuildError {
   const error = new BuildError("APPLY_CATALOG_TYPES_HASH_MISMATCH", mismatchText.replace("{file}", file));
@@ -24,11 +29,11 @@ function mismatch(file: string, bytes?: Bytes): BuildError {
   return error;
 }
 
-function parseHeader(file: string, text: string, prefix: string, marker: string, bytes?: Bytes): Header | undefined {
-  const first = text.split(/\r?\n/, 1)[0];
-  const hasMarker = text.includes(marker);
+function parseHeader(file: string, text: string, prefix: string, bytes?: Bytes): Header | undefined {
+  const lines = text.split(/\r?\n/, 2);
+  const first = lines[0].replace(/^\uFEFF/, "");
   if (!first.startsWith(prefix)) {
-    if (hasMarker) throw mismatch(file, bytes);
+    if (hasHeaderCandidate(text, prefix)) throw mismatch(file, bytes);
     return undefined;
   }
   let value: any;
@@ -75,7 +80,7 @@ export function catalogDeclaration(projectRoot: string, catalogText?: string): s
 /** Validate a generated declaration header; marker-free handwritten registries remain compatible. */
 export function verifyCatalogDeclaration(file: string, text: string, catalogText?: string, required = false, observedBytes?: Bytes): void {
   const bytes = observedBytes ?? new TextEncoder().encode(text);
-  const header = parseHeader(file, text, declarationPrefix, declarationMarker, bytes);
+  const header = parseHeader(file, text, declarationPrefix, bytes);
   if (!header && required) throw mismatch(file, bytes);
   if (!header) return;
   const hash = catalogHash(file, catalogText, bytes);
@@ -184,20 +189,19 @@ export function catalogRuntimeTables(program: ts.Program, catalogText?: string):
   const declarations = new Map<string, { source: ts.SourceFile; header: Header; bytes: Bytes }>();
   const runtimes: Array<{ source: ts.SourceFile; header: Header; bytes: Bytes }> = [];
   for (const source of program.getSourceFiles()) {
-    const text = source.text;
-    const hasDeclarationMarker = text.includes(declarationMarker);
-    const hasRuntimeMarker = text.includes(runtimeMarker);
+    const hasDeclarationMarker = hasHeaderCandidate(source.text, declarationPrefix);
+    const hasRuntimeMarker = hasHeaderCandidate(source.text, runtimePrefix);
     if (!hasDeclarationMarker && !hasRuntimeMarker) continue;
     const bytes = sourceBytes(source);
     if (hasDeclarationMarker) {
-      const header = parseHeader(source.fileName, text, declarationPrefix, declarationMarker, bytes);
+      const header = parseHeader(source.fileName, source.text, declarationPrefix, bytes);
       if (!header) throw mismatch(source.fileName, bytes);
       const actualCatalogHash = catalogHash(source.fileName, catalogText, bytes);
       if (actualCatalogHash !== undefined && actualCatalogHash !== header.contentHash) throw mismatch(source.fileName, bytes);
       declarations.set(pathIdentity(source.fileName), { source, header, bytes });
     }
     if (hasRuntimeMarker) {
-      const header = parseHeader(source.fileName, text, runtimePrefix, runtimeMarker, bytes);
+      const header = parseHeader(source.fileName, source.text, runtimePrefix, bytes);
       if (!header) throw mismatch(source.fileName, bytes);
       runtimes.push({ source, header, bytes });
     }
