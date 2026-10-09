@@ -180,13 +180,67 @@ resoloop validate build/main.json --catalog catalog.json --json
 
 `catalog capture` reuses the CLI's existing URL/configuration selection when `--url` is omitted. It takes no session write lock, writes no world state, checks versions before and after acquisition, and is bounded to 512 requested names, 512 unique attempted metadata names (including recursive dependencies and failed requests, before alias normalization), and two minutes. A missing requested Component/type or a budget/deadline truncation saves the partial catalog and returns `CATALOG_CAPTURE_INCOMPLETE` (exit 6); failures limited to recursive dependencies remain diagnostic and do not alone make capture incomplete. JSON errors retain the capture result under `error.context.result`; text errors retain the multiline catalog/result/count details. `requestedTypes` is the raw input count including duplicates; `acquisitionBudgetUsed` counts unique attempted names, including failed requests and before alias normalization; `acquisitionBudgetLimit` is 512. `outputTypes` counts exported types and can exceed 512 when known scalar entries are synthesized. Older snapshots without budget metadata report `acquisitionBudgetUsed: "unknown"`.
 
-`catalog types` rejects synthetic or unavailable catalogs and writes `.resoloop/catalog-types.d.ts` in the nearest project with `.resoloop.json` (or the current directory if no project is found), unless `--output` is supplied. The default output location is resolved from the current directory, while `resoloop-jsx build` automatically reads only the `.resoloop/catalog-types.d.ts` of the project containing `.resoloop.json` (or of `--project-root`), so run `catalog types` inside that project or pass `--output`. The generated declarations augment `CatalogComponentRegistry`; include the declaration file in the TypeScript project's `include` or reference it from the project. `resoloop-jsx build` also loads this conventional project file automatically when present. This is editor and `tsc` assistance only: C# `ApplyCatalogValidator` remains authoritative for catalog validation. Types apply only to the `fields`/`initialFields` of `<Component type="...">`; `<Field>` children stay loosely typed (`JsonValue`) and their member names and values are checked only by the C# catalog validation, not by TypeScript.
+`catalog types` rejects synthetic or unavailable catalogs. By default it writes `.resoloop/catalog-types.d.ts` and its paired `.resoloop/catalog-fields.ts` under the nearest project with `.resoloop.json` (or under the current directory when none is found). The default output root is chosen from the current directory; run the command from the project root or pass `--output`. `--output X.d.ts` writes `X.d.ts` and `X.fields.ts`; another suffix writes only declarations and prints a warning. The declaration header uses format 1 and generator 3, and binds the catalog content hash to the runtime file and its SHA-256. Catalog format 2 and mapper version 3 are unchanged. A generator-3 declaration-only legacy file remains usable for editor types, but `componentFields` needs the paired runtime table. A normal `tsc` project must include the declaration file or reference it; `resoloop-jsx build` automatically reads only the conventional declaration under the project in `.resoloop.json` (or `--project-root`). Import the runtime table explicitly from `content/main.tsx`, for example `../.resoloop/catalog-fields.js`.
+
+The catalog gives literal `<Component>` `fields` and `initialFields` strict types when metadata is confirmed. Legacy `<Field>` children remain loose (`JsonValue`); their member name and value are not checked by TypeScript. For catalog-bound fields, use the `Field` method on `componentFields(type, catalog)`, such as `Lamp.Field({ name: "Enabled", value: true })`; it checks confirmed member names and values. The generated catalog types are compile-time help, not runtime proof. An explicit import whose runtime module cannot be resolved produces TypeScript `TS2307` (build exit 2); missing/unconfirmed evidence produces `APPLY_CATALOG_UNAVAILABLE` (build exit 1). A stale header, hash, runtime SHA, or mismatched companion produces `APPLY_CATALOG_TYPES_HASH_MISMATCH` (build exit 1). Runtime SHA uses BOM-free UTF-8 with CRLF normalized to LF. The existing computed-literal `__proto__` handling remains narrow; it does not make other prototype-key forms valid. `tsc` alone does not verify generated-artifact binding, freshness, definition identity, placement, or Object privacy. A normal JSX build can verify an imported table against its declaration, but it cannot tell whether either is fresh relative to the original catalog JSON. Only existing bundle mode with `--catalog` binds that input JSON; no new CLI option is introduced.
+
+## Experimental Object composition
+
+`defineObject<P>()({ exports, body })` defines a reusable body and its named public references. `Def.instance(id)` returns a handle for one placement, written as `<Def handle={handle} ...props />`; `handle` is reserved and cannot appear in `P`. `ref.export(handle, name)` returns the declared reference type. `componentFields(type, catalog)` binds member/value checks and reference metadata to the imported runtime table. `FieldRef` supports only boolean, int32, string, and single; numeric values are TypeScript `number`, with `"int32"` and `"single"` kept distinct in the reference type.
+
+This runnable example uses fictional offline `Fixture.Objects.Lamp` and `Fixture.Objects.Toggle` declarations. They are not evidence that these types or members exist in Resonite. Generate the table from catalog metadata in the project; do not replace it with a handwritten runtime table in application code.
+
+<!-- object-example -->
+~~~tsx
+import { Slot, Component, defineObject, componentFields, ref } from "resoloop-jsx";
+import { catalog } from "../.resoloop/catalog-fields.js";
+
+const Lamp = componentFields("Fixture.Objects.Lamp", catalog);
+export const ownership = { key: "object-fixture" };
+
+const Light = defineObject<{ name: string; intensity: number }>()({
+  exports: { enabled: Lamp.ref("light", "Enabled") },
+  body: ({ name, intensity }) => (
+    <Slot key="root" name={name}>
+      <Component
+        key="light"
+        type="Fixture.Objects.Lamp"
+        fields={{ Intensity: intensity }}
+        initialFields={{ Enabled: true }}
+      />
+    </Slot>
+  ),
+});
+
+const desk = Light.instance("desk-lamp");
+const ceiling = Light.instance("ceiling-lamp");
+
+export default (
+  <Slot key="scene" name="Objects">
+    <Light handle={desk} name="Desk" intensity={1.5} />
+    <Light handle={ceiling} name="Ceiling" intensity={4} />
+    <Component
+      key="toggle"
+      type="Fixture.Objects.Toggle"
+      fields={{ Target: ref.export(desk, "enabled") }}
+    />
+  </Slot>
+);
+~~~
+
+Object instance IDs must match `^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$` and be unique across the document. Explicit `key` values are required on Slots and Components inside `body`; their expanded keys use `id::localKey`, and `Scope` adds further `::` segments. The `id::` namespace is reserved throughout the expanded document. Keep references to private body targets behind declared exports: raw references remain private even when they point at an exported target. Use only the name declared in `exports` with `ref.export`. Nested Objects are not supported. The result remains schema version 1 with one ownership key; apply state remains version 3.
+
+TSX-only build failures use exit 1 and these codes: `APPLY_OBJECT_INVALID`, `APPLY_OBJECT_DUPLICATE`, `APPLY_OBJECT_EXPORT_INVALID`, `APPLY_OBJECT_EXPORT_UNKNOWN`, `APPLY_OBJECT_TYPE_MISMATCH`, `APPLY_OBJECT_PRIVATE_REFERENCE`, and `APPLY_FIELD_TYPE_MISMATCH`. TypeScript diagnostics use exit 2. C# `validate` remains authoritative: `VALUE_CONVERSION_FAILED`, `APPLY_REFERENCE_TYPE_MISMATCH`, and `APPLY_CATALOG_UNAVAILABLE` use the existing validation exit 6.
+
+Keep an instance ID and export name stable while consumers rely on them. Moving a Component to another owner, changing its type or key, or replacing its target can change the underlying reference and may change runtime reference IDs; keep the stable ID and export name to preserve consumer source, and update the target inside the Object definition. `initialFields` apply only when a Component is created, so recreation may reapply initial values and lose runtime values. The experimental Object API does not establish live ownership or prove preservation through state. Token/context isolation has offline coverage for repeated and parallel builds, not a guarantee about ESM cache reclamation or watch mode. The Object API is experimental. Confirmed, non-nullable scalar field targets are strictly typed only for `boolean`, `int32`, `string`, and `single` as `FieldRef<T, R>`. Nullable and other reference forms keep their existing `string | null` or `UncheckedReference` fallback. Plain string references and legacy `ref.*` helpers remain compatible, but raw internal references cannot cross an Object boundary; use declared exports through `ref.export`.
+
+For project-root resolution, an entry inside the explicit `projectRoot` uses that root for authoring paths and project catalog loading. An entry outside it keeps the legacy entry-directory root and relative `authoring.source` (for example, `../project/content/main.tsx`); importing the external project catalog can produce TypeScript `TS6059`. The Object API has not been verified against a live Resonite session, and Reflection has not confirmed a real Toggle component or its referenced member.
 
 Confirmed boolean, int32 and string scalar field metadata map to TypeScript `boolean`, `number` and `string`; TypeScript checks those JSON types strictly, while C# runtime conversion may accept boolean/int32 strings and string uses raw runtime value text. C# still enforces finite, in-range int32 values; unsupported numeric types remain `JsonValue`.
 
 A confirmed field value keeps its inferred type even when the owner is generic with incomplete closure; unknown members and value shapes are not inferred.
 
-Mapper 2 catalogs are rejected with `APPLY_CATALOG_UNAVAILABLE`; after explicitly authorized live recapture, regenerate the `.d.ts`. Generator/header/hash mismatch uses `APPLY_CATALOG_TYPES_HASH_MISMATCH`, and declarations from the old generator must be regenerated even if the catalog hash matches. Catalog format remains 2; the mapper is version 3 and the declaration generator is version 2.
+Mapper 2 catalogs are rejected with `APPLY_CATALOG_UNAVAILABLE`; after explicitly authorized live recapture, regenerate both files. Generator/header/hash mismatch uses `APPLY_CATALOG_TYPES_HASH_MISMATCH`, and older-generator declarations must be regenerated even if the catalog hash matches. Catalog format remains 2; mapper version is 3 and generator version is 3.
 
 Capture and its result are not runtime verification.
 

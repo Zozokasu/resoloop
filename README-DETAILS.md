@@ -536,17 +536,17 @@ resoloop validate build/main.json --catalog catalog.json --json
 
 JSON errorは従来のerror envelopeを使い、`error.context.result` に元の `acquisitionFailures`、`output`、`contentHash`、`formatVersion`、`identity`、`requestedTypes` を残します。text出力にも複数行の結果と件数が残ります。`requestedTypes` は重複を含む入力名数、`acquisitionBudgetUsed` は失敗を含む一意な取得試行名数（alias正規化前）、`acquisitionBudgetLimit` は512、`outputTypes` はexport型数です。既知scalarの合成により `outputTypes` は512を超える場合があります。旧snapshotにbudget metadataがなければ値は文字列 `"unknown"` です。
 
-`catalog capture` はLink backend専用です。`catalog types` はoffline処理でbackend接続を必要としません。型宣言はsynthetic catalogと `UnavailableReason` のあるcatalogを拒否します。既定出力は最寄りの `.resoloop.json` project root下の `.resoloop/catalog-types.d.ts` で、projectがなければcurrent directoryを基準にします。既定出力先は現在のdirectory基準で、`resoloop-jsx build` が自動で読むのは `.resoloop.json` のあるproject（または `--project-root`）の `.resoloop/` だけなので、そのproject内で実行するか `--output` を指定してください。生成ファイルはformat version、catalogの `contentHash`、generator versionを先頭コメントに持ち、`CatalogComponentRegistry` のmodule augmentationを定義します。通常のTypeScript projectでは `include` またはreferenceで取り込み、JSX buildでは標準位置から自動読込みします。fallback項目は `resoloop-catalog-fallback` コメントとCLI出力/reportで確認できます。
+`catalog capture` はLink backend専用です。`catalog types` はoffline処理でbackend接続を必要としません。型宣言はsynthetic catalogと `UnavailableReason` のあるcatalogを拒否します。既定出力は最寄りの `.resoloop.json` project root下の `.resoloop/catalog-types.d.ts` と `.resoloop/catalog-fields.ts` で、projectがなければcurrent directoryを基準にします。既定出力先は現在のdirectory基準で、`resoloop-jsx build` が自動で読むのは `.resoloop.json` のあるproject（または `--project-root`）の `.resoloop/` だけなので、そのproject内で実行するか `--output` を指定してください。`--output X.d.ts` は `X.fields.ts` も生成し、別suffixでは宣言だけを書いてwarningを出します。header formatは1、generatorは3で、catalog `contentHash`、runtime file名とSHA-256を結び付けます。runtime SHAはBOMなしUTF-8で計算し、CRLFをLFへ正規化します。生成宣言は `CatalogComponentRegistry` のmodule augmentationを定義します。通常のTypeScript projectでは `include` またはreferenceで取り込み、JSX buildでは標準位置から自動読込みします。fallback項目は `resoloop-catalog-fallback` コメントとCLI出力/reportで確認できます。生成される宣言のheaderはformat 1・generator 3で、catalogのformat 2・mapper 3は変わりません。
 
 generated declarationと `--catalog` をbundle buildで両方使う場合、headerの `contentHash` がcatalogと一致しなければ `APPLY_CATALOG_TYPES_HASH_MISMATCH` でbuildに失敗します。literal Componentの型では、`Confirmed` かつ `MembersComplete` のownerだけがmember名の集合を閉じます。
 
-ownerが不完全でも、確認済みmemberに値型を付けることがあり、未知memberは `JsonValue` です。boolean/int32/stringのscalar fieldはTypeScript `boolean`/`number`/`string` に対応しますが、TypeScriptの型検査は厳密です。たとえばbooleanの `true` と文字列 `"true"`、int32の `42` と文字列 `"42"` はTypeScript上で別の型ですが、C# runtime変換は両方を受け入れます。stringはraw value textを使うため、TypeScriptより広く受理する場合があります。int32の有限性・範囲はC#で検査し、その他の数値型は新たに対応していません。SingleはTypeScript `number`、nullableは `null` とのunion、tupleはarrayとxyzw/rgba object、enumはnameまたはnumber、referenceは `string | null` です。確認済みfield値はownerがgenericでclosure未完了でも型を付けられます。未知の値形状は `JsonValue` です。
+ownerが不完全でも、確認済みmemberに値型を付けることがあり、未知memberは `JsonValue` です。boolean/int32/stringのscalar fieldはTypeScript `boolean`/`number`/`string` に対応しますが、TypeScriptの型検査は厳密です。たとえばbooleanの `true` と文字列 `"true"`、int32の `42` と文字列 `"42"` はTypeScript上で別の型ですが、C# runtime変換は両方を受け入れます。stringはraw value textを使うため、TypeScriptより広く受理する場合があります。int32の有限性・範囲はC#で検査し、その他の数値型は新たに対応していません。SingleはTypeScript `number`、nullableは `null` とのunion、tupleはarrayとxyzw/rgba object、enumはnameまたはnumberです。確認済みの非nullable scalar field target（boolean/int32/string/single）だけが `FieldRef<T, R>` として厳密に型付きされます。nullableおよびその他のreference fallbackは `string | null` です。確認済みfield値はownerがgenericでclosure未完了でも型を付けられます。未知の値形状は `JsonValue` です。
 
-C#変換はTypeScriptより広い場合があり、C# `ApplyCatalogValidator` の判定がauthoritativeです。TypeScriptの `JsonValue` fallbackだけでは `APPLY_CATALOG_UNAVAILABLE` を意味しません。生成される型が付くのは `<Component type="…">` の `fields` と `initialFields` だけです。`<Field>` は緩い型（JsonValue）のままで、member名と値はTypeScriptでは検査されません。合否はC#のcatalog照合（`COMPONENT_MEMBER_NOT_FOUND` など）が決めます。
+C#変換はTypeScriptより広い場合があり、C# `ApplyCatalogValidator` の判定がauthoritativeです。TypeScriptの `JsonValue` fallbackだけでは `APPLY_CATALOG_UNAVAILABLE` を意味しません。生成される型が付くのは `<Component type="…">` の `fields` と `initialFields` だけです。従来の`<Field>`は緩い型（`JsonValue`）のままで、member名と値はTypeScriptでは検査されません。catalog-bound APIの `componentFields(type, catalog)` が返す `Lamp.Field` は確認済みmember名と値を検査します。合否はC#のcatalog照合（`COMPONENT_MEMBER_NOT_FOUND` など）が決めます。
 
-mapper 2の旧catalogは `APPLY_CATALOG_UNAVAILABLE` となるため、明示認可されたlive取得で作り直して宣言を再生成します。generator/header/hash mismatchは `APPLY_CATALOG_TYPES_HASH_MISMATCH` で拒否し、同じcatalog hashでもgenerator version 1の宣言は再生成します。
+mapper 2の旧catalogは `APPLY_CATALOG_UNAVAILABLE` となるため、明示認可されたlive取得で作り直して両artifactを再生成します。generator/header/hash/runtime companion mismatchは `APPLY_CATALOG_TYPES_HASH_MISMATCH` で拒否し、古いgeneratorの宣言は同じcatalog hashでも再生成します。Generator 3の宣言だけの旧形式は型補助に使えますが、`componentFields` にはpaired runtime tableが必要です。
 
-`resoloop validate FILE.json --catalog CATALOG.json --json` は Core の `ApplyDocumentValidator.ValidateAsync(..., catalog: ...)`／`ApplyCatalogValidator.ValidateFileAsync` に接続します。SDK 型は adapter の取得 snapshot／mapper 内に留まり、Apply JSON と `schema describe` には metadata を追加しません。format versionは `2` のまま、mapper versionは `2` から `3`、generator versionは `1` から `2` に上がります。format 2はhash対象の `content.acquisitionFailures`（要求型・取得種別・理由）を保持します。mapper 2の旧catalogは既存の `APPLY_CATALOG_UNAVAILABLE` で拒否されます。現行mapper identityと異なるcatalogは、明示認可されたlive取得でrecaptureが必要です。指定 Component/SyncObject 自身も独立に型取得し、その継承情報に flattened 定義の member だけを足します。不一致・独立取得の欠落/失敗・基底あり印に対する基底欠落は閉包未確認です。各型の失敗と一意な取得試行名512件/2分の上限到達を snapshot に保存し、失敗記録を catalog に引き継ぎます。最後のsession identity再確認が期限に収まらない場合は、最初に観測したidentityと `live` の出典を保持します。最終再確認は未完了として、`session` の `time-limit: final session identity was not rechecked` を取得失敗記録に追加し、snapshotの `AcquisitionTruncated` をtrueにします。部分catalogのexportは可能で、`catalog capture` は読み込み可能な部分catalogを保存して `CATALOG_CAPTURE_INCOMPLETE`（exit 6）を返します。session versionの変更を検出した場合、接続が切れた場合、呼出元からcancelされた場合は、従来どおり取得失敗になります。identity は Resonite version、server ResoniteLink version、client package version、mapper version、取得日時で、取得時の `evidenceIdentity` と一致が必要です。内容は canonical JSON の SHA-256 `contentHash` で照合します。出典は `live`、照合済み `version-cache`、拒否される `unverified` です。合成資料には `synthetic: true` を明示します。hash は取得の証明ではなく改変検出です。offline は保存済み identity の整合だけを確認し、現在の runtime version は確認しません。
+`resoloop validate FILE.json --catalog CATALOG.json --json` は Core の `ApplyDocumentValidator.ValidateAsync(..., catalog: ...)`／`ApplyCatalogValidator.ValidateFileAsync` に接続します。SDK 型は adapter の取得 snapshot／mapper 内に留まり、Apply JSON と `schema describe` には metadata を追加しません。format versionは2、mapper versionは3、generator versionは3です。format 2はhash対象の `content.acquisitionFailures`（要求型・取得種別・理由）を保持します。mapper 2の旧catalogは既存の `APPLY_CATALOG_UNAVAILABLE` で拒否されます。現行mapper identityと異なるcatalogは、明示認可されたlive取得でrecaptureが必要です。指定 Component/SyncObject 自身も独立に型取得し、その継承情報に flattened 定義の member だけを足します。不一致・独立取得の欠落/失敗・基底あり印に対する基底欠落は閉包未確認です。各型の失敗と一意な取得試行名512件/2分の上限到達を snapshot に保存し、失敗記録を catalog に引き継ぎます。最後のsession identity再確認が期限に収まらない場合は、最初に観測したidentityと `live` の出典を保持します。最終再確認は未完了として、`session` の `time-limit: final session identity was not rechecked` を取得失敗記録に追加し、snapshotの `AcquisitionTruncated` をtrueにします。部分catalogのexportは可能で、`catalog capture` は読み込み可能な部分catalogを保存して `CATALOG_CAPTURE_INCOMPLETE`（exit 6）を返します。session versionの変更を検出した場合、接続が切れた場合、呼出元からcancelされた場合は、従来どおり取得失敗になります。identity は Resonite version、server ResoniteLink version、client package version、mapper version、取得日時で、取得時の `evidenceIdentity` と一致が必要です。内容は canonical JSON の SHA-256 `contentHash` で照合します。出典は `live`、照合済み `version-cache`、拒否される `unverified` です。合成資料には `synthetic: true` を明示します。hash は取得の証明ではなく改変検出です。offline は保存済み identity の整合だけを確認し、現在の runtime version は確認しません。
 
 Component/member の取得範囲、完全名と確認済み alias、base/interface 閉包、generic の確認状態、nullable／tuple の要素、list／array／dictionary と SyncObject の入れ子を保持します。取得範囲外 member は不存在にしません。型名が違うだけでは参照不適合と判定せず、未取得の基底型・interface、未確認 generic、外部参照・asset・Slot member の型不明は `APPLY_CATALOG_UNAVAILABLE`。確認済み閉包で証明できた不適合だけが `APPLY_REFERENCE_TYPE_MISMATCH` です。Single は nullable の非 null 値と tuple 各要素を含め `VALUE_CONVERSION_FAILED` で変換失敗・NaN／Infinity・表現範囲外を拒否します。丸めや精度損失は許容し、member 固有範囲は推測しません。既存 issues／`ApplyValidationResult`／終了コード 6 を使います。
 
@@ -565,6 +565,61 @@ mode policyとの競合には既存`APPLY_COMPONENT_FIELD_POLICY_CONFLICT`を使
 
 catalog 成功だけでは `Strict=true` にしません。`--catalog --strict` は先に offline catalog preflight、次に既存 live strict と session/client version 照合を行います。Workbench backendでは `catalog capture` を使えませんが、`catalog types` のoffline処理はbackend接続を必要としません。通常CLIの `catalog capture` / `catalog types` を使った後、開発者は必要に応じて[開発用tool](tools/RLoop.CatalogExport/README.md)からsnapshotのexport/importを行えます。旧cacheは取得identityがなく受け入れません。catalog未指定の既存経路は維持します。V11のfixtureは合成で、実catalog・live captureの実機検証はこの文書更新では実施していません。
 
+### Experimental Object API
+
+`defineObject<P>()({ exports, body })` は再利用するbodyと公開referenceを定義します。`Def.instance(id)` は配置handleを作り、`<Def handle={handle} ...props />` で配置します。`handle` は予約済みpropで、利用者prop `P` には含められません。`ref.export(handle, name)` は宣言済みexport名だけを参照します。`componentFields(type, catalog)` は明示importしたcatalog runtime tableにmember metadataを結び付け、`FieldRef` は `boolean`、`int32`、`string`、`single` のみを厳密に扱います。数値値は `number` ですが、reference representationは `int32` と `single` を区別します。従来の`<Field>`はlooseな `JsonValue` のままです。`componentFields` が返す `Lamp.Field` は、確認済みmemberと値を型検査します。
+
+以下の例は架空のoffline fixture `Fixture.Objects.Lamp` / `Fixture.Objects.Toggle` を使います。実機から取得した証拠ではなく、これらの型がResoniteに存在することやToggle targetのmemberを示すものでもありません。実利用ではReflectionで型とmemberを確かめ、catalog typesが生成したpairを使ってください。runtime tableや型情報を利用コードで手書き代用しないでください。
+
+<!-- object-example -->
+~~~tsx
+import { Slot, Component, defineObject, componentFields, ref } from "resoloop-jsx";
+import { catalog } from "../.resoloop/catalog-fields.js";
+
+const Lamp = componentFields("Fixture.Objects.Lamp", catalog);
+export const ownership = { key: "object-fixture" };
+
+const Light = defineObject<{ name: string; intensity: number }>()({
+  exports: { enabled: Lamp.ref("light", "Enabled") },
+  body: ({ name, intensity }) => (
+    <Slot key="root" name={name}>
+      <Component
+        key="light"
+        type="Fixture.Objects.Lamp"
+        fields={{ Intensity: intensity }}
+        initialFields={{ Enabled: true }}
+      />
+    </Slot>
+  ),
+});
+
+const desk = Light.instance("desk-lamp");
+const ceiling = Light.instance("ceiling-lamp");
+
+export default (
+  <Slot key="scene" name="Objects">
+    <Light handle={desk} name="Desk" intensity={1.5} />
+    <Light handle={ceiling} name="Ceiling" intensity={4} />
+    <Component
+      key="toggle"
+      type="Fixture.Objects.Toggle"
+      fields={{ Target: ref.export(desk, "enabled") }}
+    />
+  </Slot>
+);
+~~~
+
+Object instance IDは `^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$` に一致し、expanded document全体で一意です。body内のSlot/Componentには明示keyが必要で、keyは `id::localKey` へ展開されます。`Scope` は `::` segmentを重ねます。`id::` prefixは文書全体で予約されます。Object境界内のtargetはprivateです。公開対象であっても生の `$member` 参照を境界越しに使わず、`ref.export` で公開名を指定します。Nested Objectは未対応です。生成IRはschema version 1、ownershipは単一key、apply stateはversion 3のままです。
+
+TSX buildでは `APPLY_OBJECT_INVALID`、`APPLY_OBJECT_DUPLICATE`、`APPLY_OBJECT_EXPORT_INVALID`、`APPLY_OBJECT_EXPORT_UNKNOWN`、`APPLY_OBJECT_TYPE_MISMATCH`、`APPLY_OBJECT_PRIVATE_REFERENCE`、`APPLY_FIELD_TYPE_MISMATCH` がexit 1を返します。TypeScript診断はexit 2です。明示import先のruntime fileを解決できない場合は `TS2307`（build exit 2）、catalog evidence不足の `APPLY_CATALOG_UNAVAILABLE` はTSX build exit 1です。artifact header/hash/runtime companionの不一致は `APPLY_CATALOG_TYPES_HASH_MISMATCH`（exit 1）です。C# `validate` は権威ある検査で、`VALUE_CONVERSION_FAILED`、`APPLY_REFERENCE_TYPE_MISMATCH`、`APPLY_CATALOG_UNAVAILABLE` は既存exit 6を使います。Generator 3のdeclaration-only legacy formは型補助用に読み込めます。通常のtscはheader/runtime bindingや定義identity・placement・privacyを検査しません。通常buildは元catalog JSONの鮮度や実機との一致を証明しません。bundle buildに既存の `--catalog` を渡した場合だけ、入力catalog JSONとのhash bindingを行います。runtime SHAはBOMなしUTF-8で照合し、CRLFをLFへ正規化します。`__proto__`の例外はcomputed literal memberの既存扱いに限られ、他のprototype-key形式へ広げません。
+
+利用者が依存している間はinstance IDとexport名を保つと、target変更後もconsumer sourceを維持できます。Componentのowner、type、key、またはtargetを変えるとruntime reference IDは変わる場合があります。必要なtarget変更はObject定義側のexportで行い、affected contentの再作成が必要か確認してください。`initialFields`は作成時だけ設定されるため、再作成で再投入され、runtime値を失う可能性があります。APIはexperimentalで、stateや実機所有関係を証明しません。offline検査には100回buildと並行buildがありますが、ESM cache回収やwatch modeは保証しません。Object APIは実機のResoniteでは未検証で、実物のToggleのComponentとその参照先のmemberもReflectionでは確かめていません。
+
+確認済みで非nullableのscalar field targetだけが、`boolean`、`int32`、`string`、`single` の `FieldRef<T, R>` として厳密に型付きされます。nullableやその他のreferenceは既存の `string | null` または `UncheckedReference` fallbackを保ちます。通常のstring referenceと従来の `ref.*` helperは互換ですが、raw internal referenceはObject boundaryを越えられず、公開名は `ref.export` で参照します。
+
+project-rootの解決ではentryが明示 `projectRoot` 内ならそのrootをauthoring pathとproject catalog読込に使います。entryがroot外なら従来どおりentry directoryをrootにし、relative `authoring.source`（例: `../project/content/main.tsx`）を保ちます。外部projectのcatalog importはTypeScript `TS6059` になる場合があります。
+
+明示import先のruntime fileを解決できない場合は `TS2307`（build exit 2）です。declaration header/hash/runtime companionの不一致や古さは `APPLY_CATALOG_TYPES_HASH_MISMATCH`（exit 1）になります。`tsc`単独ではheader/hash、元JSONに対する鮮度、definition identity、配置、Object privacyを検証しません。通常buildも元catalog JSONの鮮度や実機との一致は保証せず、入力JSONとのbindingは既存bundle modeの `--catalog` だけが行います。computed literalの `__proto__` だけは狭い既存例外で、他のprototype-key形式へ範囲を広げません。
 For source diagnosis, add `--diagnostics NEW_FILE.json` to `validate|diff|plan|apply`. This separate JSON has `diagnosticVersion: "1"` and structured key/member/IR path, known/unknown source, expected/observed evidence and completeness; a known null is distinct from unknown. Bundle map v1 stores original TS/TSX UTF-16 AST offsets and one-based, end-exclusive line/column ranges bound to source hashes. Fix TSX using that location, then create a fresh bundle/request; generated JSON lines are not an authoring location. Unchanged function props forwarded directly preserve caller expressions; rewritten scalar or nested object props have unknown primary locations; Scope, fragments, map callbacks and selected conditional children retain original ranges. Spread/computed members and untracked value transfers have unknown primary locations with real expressions/calls as related evidence. Handwritten and legacy generated JSON also accept diagnostics, with unknown source. Legacy stdout/stderr JSON, context.issues and reports are unchanged. Diagnostics require a new file in an existing writable directory, distinct from the selected input/bundle, catalog and state paths (including missing files); writing failure is reported on stderr without changing validation/apply judgement or exit code. Catalog evidence never completes runtime verification.
 ## apply の停止後は保留と実機を確認する
 

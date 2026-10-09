@@ -39,7 +39,8 @@ public sealed class CatalogTypesTests : IDisposable
         Assert.Equal("91bd5b53e5f843d63c9afa86ac7b96371d88a82ca1fe76260ef9fe39c588e66b", catalog.ContentHash);
         var generated = CatalogTypesGenerator.Generate(catalog);
         Assert.Equal(HandwrittenDeclaration(), generated.Text);
-        Assert.Equal("2", generated.GeneratorVersion);
+        Assert.Equal("3", generated.GeneratorVersion);
+        Assert.Equal(File.ReadAllText(Fixture("runtime.handwritten.ts")).Replace("\r\n", "\n"), generated.RuntimeText);
         Assert.Equal(3, generated.Fallbacks.Count);
         Assert.Equal(generated.Text, CatalogTypesGenerator.Generate(catalog).Text);
         Assert.Equal(generated.Text, CatalogTypesGenerator.Generate(ApplyCatalog.Load(Fixture("catalog.handwritten.json"))).Text);
@@ -177,8 +178,15 @@ public sealed class CatalogTypesTests : IDisposable
         var exit = await Program.RunAsync(["catalog", "types", input, "--output", destination, "--backend", "workbench", "--url", "bad", "--report", report],
             _ => throw new InvalidOperationException("offline types must not connect"));
         Assert.Equal(ExitCodes.Success, exit);
-        Assert.Equal(HandwrittenDeclaration(), File.ReadAllText(destination));
-        Assert.Contains("\"generatorVersion\":\"2\"", File.ReadAllText(report));
+        var expectedDeclaration = HandwrittenDeclaration().Replace("\"runtimeFile\":\"catalog-fields.ts\"",
+            "\"runtimeFile\":\"catalog.fields.ts\"", StringComparison.Ordinal);
+        Assert.Equal(expectedDeclaration, File.ReadAllText(destination));
+        var runtime = Path.Combine(Path.GetDirectoryName(destination)!, "catalog.fields.ts");
+        Assert.Equal(File.ReadAllText(Fixture("runtime.handwritten.ts")).Replace("\r\n", "\n"), File.ReadAllText(runtime));
+        using var reportJson = JsonDocument.Parse(File.ReadAllText(report));
+        var data = reportJson.RootElement.GetProperty("data");
+        Assert.Equal("3", data.GetProperty("generatorVersion").GetString());
+        Assert.Equal(runtime, data.GetProperty("runtimeOutput").GetString());
         Assert.False(Program.IsDirectWrite(ParsedArguments.Parse(["catalog", "types", input])));
     }
 

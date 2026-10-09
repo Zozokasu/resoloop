@@ -1,0 +1,290 @@
+{
+  "formatVersion": "2",
+  "identity": {
+    "resoniteVersion": "OFFLINE-FIXTURE",
+    "resoniteLinkVersion": "OFFLINE-FIXTURE",
+    "clientPackageVersion": "OFFLINE-FIXTURE",
+    "mapperVersion": "3",
+    "retrievedAt": "2026-10-10T00:00:00+00:00"
+  },
+  "evidenceIdentity": {
+    "resoniteVersion": "OFFLINE-FIXTURE",
+    "resoniteLinkVersion": "OFFLINE-FIXTURE",
+    "clientPackageVersion": "OFFLINE-FIXTURE",
+    "mapperVersion": "3",
+    "retrievedAt": "2026-10-10T00:00:00+00:00"
+  },
+  "source": "version-cache",
+  "synthetic": false,
+  "contentHash": "5ba9df2c2af951f34ae8e0f84999dd43194c147aaccaab0a197672ddd3c6f64f",
+  "content": {
+    "types": [
+      {
+        "fullName": "[System.Private.CoreLib]System.Boolean",
+        "confirmed": true,
+        "closureComplete": true,
+        "baseType": null,
+        "interfaces": [],
+        "isGeneric": false,
+        "members": null,
+        "membersComplete": false,
+        "representation": "boolean",
+        "elementType": null,
+        "tupleSize": 0,
+        "enumValues": null,
+        "isFlags": null
+      },
+      {
+        "fullName": "[System.Private.CoreLib]System.Int32",
+        "confirmed": true,
+        "closureComplete": true,
+        "baseType": null,
+        "interfaces": [],
+        "isGeneric": false,
+        "members": null,
+        "membersComplete": false,
+        "representation": "int32",
+        "elementType": null,
+        "tupleSize": 0,
+        "enumValues": null,
+        "isFlags": null
+      },
+      {
+        "fullName": "[System.Private.CoreLib]System.String",
+        "confirmed": true,
+        "closureComplete": true,
+        "baseType": null,
+        "interfaces": [],
+        "isGeneric": false,
+        "members": null,
+        "membersComplete": false,
+        "representation": "string",
+        "elementType": null,
+        "tupleSize": 0,
+        "enumValues": null,
+        "isFlags": null
+      },
+      {
+        "fullName": "[System.Private.CoreLib]System.Single",
+        "confirmed": true,
+        "closureComplete": true,
+        "baseType": null,
+        "interfaces": [],
+        "isGeneric": false,
+        "members": null,
+        "membersComplete": false,
+        "representation": "single",
+        "elementType": null,
+        "tupleSize": 0,
+        "enumValues": null,
+        "isFlags": null
+      },
+      {
+        "fullName": "[FrooxEngine]FrooxEngine.IField<[System.Private.CoreLib]System.Boolean>",
+        "confirmed": true,
+        "closureComplete": true,
+        "baseType": null,
+        "interfaces": [],
+        "isGeneric": false,
+        "members": null,
+        "membersComplete": false,
+        "representation": "other",
+        "elementType": null,
+        "tupleSize": 0,
+        "enumValues": null,
+        "isFlags": null
+      },
+      {
+        "fullName": "[FrooxEngine]FrooxEngine.IField<[System.Private.CoreLib]System.Int32>",
+        "confirmed": true,
+        "closureComplete": true,
+        "baseType": null,
+        "interfaces": [],
+        "isGeneric": false,
+        "members": null,
+        "membersComplete": false,
+        "representation": "other",
+        "elementType": null,
+        "tupleSize": 0,
+        "enumValues": null,
+        "isFlags": null
+      },
+      {
+        "fullName": "[FrooxEngine]FrooxEngine.IField<[System.Private.CoreLib]System.String>",
+        "confirmed": true,
+        "closureComplete": true,
+        "baseType": null,
+        "interfaces": [],
+        "isGeneric": false,
+        "members": null,
+        "membersComplete": false,
+        "representation": "other",
+        "elementType": null,
+        "tupleSize": 0,
+        "enumValues": null,
+        "isFlags": null
+      },
+      {
+        "fullName": "[FrooxEngine]FrooxEngine.IField<[System.Private.CoreLib]System.Single>",
+        "confirmed": true,
+        "closureComplete": true,
+        "baseType": null,
+        "interfaces": [],
+        "isGeneric": false,
+        "members": null,
+        "membersComplete": false,
+        "representation": "other",
+        "elementType": null,
+        "tupleSize": 0,
+        "enumValues": null,
+        "isFlags": null
+      },
+      {
+        "fullName": "Fixture.Objects.BooleanField",
+        "confirmed": true,
+        "closureComplete": true,
+        "baseType": null,
+        "interfaces": [
+          "[FrooxEngine]FrooxEngine.IField<[System.Private.CoreLib]System.Boolean>"
+        ],
+        "isGeneric": false,
+        "members": null,
+        "membersComplete": false,
+        "representation": "other",
+        "elementType": null,
+        "tupleSize": 0,
+        "enumValues": null,
+        "isFlags": null
+      },
+      {
+        "fullName": "Fixture.Objects.Int32Field",
+        "confirmed": true,
+        "closureComplete": true,
+        "baseType": null,
+        "interfaces": [
+          "[FrooxEngine]FrooxEngine.IField<[System.Private.CoreLib]System.Int32>"
+        ],
+        "isGeneric": false,
+        "members": null,
+        "membersComplete": false,
+        "representation": "other",
+        "elementType": null,
+        "tupleSize": 0,
+        "enumValues": null,
+        "isFlags": null
+      },
+      {
+        "fullName": "Fixture.Objects.StringField",
+        "confirmed": true,
+        "closureComplete": true,
+        "baseType": null,
+        "interfaces": [
+          "[FrooxEngine]FrooxEngine.IField<[System.Private.CoreLib]System.String>"
+        ],
+        "isGeneric": false,
+        "members": null,
+        "membersComplete": false,
+        "representation": "other",
+        "elementType": null,
+        "tupleSize": 0,
+        "enumValues": null,
+        "isFlags": null
+      },
+      {
+        "fullName": "Fixture.Objects.SingleField",
+        "confirmed": true,
+        "closureComplete": true,
+        "baseType": null,
+        "interfaces": [
+          "[FrooxEngine]FrooxEngine.IField<[System.Private.CoreLib]System.Single>"
+        ],
+        "isGeneric": false,
+        "members": null,
+        "membersComplete": false,
+        "representation": "other",
+        "elementType": null,
+        "tupleSize": 0,
+        "enumValues": null,
+        "isFlags": null
+      },
+      {
+        "fullName": "Fixture.Objects.Lamp",
+        "confirmed": true,
+        "closureComplete": true,
+        "baseType": null,
+        "interfaces": [],
+        "isGeneric": false,
+        "members": {
+          "Enabled": {
+            "kind": "field",
+            "memberType": "Fixture.Objects.BooleanField",
+            "valueType": "[System.Private.CoreLib]System.Boolean",
+            "targetType": null,
+            "element": null,
+            "keyType": null,
+            "confirmed": true
+          },
+          "Intensity": {
+            "kind": "field",
+            "memberType": "Fixture.Objects.SingleField",
+            "valueType": "[System.Private.CoreLib]System.Single",
+            "targetType": null,
+            "element": null,
+            "keyType": null,
+            "confirmed": true
+          },
+          "Count": {
+            "kind": "field",
+            "memberType": "Fixture.Objects.Int32Field",
+            "valueType": "[System.Private.CoreLib]System.Int32",
+            "targetType": null,
+            "element": null,
+            "keyType": null,
+            "confirmed": true
+          },
+          "Label": {
+            "kind": "field",
+            "memberType": "Fixture.Objects.StringField",
+            "valueType": "[System.Private.CoreLib]System.String",
+            "targetType": null,
+            "element": null,
+            "keyType": null,
+            "confirmed": true
+          }
+        },
+        "membersComplete": true,
+        "representation": "other",
+        "elementType": null,
+        "tupleSize": 0,
+        "enumValues": null,
+        "isFlags": null
+      },
+      {
+        "fullName": "Fixture.Objects.Toggle",
+        "confirmed": true,
+        "closureComplete": true,
+        "baseType": null,
+        "interfaces": [],
+        "isGeneric": false,
+        "members": {
+          "Target": {
+            "kind": "reference",
+            "memberType": null,
+            "valueType": null,
+            "targetType": "[FrooxEngine]FrooxEngine.IField<[System.Private.CoreLib]System.Boolean>",
+            "element": null,
+            "keyType": null,
+            "confirmed": true
+          }
+        },
+        "membersComplete": true,
+        "representation": "other",
+        "elementType": null,
+        "tupleSize": 0,
+        "enumValues": null,
+        "isFlags": null
+      }
+    ],
+    "aliases": {}
+  }
+}

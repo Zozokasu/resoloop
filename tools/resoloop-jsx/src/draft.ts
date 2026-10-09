@@ -15,6 +15,13 @@ export { Scope, Field } from "./elements.js";
 export { ref } from "./ref.js";
 export { BuildError, evaluate } from "./evaluate.js";
 
+/** @experimental Define typed Object bodies and definition-owned handles. */
+export { defineObject } from "./object-definition.js";
+/** @experimental Bind fields and references to runtime catalog declarations.
+ * Static types use catalog metadata; parent, placement, and boundary checks run during evaluation.
+ */
+export { componentFields } from "./bound-field.js";
+
 /** SlotProps under the draft entry: identical except `key` is optional. */
 export type DraftSlotProps = Omit<SlotProps, "key"> & { key?: string };
 
@@ -43,6 +50,16 @@ export type {
   JsxChild,
   JsxNode,
 } from "./elements.js";
+
+export type {
+  FieldRef,
+  InstanceHandle,
+  UncheckedReference,
+} from "./object-refs.js";
+
+export type { ObjectDefinition } from "./object-definition.js";
+
+export type { CatalogRuntimeTable } from "./catalog-runtime.js";
 
 export type {
   ApplyDocument,

@@ -46,6 +46,10 @@ declare module "node:child_process" {
   ): { status: number | null; stdout: string; stderr: string; error?: any };
 }
 
+declare module "node:module" {
+  export function syncBuiltinESMExports(): void;
+}
+
 declare module "node:test" {
   export function test(name: string, fn: () => any): any;
   export function test(name: string, options: any, fn: () => any): any;

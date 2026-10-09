@@ -122,8 +122,8 @@ for (const [lineEnding, declaration] of [
   ["missing header", declaration.replace(/^[^\r\n]*\r?\n/, ""), '{"contentHash":"handwritten-catalog-hash"}'],
   ["malformed header", declaration.replace(/^[^\r\n]*\r?\n/, "// resoloop-catalog-types: {broken}\n"), '{"contentHash":"handwritten-catalog-hash"}'],
   ["nonstring catalog hash", declaration, '{"contentHash":12}'],
-  ["old generator with same hash", declaration.replace('"generatorVersion":"2"', '"generatorVersion":"1"'), '{"contentHash":"handwritten-catalog-hash"}'],
-  ["future generator with same hash", declaration.replace('"generatorVersion":"2"', '"generatorVersion":"future"'), '{"contentHash":"handwritten-catalog-hash"}'],
+  ["old generator with same hash", declaration.replace('"generatorVersion":"3"', '"generatorVersion":"2"'), '{"contentHash":"handwritten-catalog-hash"}'],
+  ["future generator with same hash", declaration.replace('"generatorVersion":"3"', '"generatorVersion":"future"'), '{"contentHash":"handwritten-catalog-hash"}'],
   ["unsupported declaration format", declaration.replace('"formatVersion":"1"', '"formatVersion":"future"'), '{"contentHash":"handwritten-catalog-hash"}'],
 ] as const) test(`hash ${name} (${lineEnding}) fails before output reservation/publication`, async () => {
   const w = workspace();

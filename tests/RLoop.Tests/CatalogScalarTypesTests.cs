@@ -29,8 +29,13 @@ public sealed class CatalogScalarTypesTests
         Assert.Null(catalog.UnavailableReason());
         Assert.True(catalog.Find(ValueField)!.IsGeneric);
         Assert.False(catalog.Find(ValueField)!.ClosureComplete);
+        var generated = CatalogTypesGenerator.Generate(catalog);
+        Assert.Equal("3", generated.GeneratorVersion);
+        Assert.NotNull(generated.RuntimeText);
         Assert.Equal(File.ReadAllText(Fixture("declaration.handwritten.d.ts")).Replace("\r\n", "\n"),
-            CatalogTypesGenerator.Generate(catalog).Text);
+            generated.Text);
+        Assert.Equal(File.ReadAllText(Fixture("runtime.handwritten.ts")).Replace("\r\n", "\n"),
+            generated.RuntimeText);
     }
 
     public static IEnumerable<object[]> ScalarCases()

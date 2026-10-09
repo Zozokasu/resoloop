@@ -1,0 +1,12 @@
+﻿{
+  "schemaVersion": "1",
+  "ownership": { "key": "object-fixture" },
+  "slot": { "name": "Objects", "key": "scene" },
+  "components": [
+    { "type": "Fixture.Objects.Toggle", "key": "toggle", "fields": { "Target": "$member:desk-lamp::light.Enabled" } }
+  ],
+  "children": [
+    { "slot": { "name": "Desk", "key": "desk-lamp::root" }, "components": [ { "type": "Fixture.Objects.Lamp", "key": "desk-lamp::light", "fields": { "Intensity": 1.5 }, "initialFields": { "Enabled": true } } ] },
+    { "slot": { "name": "Ceiling", "key": "ceiling-lamp::root" }, "components": [ { "type": "Fixture.Objects.Lamp", "key": "ceiling-lamp::light", "fields": { "Intensity": 4 }, "initialFields": { "Enabled": true } } ] }
+  ]
+}

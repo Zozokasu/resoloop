@@ -12,6 +12,7 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { createHash } from "node:crypto";
 import { pathToFileURL } from "node:url";
 import * as ts from "typescript";
 import { evaluate, BuildError } from "./evaluate.js";
@@ -19,8 +20,9 @@ import type { ApplyDocument } from "./evaluate.js";
 import { sourceTransformer } from "./source-transform.js";
 import { buildErrorLocation } from "./source-map.js";
 import { snapshotInputs } from "./input-snapshot.js";
+import type { InputFile } from "./input-snapshot.js";
 import { reserveBundleOutput, publishBundle } from "./bundle.js";
-import { catalogDeclaration, verifyCatalogDeclaration } from "./catalog-declarations.js";
+import { catalogDeclaration, catalogRuntimeTables } from "./catalog-declarations.js";
 
 export interface BuildOptions {
   draft?: boolean;
@@ -38,18 +40,6 @@ export interface BuildResult {
   document?: ApplyDocument;
 }
 
-/** Longest common directory prefix of two normalized paths. */
-function commonDir(a: string, b: string): string {
-  const left = path.resolve(a).split(/[\\/]/);
-  const right = path.resolve(b).split(/[\\/]/);
-  const out: string[] = [];
-  for (let i = 0; i < Math.min(left.length, right.length); i++) {
-    if (left[i] !== right[i]) break;
-    out.push(left[i]);
-  }
-  return out.length === 0 ? a : out.join(path.sep);
-}
-
 function formatDiagnostics(diagnostics: readonly ts.Diagnostic[]): string {
   // Keep the pretty context output but strip ANSI codes so callers (tests,
   // stderr redirection) see plain text.
@@ -64,6 +54,17 @@ function formatHost(): ts.FormatDiagnosticsHost {
     getCanonicalFileName: (f: string) => f,
     getNewLine: () => "\n",
   };
+}
+
+const sourceLocatedBuildCodes = new Set([
+  "APPLY_OBJECT_INVALID", "APPLY_OBJECT_DUPLICATE", "APPLY_OBJECT_EXPORT_INVALID",
+  "APPLY_OBJECT_EXPORT_UNKNOWN", "APPLY_OBJECT_TYPE_MISMATCH", "APPLY_OBJECT_PRIVATE_REFERENCE",
+  "APPLY_FIELD_TYPE_MISMATCH", "APPLY_CATALOG_UNAVAILABLE", "APPLY_CATALOG_TYPES_HASH_MISMATCH",
+]);
+
+function pathIdentity(value: string): string {
+  const resolved = path.resolve(value).replace(/\\/g, "/");
+  return ts.sys.useCaseSensitiveFileNames ? resolved : resolved.toLowerCase();
 }
 
 /**
@@ -104,13 +105,15 @@ export async function buildFile(
   // `import "resoloop-jsx"` in the emitted JS resolves — for entries inside
   // this package via self-reference, for external consumers via their own
   // node_modules lookup. Deleted in `finally`.
+  const entryRelativeToProject = path.relative(projectRoot, entryAbs);
+  const normalizedEntryRelative = entryRelativeToProject.replace(/\\/g, "/");
+  const entryInsideProject = pathIdentity(entryAbs) === pathIdentity(projectRoot) ||
+    (!path.isAbsolute(entryRelativeToProject) && normalizedEntryRelative !== ".." && !normalizedEntryRelative.startsWith("../"));
+  const rootDir = entryInsideProject ? projectRoot : path.dirname(entryAbs);
   const outDir = fs.mkdtempSync(path.join(path.dirname(entryAbs), ".resoloop-jsx-"));
   try {
     const catalogText = opts.bundle ? fs.readFileSync(path.resolve(opts.catalog!), { encoding: "utf8" }) : undefined;
     const declaration = catalogDeclaration(projectRoot, catalogText);
-    // rootDir is required for self-referencing package resolution (TS2209);
-    // constraining it to the entry's directory also keeps emit predictable.
-    const rootDir = path.dirname(entryAbs);
     const program = ts.createProgram(declaration === undefined ? [entryAbs] : [entryAbs, declaration], {
       jsx: ts.JsxEmit.ReactJSX,
       jsxImportSource: "resoloop-jsx",
@@ -125,12 +128,16 @@ export async function buildFile(
       declaration: false,
     });
 
-    if (catalogText !== undefined)
-      for (const source of program.getSourceFiles())
-        if (source.isDeclarationFile) verifyCatalogDeclaration(source.fileName, source.text, catalogText);
+    const catalogs = catalogRuntimeTables(program, catalogText);
     const bundleOutput = opts.bundle ? reserveBundleOutput(opts.output!) : undefined;
 
-    const inputs = opts.bundle ? snapshotInputs(program, projectRoot, opts.catalog!) : undefined;
+    const inputs: InputFile[] = opts.bundle ? snapshotInputs(program, projectRoot, opts.catalog!) : program.getSourceFiles()
+      .filter(source => !program.isSourceFileDefaultLibrary(source))
+      .map(source => {
+        const file = path.resolve(source.fileName);
+        const sha256 = createHash("sha256").update(fs.readFileSync(file)).digest("hex");
+        return { path: file, sha256, role: "source" as const };
+      });
     const preEmit = ts.getPreEmitDiagnostics(program);
     if (preEmit.length > 0)
       return {
@@ -139,7 +146,7 @@ export async function buildFile(
         warnings,
       };
 
-    const emitResult = program.emit(undefined, undefined, undefined, false, opts.bundle ? sourceTransformer(program, inputs!) : undefined);
+    const emitResult = program.emit(undefined, undefined, undefined, false, sourceTransformer(program, inputs));
     if (emitResult.diagnostics.length > 0)
       return {
         exitCode: 2,
@@ -147,22 +154,15 @@ export async function buildFile(
         warnings,
       };
 
-    // Locate the emitted entry JS: outDir mirrors the path of each input
-    // relative to the program's common source directory (the longest common
-    // directory prefix of all emitted inputs).
-    const inputDirs = program
-      .getSourceFiles()
-      .filter((f) => !f.isDeclarationFile)
-      .map((f) => path.dirname(f.fileName));
-    const commonRoot = inputDirs.reduce(commonDir, path.dirname(entryAbs));
     const emittedJs = path
-      .join(outDir, path.relative(commonRoot, entryAbs))
+      .join(outDir, path.relative(rootDir, entryAbs))
       .replace(/\.[^.\\/]+$/, ".js");
 
     let mod: any;
     try {
       mod = await import(pathToFileURL(emittedJs).href);
     } catch (err: any) {
+      if (err instanceof BuildError && sourceLocatedBuildCodes.has(err.code)) throw err;
       return {
         exitCode: 1,
         errors: [
@@ -178,6 +178,7 @@ export async function buildFile(
       throw new BuildError("ROOT_MUST_BE_SINGLE_SLOT", 'The default export is wrapped in a module object; project の package.json に "type": "module" が必要');
 
     const { document, warnings: draftWarnings } = evaluate(mod?.default, {
+      catalogs,
       draft: opts.draft === true,
       ...(Object.prototype.hasOwnProperty.call(mod, "ownership") ? { ownership: mod.ownership } : {}),
     });
@@ -200,8 +201,10 @@ export async function buildFile(
     }
     return { exitCode: 0, errors, warnings, document };
   } catch (err: any) {
-    if (err instanceof BuildError)
-      return { exitCode: 1, errors: [`${err.code}: ${err.message}${opts.bundle ? `; TSX ${buildErrorLocation(err)}` : ""}`], warnings };
+    if (err instanceof BuildError) {
+      const located = opts.bundle || sourceLocatedBuildCodes.has(err.code);
+      return { exitCode: 1, errors: [`${err.code}: ${err.message}${opts.bundle || located ? `; TSX ${buildErrorLocation(err)}` : ""}`], warnings };
+    }
     return {
       exitCode: 1,
       errors: [`${err?.message ?? String(err)}`],
