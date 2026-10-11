@@ -232,7 +232,7 @@ Exit codeは、2=引数、3=設定、4=接続、5=not found、6=validation、7=�
 | Connection | status, ping |
 | Observe | hierarchy profile, hierarchy query, hierarchy, find, inspect |
 | Compare | snapshot create, snapshot diff |
-| Slot | slot create, slot set, slot delete --yes |
+| Slot | slot create/set [--active true\|false], slot delete --yes |
 | Component | component list/inspect/add/set/remove |
 | Reflection | type search, type describe |
 | Declarative | validate, plan/diff, apply [--prune --yes], scene summary, capture, test |
@@ -498,7 +498,7 @@ OneDriveなどで保存先が異なる環境は、環境変数 `RESOLOOP_SCREENS
 
 `ownership`には一時camera Slotの`parentId`／`slotId`／`slotName`と`cleanupCompleted`を返します。現在はRootへ作成し、exact ID・名前を確認してcleanupします。`scene summary`の`bounds.kind`は`geometry`／`partial`／`pivots`で根拠を区別し、ローカルmesh assetの頂点から外形を取得します。親transform適用後のrest AABBであり、動作中の掃引範囲や衝突形状ではありません。
 
-Slotの`--position`／`--scale`／`--rotation`はJSON配列・objectと従来comma形式に対応し、有限値を要求します。例: `resoloop slot update VERIFIED_SLOT --position '[1,2,3]'`。inspectにはSlot自身の`members`とIDも含まれ、item auditはその所有root内のPosition／Rotation fieldなどを内部参照として扱います。
+Slotの`--position`／`--scale`／`--rotation`はJSON配列・objectと従来comma形式に対応し、有限値を要求します。例: `resoloop slot set VERIFIED_SLOT --position '[1,2,3]'`。直接Slot作成時は `slot create --parent VERIFIED_PARENT --name NAME --active false`、切替時は `slot set VERIFIED_SLOT --active true` または `--active false` を使えます。`--active` は小文字の `true` / `false` のみ受け付け、省略時は既定値または現在値を保ちます。書込み前後に正確な対象をinspectし、結果の `data.isActive` を確認してください。inspectにはSlot自身の`members`とIDも含まれ、item auditはその所有root内のPosition／Rotation fieldなどを内部参照として扱います。
 
 strict validationはadapterの書込み変換を実行し、Nullable enumを含む不正値をasset import前に検出します。nested SyncObjectは指定された子だけを再帰比較し、省略された既定値を差分にせず、宣言値のdriftは検出します。古いcheckpointにmanifestのidentityFieldsを足すだけでは識別根拠は追加されません。候補と所有範囲を確認して復旧してください。新規Blender exportはproviderを名前付きSlotへ分け、旧root配置には`--legacy-root-providers`を指定できます。
 

@@ -21,6 +21,8 @@ Component `propertyModes` maps member names to `config`, `initial`, `runtime` or
 
 Schema v1 also supports optional Component `fieldAliases` and Slot `tag`; TSX supports `<Field>` children and `<Slot tag>`. Aliases resolve to canonical `$member` selectors, and omitted tags preserve the live value. See [declarative authoring details](docs/DECLARATIVE.md) for syntax, policy and diagnostics.
 
+For a direct Slot edit, inspect the exact Slot, then run `resoloop slot set VERIFIED_SLOT --active false` or `--active true` and inspect it again; confirm `data.isActive`. Creation can use `resoloop slot create --parent VERIFIED_PARENT --name NAME --active false`. The option accepts lowercase `true` or `false`; omitting it leaves the default or current value unchanged. Declarative apply has no active field.
+
 Keep the reported state file. State v3 stores confirmed bindings and pending operations; v1/v2 can be read, saves use v3, and older CLIs reject v3. Explicit server rejection clears the pending operation. A later apply can reconcile an accepted result with matching discovery identity and exact target/owner evidence: confirmed values commit, known mismatches clear and planning uses the current observation. Unknown creation IDs, unproven acceptance or identity remain pending; names, types and order are never used to recover a lost creation. Explicit `--url` connections have unknown identity and cannot automatically settle interrupted pending operations; a discovery-selected connection can supply matching identity evidence.
 
 On failure, read `context.reason`, `stateFile`, `operationId`, confirmed results and completeness; inspect the exact Slot/Component IDs before deciding how to continue. After inspecting the world, clear only a chosen operation with:

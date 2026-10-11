@@ -39,6 +39,8 @@ public static class Program
                 return ExitCodes.Success;
             }
 
+            ValidateSlotActiveArguments(args, parsed);
+
             var applyCommand = parsed.Positionals[0].ToLowerInvariant() is "validate" or "diff" or "plan" or "apply";
             if (parsed.Has("diagnostics") && !applyCommand)
                 throw new RLoopException("INVALID_OPTION", "--diagnostics is supported only by validate/diff/plan/apply.", ExitCodes.InvalidArguments);
@@ -979,7 +981,8 @@ public static class Program
             {
                 var parent = await world.ResolveSlotSelectorAsync(args.Option("parent") ?? "Root", args.Option("state"), ct);
                 var result = await client.CreateSlotAsync(new SlotCreateRequest(parent, args.RequireOption("name"),
-                    ParseVector(args, "position"), ParseQuaternion(args, "rotation"), ParseVector(args, "scale"), args.Option("id")), ct);
+                    ParseVector(args, "position"), ParseQuaternion(args, "rotation"), ParseVector(args, "scale"), args.Option("id"),
+                    IsActive: ParseSlotActive(args)), ct);
                 var generatedContentComponentId = await world.EnsureGeneratedContentTagAsync(result, ct);
                 output.Success(new { id = result, parentId = parent, name = args.Option("name"), generatedContentComponentId },
                     w => w.WriteLine(result));
@@ -988,9 +991,11 @@ public static class Program
             case "set":
             {
                 var id = await world.ResolveSlotSelectorAsync(args.Positional(2, "Slot ID, path, or $slot:key"), args.Option("state"), ct);
-                if (args.Option("name") is null && args.Option("position") is null && args.Option("rotation") is null && args.Option("scale") is null)
-                    throw new RLoopException("UPDATE_EMPTY", "slot set requires at least one of --name, --position, --rotation, or --scale.", ExitCodes.InvalidArguments);
-                await client.UpdateSlotAsync(new SlotUpdateRequest(id, args.Option("name"), ParseVector(args, "position"), ParseQuaternion(args, "rotation"), ParseVector(args, "scale")), ct);
+                if (args.Option("name") is null && args.Option("position") is null && args.Option("rotation") is null && args.Option("scale") is null &&
+                    args.Option("active") is null)
+                    throw new RLoopException("UPDATE_EMPTY", "slot set requires at least one of --name, --position, --rotation, --scale, or --active.", ExitCodes.InvalidArguments);
+                await client.UpdateSlotAsync(new SlotUpdateRequest(id, args.Option("name"), ParseVector(args, "position"), ParseQuaternion(args, "rotation"), ParseVector(args, "scale"),
+                    IsActive: ParseSlotActive(args)), ct);
                 output.Success(new { id, updated = true });
                 break;
             }
@@ -1439,6 +1444,42 @@ public static class Program
 
     private static Vector3Value? ParseVector(ParsedArguments args, string name) => args.Option(name) is { } text ? Vector3Value.Parse(text, $"--{name}") : null;
     private static QuaternionValue? ParseQuaternion(ParsedArguments args, string name) => args.Option(name) is { } text ? QuaternionValue.Parse(text, $"--{name}") : null;
+    private static bool? ParseSlotActive(ParsedArguments args) => args.Option("active") switch
+    {
+        null => null,
+        "true" => true,
+        "false" => false,
+        var value => throw InvalidSlotActive(value)
+    };
+
+    private static void ValidateSlotActiveArguments(IReadOnlyList<string> rawArgs, ParsedArguments parsed)
+    {
+        if (parsed.Positionals.Count < 2 || !parsed.Positionals[0].Equals("slot", StringComparison.OrdinalIgnoreCase) ||
+            parsed.Positionals[1].ToLowerInvariant() is not ("create" or "set")) return;
+
+        for (var index = 0; index < rawArgs.Count; index++)
+        {
+            var token = rawArgs[index];
+            if (token.Equals("--active", StringComparison.OrdinalIgnoreCase))
+            {
+                if (index + 1 >= rawArgs.Count || rawArgs[index + 1].StartsWith("--", StringComparison.Ordinal))
+                    throw InvalidSlotActive(null);
+                ValidateSlotActiveValue(rawArgs[++index]);
+            }
+            else if (token.StartsWith("--active=", StringComparison.OrdinalIgnoreCase))
+                ValidateSlotActiveValue(token[9..]);
+        }
+    }
+
+    private static void ValidateSlotActiveValue(string value)
+    {
+        if (value is not ("true" or "false")) throw InvalidSlotActive(value);
+    }
+
+    private static RLoopException InvalidSlotActive(string? value) => new("INVALID_OPTION",
+        value is null ? "--active requires exactly 'true' or 'false'." : $"--active must be exactly 'true' or 'false'; got '{value}'.",
+        ExitCodes.InvalidArguments);
+
     private static void RequireYes(ParsedArguments args, string operation)
     {
         if (!args.Has("yes")) throw new RLoopException("CONFIRMATION_REQUIRED", $"{operation} is destructive and requires --yes.", ExitCodes.ValidationFailed);
@@ -1549,8 +1590,8 @@ Blender (offline; no installation or world mutation):
     --preserve-hierarchy keeps local geometry/pivots; --pack-pbr packs direct Non-Color scalar maps.
 
 Editing:
-  resoloop slot create --name NAME [--parent SLOT] [--position x,y,z] [--rotation x,y,z,w] [--scale x,y,z]
-  resoloop slot set SLOT [--name NAME] [--position x,y,z] [--rotation x,y,z,w] [--scale x,y,z]
+  resoloop slot create --name NAME [--parent SLOT] [--position x,y,z] [--rotation x,y,z,w] [--scale x,y,z] [--active true|false]
+  resoloop slot set SLOT [--name NAME] [--position x,y,z] [--rotation x,y,z,w] [--scale x,y,z] [--active true|false]
   resoloop slot delete SLOT --yes
   resoloop component list SLOT
   resoloop component inspect COMPONENT_ID|$component:key [--state WORLD_STATE]

@@ -238,6 +238,7 @@ public sealed class ResoniteLinkClientAdapter : IResoniteClient, IResoniteClient
             Parent = new Link.Reference { TargetID = request.ParentId },
             Name = new Link.Field_string { Value = request.Name },
             Tag = request.Tag is null ? null : new Link.Field_string { Value = request.Tag },
+            IsActive = request.IsActive is null ? null : new Link.Field_bool { Value = request.IsActive.Value },
             Position = request.Position is null ? null : new Link.Field_float3 { Value = ToLink(request.Position) },
             Rotation = request.Rotation is null ? null : new Link.Field_floatQ { Value = ToLink(request.Rotation) },
             Scale = request.Scale is null ? null : new Link.Field_float3 { Value = ToLink(request.Scale) }
@@ -250,6 +251,7 @@ public sealed class ResoniteLinkClientAdapter : IResoniteClient, IResoniteClient
             Parent = request.ParentId is null ? null : new Link.Reference { TargetID = request.ParentId },
             Name = request.Name is null ? null : new Link.Field_string { Value = request.Name },
             Tag = request.Tag is null ? null : new Link.Field_string { Value = request.Tag },
+            IsActive = request.IsActive is null ? null : new Link.Field_bool { Value = request.IsActive.Value },
             Position = request.Position is null ? null : new Link.Field_float3 { Value = ToLink(request.Position) },
             Rotation = request.Rotation is null ? null : new Link.Field_floatQ { Value = ToLink(request.Rotation) },
             Scale = request.Scale is null ? null : new Link.Field_float3 { Value = ToLink(request.Scale) }
