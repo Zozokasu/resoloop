@@ -103,6 +103,75 @@ public sealed partial class WorldService
             await CheckConnectionAsync(component.StableKey, ct);
         }
 
+        public async Task CheckDeletedComponentReferencePreconditionsAsync(ComponentSummary deleted, CancellationToken ct)
+        {
+            var (_, affected) = DeletedComponentReferenceCandidates(deleted);
+            foreach (var group in affected.GroupBy(item => item.Owner.Id!, StringComparer.Ordinal))
+            {
+                var first = group.First();
+                await CheckConnectionAsync(first.Owner.StableKey, ct);
+                var current = await client.GetComponentAsync(group.Key, ct);
+                var expectedComponent = components[group.Key];
+                if (current.Id != expectedComponent.Id || current.Type != expectedComponent.Type)
+                    Fail("typeChanged", "component", first.Owner.StableKey, null, expectedComponent.Type, current.Type);
+                foreach (var item in group)
+                {
+                    activeMember = item.Name;
+                    current.Members.TryGetValue(item.Name, out var observed);
+                    if (!SameShape(item.Before, observed) || !SameValue(item.Before, observed))
+                        Fail("valueChanged", "component", item.Owner.StableKey, item.Name, item.Before, observed);
+                }
+                await CheckConnectionAsync(first.Owner.StableKey, ct);
+            }
+        }
+
+        public async Task AcceptDeletedComponentReferenceClearsAsync(ComponentSummary deleted, CancellationToken ct)
+        {
+            var (deletedTargets, affected) = DeletedComponentReferenceCandidates(deleted);
+            foreach (var group in affected.GroupBy(item => item.Owner.Id!, StringComparer.Ordinal))
+            {
+                var first = group.First();
+                await CheckConnectionAsync(first.Owner.StableKey, ct);
+                var current = await client.GetComponentAsync(group.Key, ct);
+                var expectedComponent = components[group.Key];
+                if (current.Id != expectedComponent.Id || current.Type != expectedComponent.Type)
+                    Fail("typeChanged", "component", first.Owner.StableKey, null, expectedComponent.Type, current.Type);
+                foreach (var item in group)
+                {
+                    activeMember = item.Name;
+                    current.Members.TryGetValue(item.Name, out var observed);
+                    var cleared = ClearDeletedTargets(item.Before, deletedTargets);
+                    if (!SameShape(cleared, observed) || !SameValue(cleared, observed))
+                        Fail("valueChanged", "component", item.Owner.StableKey, item.Name, item.Before, observed);
+                    var next = expectedComponent.Members.ToDictionary(pair => pair.Key, pair => CloneMember(pair.Value), StringComparer.Ordinal);
+                    next[item.Name] = CloneMember(cleared);
+                    expectedComponent = expectedComponent with { Members = next };
+                }
+                components[group.Key] = expectedComponent;
+                await CheckConnectionAsync(first.Owner.StableKey, ct);
+            }
+        }
+
+        private (HashSet<string> Targets, List<(ComponentRuntime Owner, string Name, MemberValue Before)> Members)
+            DeletedComponentReferenceCandidates(ComponentSummary deleted)
+        {
+            var targets = new HashSet<string>(StringComparer.Ordinal) { deleted.Id };
+            if (components.TryGetValue(deleted.Id, out var removed))
+                foreach (var root in removed.Members.Values)
+                    foreach (var member in Descendants(root))
+                        if (member.Id is { } id) targets.Add(id);
+            var affected = new List<(ComponentRuntime Owner, string Name, MemberValue Before)>();
+            foreach (var owner in prepared.Components.Where(owner => owner.Id is not null && owner.Id != deleted.Id))
+            {
+                if (!components.TryGetValue(owner.Id!, out var expected)) continue;
+                foreach (var name in ManagedFields(owner.Spec).Keys)
+                    if (expected.Members.TryGetValue(name, out var before) &&
+                        Descendants(before).Any(member => member.Kind == "reference" && member.TargetId is { } target && targets.Contains(target)))
+                        affected.Add((owner, name, before));
+            }
+            return (targets, affected);
+        }
+
         public async Task CheckSlotAsync(NodeRuntime node, SlotUpdateRequest request, CancellationToken ct)
         {
             await CheckConnectionAsync(node.StableKey, ct);
@@ -184,6 +253,14 @@ public sealed partial class WorldService
             foreach (var child in (member.Members?.Values ?? []).Concat(member.Elements ?? []))
                 foreach (var nested in Descendants(child)) yield return nested;
         }
+
+        private static MemberValue ClearDeletedTargets(MemberValue member, IReadOnlySet<string> deletedTargets) => member with
+        {
+            TargetId = member.Kind == "reference" && member.TargetId is { } target && deletedTargets.Contains(target)
+                ? null : member.TargetId,
+            Members = member.Members?.ToDictionary(pair => pair.Key, pair => ClearDeletedTargets(pair.Value, deletedTargets), StringComparer.Ordinal),
+            Elements = member.Elements?.Select(element => ClearDeletedTargets(element, deletedTargets)).ToArray(),
+        };
 
         private static MemberValue? FindSlotMember(SlotInfo slot, string name) =>
             slot.Members?.FirstOrDefault(p => p.Key.Equals(name, StringComparison.OrdinalIgnoreCase)).Value;

@@ -645,10 +645,16 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
                     BeforeFirstWrite();
                     var removal = Pending(prepared, "removeComponent", component.StableKey, component.RelocationSource.Id,
                         type: component.RelocationSource.Type);
-                    await ExecutePendingAsync(prepared, removal, () => CheckComponentDeletionAsync(prepared, removal, cancellationToken),
-                        () => client.RemoveComponentAsync(component.RelocationSource.Id, cancellationToken), cancellationToken);
+                    var removedSource = component.RelocationSource;
+                    await ExecutePendingAsync(prepared, removal, async () =>
+                    {
+                        await CheckComponentDeletionAsync(prepared, removal, cancellationToken);
+                        await safety.CheckDeletedComponentReferencePreconditionsAsync(removedSource, cancellationToken);
+                    },
+                        () => client.RemoveComponentAsync(removedSource.Id, cancellationToken), cancellationToken);
                     counts.ComponentsDeleted++;
                     component.RelocationSource = null;
+                    await safety.AcceptDeletedComponentReferenceClearsAsync(removedSource, cancellationToken);
                 }
                 if (changed.Count == 0)
                 {
