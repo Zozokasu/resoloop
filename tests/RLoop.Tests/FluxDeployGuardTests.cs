@@ -1038,6 +1038,51 @@ public sealed partial class FluxDeployGuardTests : IDisposable
         Assert.Equal([old], Assert.IsAssignableFrom<IEnumerable<string>>(e.Context["candidateIds"]));
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task UnrecordedSiblingExplainsUnknownIdentityOnly(bool recordedIdentityUnknown)
+    {
+        var old = await DeployedOnce();
+        if (recordedIdentityUnknown)
+            FluxDeployStateStore.Mutate(StatePath, true, (_, state) =>
+                state.Session = new("ws://localhost:47610/", null, "unknown"));
+        else
+            _world.SessionId = null;
+
+        var error = await StopsWithoutWriting("FLUX_MODULE_UNRECORDED_SIBLING", 6);
+
+        Assert.Equal([old], Assert.IsAssignableFrom<IEnumerable<string>>(error.Context["candidateIds"]));
+        Assert.Contains(error.Suggestions, suggestion => suggestion.Contains("explicit --url", StringComparison.Ordinal));
+        Assert.Contains(error.Suggestions, suggestion => suggestion.Contains("from the first deployment", StringComparison.Ordinal));
+        Assert.Contains(error.Suggestions, suggestion => suggestion.Contains("delete that exact ID yourself with --yes", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task UnrecordedSiblingDoesNotExplainKnownDifferentSessionIdentity()
+    {
+        var old = await DeployedOnce();
+        _world.SessionId = "S-another-session";
+
+        var error = await StopsWithoutWriting("FLUX_MODULE_UNRECORDED_SIBLING", 6);
+
+        Assert.Equal([old], Assert.IsAssignableFrom<IEnumerable<string>>(error.Context["candidateIds"]));
+        Assert.DoesNotContain(error.Suggestions, suggestion => suggestion.Contains("explicit --url", StringComparison.Ordinal));
+        Assert.DoesNotContain(error.Suggestions, suggestion => suggestion.Contains("from the first deployment", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task MissingRecordDoesNotExplainUnknownIdentityAsTheCause()
+    {
+        _world.Add("Reso_Foreign", "Main", Parent);
+        _world.SessionId = null;
+
+        var error = await StopsWithoutWriting("FLUX_MODULE_UNRECORDED_SIBLING", 6);
+
+        Assert.Equal("none", error.Context["recordBasis"]);
+        Assert.DoesNotContain(error.Suggestions, suggestion => suggestion.Contains("explicit --url", StringComparison.Ordinal));
+    }
+
     // ---- Fakes ---------------------------------------------------------------------------------------------
 
     private static FluxDiagnostic Diagnostic(string severity, string message) =>

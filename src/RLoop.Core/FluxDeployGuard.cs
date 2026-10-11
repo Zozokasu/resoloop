@@ -403,9 +403,28 @@ public sealed partial class FluxDeployGuard(IResoniteClient client, IFluxDeploye
                     ["candidateIds"] = unrecorded, ["sameNameChildIds"] = sameName, ["recordedRootSlotId"] = record?.RootSlotId,
                     ["recordBasis"] = run.RecordBasis
                 }),
-                ["Inspect each candidate by exact ID. Rename it, or delete it by exact ID with --yes, then deploy again. A module deployed through another state (manifest vs. single deploy) appears here too; existing Slots are never adopted by name."]);
+                UnrecordedSiblingSuggestions(run, state));
         return change;
     }
+
+    private static IReadOnlyList<string> UnrecordedSiblingSuggestions(Run run, FluxDeployState state)
+    {
+        var suggestions = new List<string>
+        {
+            "Inspect each candidate by exact ID. Rename it, or delete it by exact ID with --yes, then deploy again. A module deployed through another state (manifest vs. single deploy) appears here too; existing Slots are never adopted by name."
+        };
+        if (run.RecordBasis == FluxDeployRecordBasis.RecordFromOtherSession &&
+            (!HasMatchedIdentity(state.Session) || !HasMatchedIdentity(FluxDeploySessionRecord.From(run.Identity.Observation))))
+        {
+            suggestions.Add("An explicit --url connection cannot verify the session, so its deployment record cannot prove ownership for replacement.");
+            suggestions.Add("For modules you plan to replace repeatedly, use --url auto --session <S-ID or exact session name> from the first deployment.");
+            suggestions.Add("To proceed now, inspect the candidate IDs, verify the exact ID you own, delete that exact ID yourself with --yes, then deploy with --url auto --session <S-ID or exact session name>.");
+        }
+        return suggestions;
+    }
+
+    private static bool HasMatchedIdentity(FluxDeploySessionRecord? identity) =>
+        identity is { IdentityStatus: "matched", DiscoverSessionId: not null };
 
     private FluxDeployPending SavePending(Run run, RecordChange change)
     {

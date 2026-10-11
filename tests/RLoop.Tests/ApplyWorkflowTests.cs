@@ -1643,10 +1643,44 @@ public sealed partial class ApplyWorkflowTests : IDisposable
             Reject("removeComponent");
             Write();
             var component = _components[componentId];
+            var removedIds = new HashSet<string>(StringComparer.Ordinal) { component.Id };
+            foreach (var member in component.Members.Values)
+                foreach (var descendant in Descendants(member))
+                    if (descendant.Id is { } memberId) removedIds.Add(memberId);
+            foreach (var other in _components.Values.Where(other => other.Id != componentId))
+                foreach (var name in other.Members.Keys.ToArray())
+                    other.Members[name] = ClearReferencesTo(other.Members[name], removedIds);
             foreach (var slot in _slots.Values) slot.Components.Remove(component);
             _components.Remove(componentId);
             AfterMutation?.Invoke("removeComponent", componentId);
             return Task.CompletedTask;
+        }
+
+        public void RetargetReference(string componentId, string member, string? targetId)
+        {
+            var current = _components[componentId].Members[member];
+            _components[componentId].Members[member] = current with { TargetId = targetId };
+        }
+
+        public void SetMemberValue(string componentId, string member, JsonNode? value)
+        {
+            var current = _components[componentId].Members[member];
+            _components[componentId].Members[member] = current with { Value = value?.DeepClone() };
+        }
+
+        private static MemberValue ClearReferencesTo(MemberValue member, IReadOnlySet<string> removedIds) => member with
+        {
+            TargetId = member.Kind == "reference" && member.TargetId is { } target && removedIds.Contains(target)
+                ? null : member.TargetId,
+            Members = member.Members?.ToDictionary(pair => pair.Key, pair => ClearReferencesTo(pair.Value, removedIds), StringComparer.Ordinal),
+            Elements = member.Elements?.Select(element => ClearReferencesTo(element, removedIds)).ToArray(),
+        };
+
+        private static IEnumerable<MemberValue> Descendants(MemberValue member)
+        {
+            yield return member;
+            foreach (var child in (member.Members?.Values ?? []).Concat(member.Elements ?? []))
+                foreach (var descendant in Descendants(child)) yield return descendant;
         }
         public Task<IReadOnlyList<string>> SearchComponentTypesAsync(string query, int limit, CancellationToken cancellationToken = default) =>
             Task.FromResult<IReadOnlyList<string>>(Read(_knownMembers.Keys.Where(x => x.Contains(query, StringComparison.OrdinalIgnoreCase)).Take(limit).ToArray()));

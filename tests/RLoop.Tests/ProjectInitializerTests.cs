@@ -177,6 +177,9 @@ public sealed class ProjectInitializerTests : IDisposable
         Assert.Equal("missing", check.Skills.Single(skill => skill.Name == "resonite-flux").Status);
         Assert.True(updated.Synchronized);
         Assert.True(File.Exists(skillPath));
+        var installed = File.ReadAllText(skillPath);
+        Assert.Contains("--url auto --session", installed);
+        Assert.Contains("changing to `auto` later does not repair that record", installed);
     }
 
     [Fact]
