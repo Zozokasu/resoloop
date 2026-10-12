@@ -52,6 +52,7 @@ public static class Program
                 output.ProtectDiagnosticsPath(parsed.Option("state"));
                 output.ProtectDiagnosticsPath(parsed.Option("catalog"));
             }
+            if (CreationCommands.Handle(parsed, output) is { } creationExit) return creationExit;
             if (parsed.Has("build-id") && !applyCommand)
                 throw new RLoopException("INVALID_OPTION", "--build-id is supported only by validate/diff/plan/apply.", ExitCodes.InvalidArguments);
             // flux deploy/deploy-manifest discard their own pending records in RunFlux (offline, like apply).
@@ -177,6 +178,52 @@ public static class Program
             commandCancellation.CancelAfter(TimeSpan.FromSeconds(resolution.Config.CommandTimeoutSeconds));
             var commandToken = commandCancellation.Token;
             if (parsed.Has("verbose")) Console.Error.WriteLine(JsonSerializer.Serialize(new { configSources = resolution.Sources }));
+
+            if (CreationCommands.IsRegeneratePlan(parsed))
+            {
+                if (parsed.Has("build-id"))
+                    throw new RLoopException("INVALID_OPTION", "--build-id is unavailable for creation envelopes in this version.", ExitCodes.InvalidArguments);
+                if (resolution.Config.Backend == "workbench")
+                    throw new RLoopException("BACKEND_UNSUPPORTED", "Creation regenerate planning requires the ResoniteLink backend.", ExitCodes.OperationFailed);
+                if (parsed.Option("replace-order") is { } order && order != "delete-first")
+                    throw new RLoopException("CREATION_MODE_MISMATCH", $"--replace-order {order} is not available in this version; use delete-first.", ExitCodes.InvalidArguments);
+
+                var creation = CreationDocument.Load(parsed.Positional(1, "Creation envelope"));
+                creation.ValidatePlanInput();
+                var creationValidation = await creation.ValidateAsync(commandToken);
+                if (!creationValidation.Valid)
+                    throw new RLoopException("CREATION_DOCUMENT_INVALID",
+                        creationValidation.Issues.FirstOrDefault()?.Message ?? "Creation document is invalid.", ExitCodes.ValidationFailed,
+                        new Dictionary<string, object?> { ["issues"] = creationValidation.Issues });
+                var statePath = CreationStateStore.ResolvePath(creation, parsed.Option("state"));
+                output.ProtectDiagnosticsPath(statePath);
+                var state = CreationStateStore.Load(statePath, creation.CreationId, parsed.Has("require-state"));
+                if (state?.Pending is { } pending)
+                    throw new RLoopException("APPLY_WRITE_UNVERIFIED", "Creation state contains a pending operation that must be reconciled before planning.",
+                        ExitCodes.OperationFailed, new Dictionary<string, object?>
+                        { ["stateFile"] = statePath, ["operationId"] = pending.OperationId, ["pending"] = pending });
+
+                if (parsed.Option("url") != "auto" || parsed.Option("session") is not { } selectedSession ||
+                    !selectedSession.StartsWith("S-", StringComparison.Ordinal))
+                    throw new RLoopException("CREATION_SESSION_UNPROVEN", "Creation planning requires --url auto and an explicit --session S-ID.", ExitCodes.ValidationFailed);
+                IResoniteClient creationClient;
+                if (connect is not null)
+                    creationClient = await connect(commandToken);
+                else
+                {
+                    var creationUri = await ResoniteClientFactory.ResolveConnectionUrlAsync(parsed, resolution.Config, commandToken);
+                    creationClient = await ResoniteClientFactory.ConnectAsync(parsed, resolution.Config,
+                        ReflectionCacheFrom(parsed), commandToken, creationUri);
+                }
+                await using (creationClient)
+                {
+                    var plan = await new CreationApplyService(creationClient).PlanAsync(creation,
+                        new CreationPlanOptions(parsed.Option("state"), parsed.Has("require-state"),
+                            parsed.Option("parent"), parsed.Option("replace-order") ?? "delete-first", selectedSession), commandToken);
+                    output.Success(plan);
+                }
+                return ExitCodes.Success;
+            }
 
             if (parsed.Positionals[0].Equals("catalog", StringComparison.OrdinalIgnoreCase))
             {
