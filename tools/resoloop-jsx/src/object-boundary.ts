@@ -5,6 +5,7 @@ import type { ObjectBuildContext, DeclaredTarget, ObjectPlacement } from "./obje
 import { decodeReference, isReferenceToken, type DecodedReference, type ScalarRepresentation } from "./object-refs.js";
 import { copyOrigin, markBuildErrorOrigin, originOfElement, unknown, type Origin, type Source } from "./source-map.js";
 import { scopeKey } from "./scope.js";
+import { fieldBindingDescriptor, variableRefDescriptor } from "./variables-internal.js";
 
 export type ExpectedReference =
   | { kind: "reference"; representation: ScalarRepresentation }
@@ -408,6 +409,7 @@ export function resolveObjectValue(value: unknown, owner: string | undefined, sc
   origin: Origin | undefined, expected: ExpectedReference | undefined,
   context: ObjectBuildContext, strictReferencePrefixes = false): unknown {
   origin = normalizeConsumerOrigin(origin);
+  if (fieldBindingDescriptor(value) || variableRefDescriptor(value)) return value;
   if (typeof value === "string") {
     if (value.startsWith("$object-target:") && (strictReferencePrefixes || isReferenceToken(value))) {
       const ref = decoded(value, context, origin);

@@ -688,3 +688,5 @@ Slot の削除前は各 Slot の直下 children/components を読み、部分木
 観測した値・型・writer の可能性の競合を検出し、同じ PC・同じ OS ユーザーの、この版以降の ResoLoop 間で書込みを調整します。これにより別 project の未確定書込みを飛び越しません。
 
 操作は `atomic:false` です。全体の原子性や rollback、古い CLI・別 PC/ユーザー・人・外部ツール・ProtoFlux への排他、観測外や確認と送信の間の競合、readback 後の値の保持は保証しません。state の flush と atomic replacement は行いますが、電源断や filesystem 固有の耐久性も無条件には保証しません。同じコマンドの再実行だけで安全に収束すると判断せず、保留と実機の証拠から続行を決めてください。
+
+実験的な変数APIは `resoloop-jsx/variables` subpath を使います。bool変数と確認済みcatalog-bound Fieldへの `drive`/`bind` の詳細は[package guide](tools/resoloop-jsx/README.md#experimental-variables-api)を参照してください。実機のResoniteでは未検証です。

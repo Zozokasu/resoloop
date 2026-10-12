@@ -67,6 +67,8 @@ Catalog format remains 2; mapper and generator versions are 3. Mapper 2 catalogs
 
 For experimental Object composition, follow the [Object authoring workflow](references/object-authoring.md) from Reflection through exact-target readback. Catalog declarations use generator version 3; format 2 and mapper version 3 remain unchanged.
 
+For experimental variables, start with Reflection and a verified catalog pair; use only confirmed catalog-bound bool Fields. Follow the [variables authoring workflow](references/variables-authoring.md), and mark each binding explicitly with `drive(...)` or `bind(...)` without adding an ordinary value for that Field. Build successfully, then validate the IR offline. Apply live changes only to explicitly authorized targets and perform bounded post-change inspection.
+
 The status `connectionId` is scoped to one ResoniteLink connection, not a stable world identity. Refresh raw IDs after reconnect/restart and rely on managed key/path re-resolution.
 
 ## Automatic connection discovery

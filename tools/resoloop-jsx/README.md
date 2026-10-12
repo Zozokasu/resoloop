@@ -473,3 +473,56 @@ The TSX-only Object/Field build diagnostics use exit 1: `APPLY_OBJECT_INVALID`, 
 Keep instance IDs and export names stable while consumers rely on them; stable names preserve consumer source when the target is updated inside the Object definition. Moving a Component to a different owner, changing its type/key, or replacing its target can change runtime reference IDs and may require content recreation. `initialFields` apply only on creation, so recreation can reapply them and runtime values may be lost. The API does not prove state or real-world ownership. Offline tests cover repeated and parallel builds, not ESM cache reclamation or watch mode. The API is experimental; raw internal references cannot cross an Object boundary; use only declared exports through `ref.export`.
 
 For project-root resolution, an entry inside the explicit `projectRoot` uses that root for authoring paths and project catalog loading. An entry outside it keeps the legacy entry-directory root and relative `authoring.source` (for example, `../project/content/main.tsx`); importing the external project catalog can produce TypeScript `TS6059`. The Object API has not been verified against a live Resonite session, and Reflection has not confirmed a real Toggle component or its referenced member. The existing computed-literal `__proto__` handling remains narrow; it does not make other prototype-key forms valid.
+
+### Experimental variables API
+
+The `resoloop-jsx/variables` subpath exports `types.bool`, `variable(type, defaultValue)`,
+`defineVariables({ scopeKey, variables })`, the `Variables` declaration component, and the
+`drive(...)` and `bind(...)` markers. A declaration's `set.vars` is a read-only collection of
+typed references. `scopeKey` and variable names must match
+`^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$`; every Slot and Component needs an explicit stable `key`.
+
+<!-- variables-example -->
+```tsx
+import { Slot, Component, componentFields } from "resoloop-jsx";
+import { defineVariables, variable, types, drive, bind, Variables } from "resoloop-jsx/variables";
+import { catalog } from "./.resoloop/catalog-fields.js";
+
+const Light = componentFields("Fixture.Objects.Lamp", catalog);
+const set = defineVariables({ scopeKey: "lamp", variables: { on: variable(types.bool, true) } });
+
+export default (
+  <Slot key="scene" name="Lamp">
+    <Component key="light" type={Light.type}>
+      <Light.Field name="Enabled" value={drive(set.vars.on)} />
+    </Component>
+    <Component key="toggle" type={Light.type}>
+      <Light.Field name="Enabled" value={bind(set.vars.on)} />
+    </Component>
+    <Variables declaration={set} />
+  </Slot>
+);
+```
+
+This uses the fictional `Fixture.Objects.Lamp` type as an offline example, not as evidence
+from Resonite. Generate a real catalog pair through Reflection and confirm the component and
+member before using them. Only `bool` variables and confirmed catalog-bound bool Fields are
+supported. Place the declaration and every driven Field in the same Dynamic Variable Space;
+references cannot escape that Space or its descendant Slots. Use `drive` for a one-way driver
+or `bind` for a two-way field binding. A bare variable reference is invalid.
+
+Do not declare the same set or bind the same Field more than once, and do not supply an ordinary
+`fields` or `initialFields` value for a bound Field. An authored Dynamic Variable Space between
+the declaration and a target is rejected; duplicate variable names within one Space and generated
+key or sibling-name collisions are also rejected. The declaration's owning Slot may itself hold
+a target or contain it in a descendant Slot within that Space; targets outside that ownership
+subtree cannot bind. The provider stores the declared default in its
+`Value` field, so after a successful apply, applying again writes that definition value; this
+describes apply behavior and is not a live-session guarantee. This API is experimental and
+has not been verified against a live Resonite session.
+
+A declaration expands to a Dynamic Variable Space with `SpaceName` equal to `scopeKey` and
+`OnlyDirectBinding: false`. Its `DynamicVariables` child Slot contains the bool provider, whose
+`VariableName` is an identity field. Each `drive` or `bind` adds one wire child Slot with a
+Driver or DynamicField. The target Component records `driver-owned` or `runtime` in
+`propertyModes`; the bound target Field is not written into `fields` or `initialFields`.

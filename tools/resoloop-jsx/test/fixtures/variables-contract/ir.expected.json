@@ -1,0 +1,53 @@
+{
+  "schemaVersion": "1",
+  "ownership": { "key": "scene" },
+  "slot": { "name": "Lamp", "key": "scene" },
+  "components": [
+    { "type": "Fixture.Objects.Lamp", "key": "light", "propertyModes": { "Enabled": "driver-owned" } },
+    { "type": "Fixture.Objects.Lamp", "key": "toggle", "propertyModes": { "Enabled": "runtime" } },
+    {
+      "type": "[FrooxEngine]FrooxEngine.DynamicVariableSpace",
+      "key": "__rlv_5_space_4_lamp_5_scene",
+      "fields": { "SpaceName": "lamp", "OnlyDirectBinding": false }
+    }
+  ],
+  "children": [
+    {
+      "slot": { "name": "DynamicVariables", "key": "__rlv_9_variables_4_lamp_5_scene" },
+      "components": [
+        {
+          "type": "[FrooxEngine]FrooxEngine.DynamicValueVariable<bool>",
+          "key": "__rlv_8_variable_4_lamp_5_scene_2_on",
+          "fields": { "VariableName": "on", "Value": true },
+          "identityFields": ["VariableName"]
+        }
+      ]
+    },
+    {
+      "slot": {
+        "name": "__rlv_4_wire_4_lamp_2_on_5_light_7_Enabled",
+        "key": "__rlv_4_wire_4_lamp_2_on_5_light_7_Enabled"
+      },
+      "components": [
+        {
+          "type": "[FrooxEngine]FrooxEngine.DynamicValueVariableDriver<bool>",
+          "key": "__rlv_7_binding_4_lamp_2_on_5_light_7_Enabled",
+          "fields": { "VariableName": "on", "DefaultValue": true, "Target": "$member:light.Enabled" }
+        }
+      ]
+    },
+    {
+      "slot": {
+        "name": "__rlv_4_wire_4_lamp_2_on_6_toggle_7_Enabled",
+        "key": "__rlv_4_wire_4_lamp_2_on_6_toggle_7_Enabled"
+      },
+      "components": [
+        {
+          "type": "[FrooxEngine]FrooxEngine.DynamicField<bool>",
+          "key": "__rlv_7_binding_4_lamp_2_on_6_toggle_7_Enabled",
+          "fields": { "VariableName": "on", "TargetField": "$member:toggle.Enabled" }
+        }
+      ]
+    }
+  ]
+}
