@@ -14,6 +14,7 @@ import { fileURLToPath } from "node:url";
 import { buildFile } from "../src/cli.js";
 import { checkSourceOracle } from "../test/source-oracle.js";
 import { runObjectContract } from "./object-contract.js";
+import { runVariablesContract } from "./variables-contract.js";
 import { deepEqual, equal, ok } from "node:assert/strict";
 
 const here = path.dirname(fileURLToPath(import.meta.url)); // dist/scripts
@@ -277,7 +278,9 @@ async function main(): Promise<number> {
   );
   const objectContract = await runObjectContract(dll, packageRoot);
   process.stdout.write(`object-contract: passed=${objectContract.passed} failed=${objectContract.failed}\n`);
-  return failed === 0 && objectContract.failed === 0 ? 0 : 1;
+  const variablesContract = await runVariablesContract(dll, packageRoot);
+  process.stdout.write(`variables-contract: passed=${variablesContract.passed} failed=${variablesContract.failed}\n`);
+  return failed === 0 && objectContract.failed === 0 && variablesContract.failed === 0 ? 0 : 1;
 }
 
 main().then(
