@@ -39,6 +39,27 @@ Prune requires `--prune --yes`. Prune and relocation-source deletion recheck sta
 
 These checks detect observed conflicts and coordinate this and later cooperating ResoLoop versions on the same PC and OS user. Operations remain `atomic:false`; there is no rollback or exclusion of older CLIs, other PCs/users, people, external tools or ProtoFlux. Changes outside observation or between checking and sending remain possible. Readback does not guarantee future value retention. See [failure recovery and deletion details](README-DETAILS.md#apply-の停止後は保留と実機を確認する).
 
+## Experimental creation regenerate
+
+Creation regenerate replaces a whole owned root. It is experimental and has not been verified in a live Resonite session. The plan and apply require `--url auto --session S-ID`; apply also requires an explicit `--yes` after reviewing the plan. Replacement uses delete-first: the old root is deleted before the new one is created, so there is a gap and a failed creation does not restore the old root. Every Slot under the owned root is removed, including content added manually. Inspect the exact root and its contents before confirming.
+
+The workflow accepts hand-written JSON envelopes only; there is no TSX creation entrypoint. Asset, Flux and Script placement are unsupported. Creation state v4 is separate from ordinary state v3, and migration is unavailable. To plan and apply, use:
+
+~~~powershell
+resoloop plan creation.json --mode regenerate --state creation-state.json --url auto --session S-ID --json
+resoloop apply creation.json --mode regenerate --state creation-state.json --replace-order delete-first --url auto --session S-ID --yes --json
+~~~
+
+If an operation remains pending, do not apply again. Read the state, operation ID and exact root IDs, then choose rollback or finish:
+
+~~~powershell
+resoloop creation recover --state creation-state.json --action rollback --url auto --session S-ID --yes --json
+resoloop creation recover --state creation-state.json --action finish --url auto --session S-ID --yes --json
+resoloop creation recover --state creation-state.json --discard-pending OP --yes --json
+~~~
+
+Rollback cleans up only a candidate whose complete ownership can be proven. It retains a verified old root when one remains, but cannot restore an old root deleted by delete-first; an unmarked candidate is never deleted automatically. Finish records a candidate only when its complete staged tree and ownership pass revalidation. Discard clears only the local pending record, does not inspect or clean the world, and warns about possible remaining roots. `creation recover --bind-root` is unsupported, and `creation migrate` and `creation inspect` are unavailable; inspect exact IDs with the existing ordinary inspection commands. See the [creation recovery workflow](skills/codex/resonite-build/references/creation-regenerate.md) for the full procedure.
+
 ## Installation
 
 Requirements:

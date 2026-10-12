@@ -142,6 +142,31 @@ prune は `--prune --yes` が必須です。prune と relocate の移動元削�
 
 保証するのは観測した競合の検出と、同じ PC・同じ OS ユーザーの、この版以降の ResoLoop 間の書込み調整です。操作は `atomic:false` で rollback はありません。古い CLI、別 PC・別ユーザー、人、外部ツール、ProtoFlux への排他や、観測の外・確認後の競合、値の将来の保持は保証しません。[停止後の詳しい手順](README-DETAILS.md#apply-の停止後は保留と実機を確認する)を参照してください。
 
+## 実験的な creation regenerate
+
+creation regenerate は所有root全体を作り直す実験機能です。実機では未検証です。planとapplyには `--url auto --session S-ID` が必要で、applyにはplan確認後の明示的な `--yes` も必要です。置換はdelete-first方式です。先に旧rootを削除するため、その間は制作物がない状態になり、新rootの作成に失敗しても旧rootは戻りません。root配下は手動で追加した内容も含めてすべて削除されます。実行前に対象rootと配下を正確に確認してください。
+
+入力は手書きJSON envelopeのみです。TSXから作る入口はありません。Asset・Flux・Scriptの配置には対応していません。creation state v4は通常のstate v3とは別形式で、移行機能はありません。
+
+```powershell
+resoloop plan creation.json --mode regenerate --state creation-state.json --url auto --session S-ID --json
+resoloop apply creation.json --mode regenerate --state creation-state.json --replace-order delete-first --url auto --session S-ID --yes --json
+```
+
+保留が残ったら、再applyせずstate、operation ID、rootの正確なIDを確認してから復旧方法を選びます。
+
+```powershell
+resoloop creation recover --state creation-state.json --action rollback --url auto --session S-ID --yes --json
+resoloop creation recover --state creation-state.json --action finish --url auto --session S-ID --yes --json
+resoloop creation recover --state creation-state.json --discard-pending OP --yes --json
+```
+
+Resoniteは、Componentを付けると別のComponent（例: UIXの `RectTransform`）を自動で足すことがあります。作り直しはこれを失敗にせず、足された数を結果の `engineAddedComponents`（`creation recover --action finish` も同じ）で返します。自動で足されたComponentは定義に無いため、定義から参照も値の指定もできません。値を決めたいComponentは定義に明示して書いてください。Slotの数は定義と一致しないと失敗します（`APPLY_WRITE_UNVERIFIED`）。
+
+記録したrootをResoniteの中で手で消した場合、次のplan／applyは止まらず、一致を確かめたsessionで記録IDが正確に不在なら初回の作成として進みます（何も削除せず、警告 `CREATION_PREVIOUS_ROOT_ABSENT` が付きます）。`--discard-pending` の後に世界へ残ったrootは自動では消えません。結果に出たIDを確かめて、手で消してください。
+
+rollbackが削除するのは所有を証明できたcandidate全体だけです。残っていて所有を確認できた旧rootは保持しますが、delete-firstですでに消えた旧rootは復元しません。印のないcandidateは自動削除しません。finishは、作成完了を示す記録とtree全体の所有を再検証できた場合だけ状態を確定します。discardはローカルの保留記録だけを消し、worldの確認・清掃は行わず、残ったrootの可能性を警告します。`creation recover --bind-root`、`creation migrate`、`creation inspect` は未提供です。通常のinspectで正確なIDを確認してください。詳しい手順は[creation recovery workflow](skills/codex/resonite-build/references/creation-regenerate.md)を参照してください。
+
 ## インストール
 
 必要なもの:

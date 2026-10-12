@@ -256,6 +256,31 @@ Material、家具、照明、ReflectionMaterial、TouchButtonを含むnestedな�
 resoloop apply examples/house-world.json --json
 ~~~
 
+### Experimental creation regenerate
+
+Creation regenerate rebuilds a complete owned root and is experimental; live behavior is unverified. Its plan and apply require a matched discovery session (`--url auto --session S-ID`), and apply requires `--yes` after plan review. It uses delete-first replacement: all content below the old root, including manual additions, is deleted before creation starts. This leaves a gap, and failure does not restore the deleted root. Inspect the exact root boundary before confirmation.
+
+Input is a hand-written JSON envelope. TSX creation input is not available. Asset, Flux and Script placement are unsupported. Creation state v4 is separate from ordinary apply state v3; no migration is provided.
+
+~~~powershell
+resoloop plan creation.json --mode regenerate --state creation-state.json --url auto --session S-ID --json
+resoloop apply creation.json --mode regenerate --state creation-state.json --replace-order delete-first --url auto --session S-ID --yes --json
+~~~
+
+If pending state remains, inspect the state, operation ID and exact root IDs before selecting recovery. Do not reapply while pending. `rollback` deletes only a candidate whose complete ownership is proven, keeps a verified old root if it still exists, and cannot restore an old root already deleted. An unmarked candidate is not deleted automatically. `finish` saves the candidate as active only after the staged tree and ownership pass revalidation. `--discard-pending` clears the local record only; it does not inspect or clean the world and warns about possible remaining roots.
+
+~~~powershell
+resoloop creation recover --state creation-state.json --action rollback --url auto --session S-ID --yes --json
+resoloop creation recover --state creation-state.json --action finish --url auto --session S-ID --yes --json
+resoloop creation recover --state creation-state.json --discard-pending OP --yes --json
+~~~
+
+Resonite may add Components on its own (for example UIX Components add a `RectTransform`). Regenerate does not treat this as a failure: the final structure check requires the Slot count to match the definition exactly and the Component count to be at least the defined count, and the number of extra Components is returned as `engineAddedComponents` (also by `creation recover --action finish`). Engine-added Components are not in the definition, so they cannot be referenced or have values set from it; declare any Component whose values you need explicitly. A Slot count that differs from the definition still fails with `APPLY_WRITE_UNVERIFIED`.
+
+If the recorded root was deleted by hand in Resonite, the next plan or apply does not stop: when the recorded root ID is exactly absent in the matched session, it is treated as a first creation (nothing is deleted) and the result carries the warning `CREATION_PREVIOUS_ROOT_ABSENT`. A root left in the world after `--discard-pending` is not removed automatically; check the IDs in the result and delete it by hand.
+
+`creation recover --bind-root`, `creation migrate` and `creation inspect` are unavailable. Use ordinary exact-ID inspection for runtime checks. The bundled [creation recovery workflow](skills/codex/resonite-build/references/creation-regenerate.md) includes the manual JSON envelope and diagnostic guidance.
+
 schema v1では、top-levelに `schemaVersion: "1"`、`ownership.key`、root `slot.key`が必要です。ownershipごとのstateは既定でproject内の `.resoloop/state/<ownership>.json` に保存され、途中経過もcheckpointされます。このdirectoryは `resoloop init` が生成するignore設定によりversion controlから除外されます。
 
 TSX builder は入口の named export `export const ownership = { key: "house-world" }` を使い、未指定ならroot Slotのkeyをownershipにします。空文字・不正形状はbuildエラーです。既存制作物ではownershipと全Slot/Component keyを保ち、draftの自動keyで置き換えないでください。
