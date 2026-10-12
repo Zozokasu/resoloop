@@ -460,8 +460,7 @@ public static class Program
         {
             var error = new RLoopException("COMMAND_TIMEOUT",
                 "The apply command exceeded its configured deadline; completed operations were checkpointed.",
-                ExitCodes.Timeout, ex.Context,
-                ["Inspect the state, pending evidence and exact targets before reconciling or explicitly discarding a pending operation. Increase --command-timeout only after checking responsiveness."], ex);
+                ExitCodes.Timeout, ex.Context, TimeoutSuggestions(ex), ex);
             output.Error(error);
             return error.ExitCode;
         }
@@ -483,6 +482,15 @@ public static class Program
             output.WriteDiagnostics();
             commandCancellation?.Dispose();
         }
+    }
+
+    /// <summary>Keeps the creation recovery guidance when a regenerate apply or recover times out with a pending operation.</summary>
+    internal static string[] TimeoutSuggestions(RLoopException cancelled)
+    {
+        const string general = "Inspect the state, pending evidence and exact targets before reconciling or explicitly discarding a pending operation. Increase --command-timeout only after checking responsiveness.";
+        var creationPending = cancelled.Context.TryGetValue("pending", out var pending) && pending is not null &&
+            cancelled.Context.ContainsKey("operationId") && cancelled.Context.ContainsKey("stateFile");
+        return creationPending ? [.. cancelled.Suggestions, general] : [general];
     }
 
     private static void RunUixRecipe(ParsedArguments args, OutputWriter output)

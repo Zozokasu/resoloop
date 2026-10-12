@@ -89,7 +89,12 @@ internal sealed class CreationTestClient : IResoniteClient, IApplyDeletionObserv
     {
         cancellationToken.ThrowIfCancellationRequested();
         TypeReads.Add(type);
-        return TypeRead is null ? Task.FromResult(StampMetadata) : TypeRead(type);
+        if (TypeRead is not null) return TypeRead(type);
+        // Plan runs the same preparation as apply, so the generated-content Component must be describable.
+        return Task.FromResult(type == GeneratedContentMetadata.ComponentType
+            ? new ComponentTypeInfo(type, "FrooxEngine", null, false,
+                [new(GeneratedContentMetadata.SourceMember, "field", "string", "System.String", null)])
+            : StampMetadata);
     }
 
     private T Mutate<T>()

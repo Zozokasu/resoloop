@@ -26,6 +26,10 @@ internal sealed partial class CreationMutationTestClient : IResoniteClient, IApp
     public int ThrowOnMutation { get; set; }
     /// <summary>Simulates the engine attaching this many extra Components when the generated-content Component is added.</summary>
     public int EngineAddedComponentsPerAdd { get; set; }
+    /// <summary>Adding the key type makes the engine add the value type unless the Slot already has it.</summary>
+    public Dictionary<string, string> EngineAutoAdds { get; } = new(StringComparer.Ordinal);
+    /// <summary>Component IDs the engine accepted and then removed as duplicates.</summary>
+    public HashSet<string> DroppedComponentIds { get; } = new(StringComparer.Ordinal);
     public bool RejectNextMutationResponse { get; set; }
     public string? IncompleteSlotId { get; set; }
     public Func<SlotInfo, int, SlotInfo>? SlotReadOverride { get; set; }
@@ -124,6 +128,7 @@ internal sealed partial class CreationMutationTestClient : IResoniteClient, IApp
     public Task<ComponentInfo> GetComponentAsync(string id, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        if (DroppedComponentIds.Contains(id)) throw new RLoopException("COMPONENT_NOT_FOUND", $"Exact test Component '{id}' was not found.", ExitCodes.NotFound);
         var component = Components.TryGetValue(id, out var found) ? found : throw Missing(id);
         ComponentReadIds.Add(id);
         return Task.FromResult(ComponentReadOverride?.Invoke(component, ++_componentReadCount) ?? component);
@@ -161,6 +166,11 @@ internal sealed partial class CreationMutationTestClient : IResoniteClient, IApp
         FieldLog.Add($"add:{componentType}:{string.Join(',', fields.Keys)}");
         AddRequests.Add((slotId, componentType, new Dictionary<string, string>(fields, StringComparer.Ordinal)));
         var id = "component-" + ++_nextId;
+        if (EngineAutoAdds.ContainsValue(componentType) && Slots[slotId].Components.Any(value => value.Type == componentType))
+        {
+            DroppedComponentIds.Add(id);
+            return Task.FromResult(new ComponentCreateResult(id, componentType));
+        }
         var component = new ComponentInfo(id, componentType, Members(id, componentType, fields, includeDefaults: true));
         Components.Add(id, component);
         Replace(slotId, slot => slot with { Components = slot.Components.Append(new ComponentSummary(id, componentType)).ToArray() });
@@ -174,6 +184,13 @@ internal sealed partial class CreationMutationTestClient : IResoniteClient, IApp
             {
                 Components = slot.Components.Concat(added.Select(engine => new ComponentSummary(engine.Id, engine.Type))).ToArray()
             });
+        }
+        if (EngineAutoAdds.TryGetValue(componentType, out var autoType) && Slots[slotId].Components.All(value => value.Type != autoType))
+        {
+            var autoId = "engine-auto-" + ++_nextId;
+            var auto = new ComponentInfo(autoId, autoType, Members(autoId, autoType, new Dictionary<string, string>(), includeDefaults: true));
+            Components.Add(autoId, auto);
+            Replace(slotId, slot => slot with { Components = slot.Components.Append(new ComponentSummary(autoId, autoType)).ToArray() });
         }
         AfterAddComponent?.Invoke(slotId, componentType, id);
         return Task.FromResult(new ComponentCreateResult(id, AddResultTypeOverride ?? componentType));

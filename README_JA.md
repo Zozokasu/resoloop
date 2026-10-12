@@ -163,6 +163,8 @@ resoloop creation recover --state creation-state.json --discard-pending OP --yes
 
 Resoniteは、Componentを付けると別のComponent（例: UIXの `RectTransform`）を自動で足すことがあります。作り直しはこれを失敗にせず、足された数を結果の `engineAddedComponents`（`creation recover --action finish` も同じ）で返します。自動で足されたComponentは定義に無いため、定義から参照も値の指定もできません。値を決めたいComponentは定義に明示して書いてください。Slotの数は定義と一致しないと失敗します（`APPLY_WRITE_UNVERIFIED`）。
 
+定義したComponentを、Resoniteが自分で足したものの重複として消した場合（例: UIXのComponentの後に書いた `RectTransform`）、作り直しは、足されていた方へ定義の値を書いて使います。定義の順には依りません（警告 `CREATION_COMPONENT_MERGED_WITH_ENGINE_ADDED`）。`plan --mode regenerate` も、Componentの型と値を `apply` と同じに検査します（書込みはしません）。コマンドの期限切れでpendingが残ったときは、`suggestions` に `creation recover` の案内が出ます。
+
 記録したrootをResoniteの中で手で消した場合、次のplan／applyは止まらず、一致を確かめたsessionで記録IDが正確に不在なら初回の作成として進みます（何も削除せず、警告 `CREATION_PREVIOUS_ROOT_ABSENT` が付きます）。`--discard-pending` の後に世界へ残ったrootは自動では消えません。結果に出たIDを確かめて、手で消してください。
 
 rollbackが削除するのは所有を証明できたcandidate全体だけです。残っていて所有を確認できた旧rootは保持しますが、delete-firstですでに消えた旧rootは復元しません。印のないcandidateは自動削除しません。finishは、作成完了を示す記録とtree全体の所有を再検証できた場合だけ状態を確定します。discardはローカルの保留記録だけを消し、worldの確認・清掃は行わず、残ったrootの可能性を警告します。`creation recover --bind-root`、`creation migrate`、`creation inspect` は未提供です。通常のinspectで正確なIDを確認してください。詳しい手順は[creation recovery workflow](skills/codex/resonite-build/references/creation-regenerate.md)を参照してください。

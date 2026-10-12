@@ -101,6 +101,8 @@ public sealed partial class CreationApplyService(IResoniteClient client)
             if (previousAbsent) diagnostics = [CreationRootAbsence.Diagnostic(recorded!.Id)];
         }
 
+        // Same preparation as apply (type resolution and catalog validation); read-only.
+        await new CreationTreeExecutor(client).PrepareAsync(definition, cancellationToken);
         await verifier.VerifySessionAsync(state?.Session, context, proof);
         var counts = CountDefinitions(definition, definitionRootSlot);
         return new("1", "regenerate", document.CreationId, statePath, null, hash, action, previousRootId,

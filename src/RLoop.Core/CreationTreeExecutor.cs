@@ -64,7 +64,7 @@ internal sealed class CreationTreeExecutor(IResoniteClient client)
         return new CreationPreparedTree(definition, plannedRoot.Key!, slots, resolvedComponents, runtimeTypes);
     }
 
-    public async Task ExecuteAsync(CreationPreparedTree tree, string exactRootId, Func<Func<Task>, Task> send,
+    public async Task<IReadOnlyList<object?>> ExecuteAsync(CreationPreparedTree tree, string exactRootId, Func<Func<Task>, Task> send,
         CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(tree);
@@ -97,6 +97,7 @@ internal sealed class CreationTreeExecutor(IResoniteClient client)
                 throw Unverified($"Created Slot '{slot.Key}' did not match its exact-ID readback.");
         }
 
+        var diagnostics = new List<object?>();
         var deferred = new List<(ComponentPlan Component, IReadOnlyDictionary<string, JsonElement> Fields)>();
         foreach (var component in tree.Components)
         {
@@ -120,8 +121,34 @@ internal sealed class CreationTreeExecutor(IResoniteClient client)
             var id = RequireNewId(createdId, component.ReferenceKey, allIds);
             if (!SameType(resultType, component.RuntimeType))
                 throw Unverified($"AddComponent returned unexpected type '{resultType}' for '{component.ReferenceKey}'.");
+            try
+            {
+                await VerifyComponentAsync(id, component.RuntimeType, immediate, ct);
+            }
+            catch (RLoopException ex) when (ex.Code == "COMPONENT_NOT_FOUND")
+            {
+                // Resonite may drop a declared Component as a duplicate of one it added itself; use that one if it is unambiguous.
+                var owner = await client.GetSlotAsync(slotId, 0, false, ct);
+                var candidates = (owner.Components ?? []).Where(candidate => !allIds.Contains(candidate.Id) &&
+                    StableEffectiveKeys.NormalizeType(candidate.Type) == StableEffectiveKeys.NormalizeType(component.RuntimeType)).ToArray();
+                if (owner.Id != slotId || candidates.Length != 1) throw;
+                id = candidates[0].Id;
+                allIds.Add(id);
+                if (immediate.Count > 0)
+                    await send(() => client.SetComponentMembersAsync(id, component.RuntimeType, immediate, ct));
+                await VerifyComponentAsync(id, component.RuntimeType, immediate, ct);
+                diagnostics.Add(new Dictionary<string, object?>
+                {
+                    ["code"] = "CREATION_COMPONENT_MERGED_WITH_ENGINE_ADDED",
+                    ["severity"] = "warning",
+                    ["slotKey"] = component.SlotKey,
+                    ["componentKey"] = component.ReferenceKey,
+                    ["type"] = component.RuntimeType,
+                    ["componentId"] = id,
+                    ["message"] = "Resonite removed the declared Component as a duplicate of one it had added itself; the declared values were applied to the engine-added Component."
+                });
+            }
             if (!componentIds.TryAdd(component.ReferenceKey, id)) throw Invalid($"Duplicate effective Component key '{component.ReferenceKey}'.");
-            await VerifyComponentAsync(id, component.RuntimeType, immediate, ct);
             await VerifyComponentOwnerAsync(slotId, id, ct);
             if (late.Count > 0) deferred.Add((component, late));
         }
@@ -136,6 +163,7 @@ internal sealed class CreationTreeExecutor(IResoniteClient client)
             await send(() => client.SetComponentMembersAsync(id, item.Component.RuntimeType, resolved, ct));
             await VerifyComponentAsync(id, item.Component.RuntimeType, resolved, ct);
         }
+        return diagnostics;
     }
 
     private async Task VerifyComponentAsync(string id, string type, IReadOnlyDictionary<string, string> fields, CancellationToken ct)

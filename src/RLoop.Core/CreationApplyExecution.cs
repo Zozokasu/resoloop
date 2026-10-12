@@ -177,8 +177,9 @@ public sealed partial class CreationApplyService
         transaction.SetStage("creatingTree");
         try
         {
-            await new CreationTreeExecutor(client).ExecuteAsync(prepared, candidateId!,
+            var treeDiagnostics = await new CreationTreeExecutor(client).ExecuteAsync(prepared, candidateId!,
                 send => transaction.SendTreeAsync(send, cancellationToken), cancellationToken);
+            diagnostics = [.. diagnostics, .. treeDiagnostics];
         }
         catch
         {
