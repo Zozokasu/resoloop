@@ -26,7 +26,7 @@ public sealed class CreationPlanTests : IDisposable
         Assert.Equal("{\"resultVersion\":\"1\",\"mode\":\"regenerate\",\"creationId\":\"room\",\"stateFile\":" +
             JsonSerializer.Serialize(Path.GetFullPath(statePath)) +
             ",\"buildId\":null,\"inputHash\":\"" + InputHash + "\",\"action\":\"create\",\"previousRootId\":null," +
-            "\"replaceOrder\":\"delete-first\",\"definitionsReset\":true,\"counts\":{\"slots\":1,\"components\":1}," +
+            "\"replaceOrder\":\"delete-first\",\"definitionsReset\":true,\"counts\":{\"slots\":1,\"components\":2}," +
             "\"pending\":null,\"evidence\":{\"overall\":\"complete\",\"session\":\"complete\",\"exactId\":\"unknown\"," +
             "\"parent\":\"complete\",\"rootStamp\":\"unknown\",\"siblingUniqueness\":\"complete\"," +
             "\"descendantBoundary\":\"unknown\"},\"diagnostics\":[],\"atomic\":false}", Serialize(result));
@@ -53,7 +53,7 @@ public sealed class CreationPlanTests : IDisposable
         Assert.Equal("{\"resultVersion\":\"1\",\"mode\":\"regenerate\",\"creationId\":\"room\",\"stateFile\":" +
             JsonSerializer.Serialize(Path.GetFullPath(statePath)) + ",\"buildId\":null,\"inputHash\":\"" + InputHash +
             "\",\"action\":\"replace\",\"previousRootId\":\"created-root\",\"replaceOrder\":\"delete-first\"," +
-            "\"definitionsReset\":true,\"counts\":{\"slots\":1,\"components\":1},\"pending\":null," +
+            "\"definitionsReset\":true,\"counts\":{\"slots\":1,\"components\":2},\"pending\":null," +
             "\"evidence\":{\"overall\":\"complete\",\"session\":\"complete\",\"exactId\":\"complete\"," +
             "\"parent\":\"complete\",\"rootStamp\":\"complete\",\"siblingUniqueness\":\"complete\"," +
             "\"descendantBoundary\":\"complete\"},\"diagnostics\":[],\"atomic\":false}", Serialize(result));

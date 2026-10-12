@@ -3,7 +3,19 @@ using System.Text.Json.Serialization;
 namespace RLoop.Core;
 
 public sealed record CreationPlanOptions(string? StateFile = null, bool RequireState = false,
-    string? Parent = null, string ReplaceOrder = "delete-first", string? RequestedSessionId = null);
+    string? Parent = null, string ReplaceOrder = "delete-first", string? RequestedSessionId = null,
+    string? GeneratedContentSource = null);
+
+public sealed record CreationApplyOptions(string? StateFile = null, bool RequireState = false,
+    string? Parent = null, string ReplaceOrder = "delete-first", string? RequestedSessionId = null,
+    bool Yes = false, string? GeneratedContentSource = null);
+
+public sealed record CreationApplyResult(string ResultVersion, string Mode, string CreationId, string StateFile,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? BuildId, string InputHash,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? PreviousRootId,
+    string? RootId, bool Replaced, bool DefinitionsReset, string ReplaceOrder, string Phase,
+    CreationPlanCounts Counts, [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] object? Pending,
+    CreationPlanEvidence Evidence, IReadOnlyList<object?> Diagnostics, bool Atomic, int EngineAddedComponents = 0);
 
 public sealed record CreationPlanCounts(int Slots, int Components);
 public sealed record CreationPlanEvidence(string Overall, string Session, string ExactId, string Parent,
@@ -14,8 +26,8 @@ public sealed record CreationPlanResult(string ResultVersion, string Mode, strin
     bool DefinitionsReset, CreationPlanCounts Counts, [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] object? Pending, CreationPlanEvidence Evidence,
     IReadOnlyList<object?> Diagnostics, bool Atomic);
 
-/// <summary>Read-only planning for creation regenerate. This service deliberately has no apply operation.</summary>
-public sealed class CreationApplyService(IResoniteClient client)
+/// <summary>Planning and guarded delete-first application for creation regenerate.</summary>
+public sealed partial class CreationApplyService(IResoniteClient client)
 {
     public async Task<CreationPlanResult> PlanAsync(CreationDocument document, CreationPlanOptions options,
         CancellationToken cancellationToken = default)
@@ -25,11 +37,17 @@ public sealed class CreationApplyService(IResoniteClient client)
         if (document is null)
             throw new RLoopException("CREATION_DOCUMENT_INVALID", "Creation document is required.", ExitCodes.ValidationFailed);
         var hash = document.ValidatePlanInput();
+        var preflight = CreationRegeneratePreflight.Validate(document);
+        if (preflight.Count > 0)
+            throw new RLoopException("CREATION_DOCUMENT_INVALID", preflight[0].Message, ExitCodes.ValidationFailed,
+                new Dictionary<string, object?> { ["issues"] = preflight });
         var validation = await document.ValidateAsync(cancellationToken);
         if (!validation.Valid)
             throw new RLoopException("CREATION_DOCUMENT_INVALID", validation.Issues.FirstOrDefault()?.Message ?? "Creation document is invalid.",
                 ExitCodes.ValidationFailed, new Dictionary<string, object?> { ["issues"] = validation.Issues });
-        var definition = document.Definition;
+        var definition = GeneratedContentMetadata.AddToGeneratedRoots(document.Definition,
+            options.GeneratedContentSource ?? GeneratedContentMetadata.SourceForVersion(
+                typeof(CreationApplyService).Assembly.GetName().Version?.ToString() ?? "0.0.0"));
         if (definition is null || definition.Slot is not { } definitionRootSlot)
             throw new RLoopException("CREATION_DOCUMENT_INVALID", "Creation document has no validated root definition Slot.", ExitCodes.ValidationFailed);
         if (options.ReplaceOrder != "delete-first")
@@ -40,42 +58,53 @@ public sealed class CreationApplyService(IResoniteClient client)
         if (state?.Pending is { } pending)
             throw new RLoopException("APPLY_WRITE_UNVERIFIED", "Creation state contains a pending operation that must be reconciled before planning.",
                 ExitCodes.OperationFailed, new Dictionary<string, object?>
-                { ["stateFile"] = statePath, ["operationId"] = pending.OperationId, ["pending"] = pending });
+                {
+                    ["stateFile"] = statePath, ["operationId"] = pending.OperationId, ["stage"] = pending.Stage,
+                    ["previousRootId"] = pending.PreviousRoot?.Id, ["candidateRootId"] = pending.CandidateRoot?.Id,
+                    ["pending"] = pending, ["completeness"] = "unknown"
+                },
+                [$"Resolve the retained creation state with: resoloop creation recover --state \"{statePath}\" --action rollback|finish --url auto --session {pending.Session.DiscoverSessionId ?? "S-ID"} --yes"]);
         var verifier = new CreationOwnershipVerifier(client);
         var context = verifier.CreateContext(cancellationToken);
         var proof = await verifier.VerifySessionAsync(state?.Session, context, expectedSession: null);
         if (options.RequestedSessionId is { } requested && requested != proof.DiscoverSessionId)
             throw CreationOwnershipVerifier.SessionUnproven("The requested --session does not match the connected discovered session.");
 
-        var action = state?.ActiveRoot is null ? "create" : "replace";
+        var recorded = state?.ActiveRoot;
+        var previousAbsent = recorded is not null &&
+            await CreationRootAbsence.IsExactAbsentAsync(client, verifier, state!.Session, proof, recorded.Id, cancellationToken);
+        var action = recorded is null || previousAbsent ? "create" : "replace";
         CreationPlanEvidence evidence;
         string? previousRootId = null;
-        if (state?.ActiveRoot is { } activeRoot)
+        IReadOnlyList<object?> diagnostics = [];
+        if (recorded is not null && !previousAbsent)
         {
+            var activeRoot = recorded;
             if (options.Parent is not null)
             {
                 var requestedParent = await ResolveParentAsync(options.Parent, context);
                 if (requestedParent != activeRoot.ParentId)
                     throw CreationOwnershipVerifier.OwnerUnproven("The requested parent differs from the recorded activeRoot parent.");
             }
-            await verifier.VerifyAsync(state, context);
+            await verifier.VerifyAsync(state!, context);
             previousRootId = activeRoot.Id;
             evidence = new("complete", "complete", "complete", "complete", "complete", "complete", "complete");
         }
         else
         {
-            var selector = options.Parent ?? definitionRootSlot.Parent;
+            var selector = options.Parent ?? (previousAbsent ? recorded!.ParentId : definitionRootSlot.Parent);
             selector = string.IsNullOrWhiteSpace(selector) ? "Root" : selector;
             var parentId = await ResolveParentAsync(selector, context);
             await verifier.ObserveInitialParentAsync(parentId, document.CreationId, context);
             await VerifyAncestorBoundaryAsync(parentId, document.CreationId, context);
             evidence = new("complete", "complete", "unknown", "complete", "unknown", "complete", "unknown");
+            if (previousAbsent) diagnostics = [CreationRootAbsence.Diagnostic(recorded!.Id)];
         }
 
         await verifier.VerifySessionAsync(state?.Session, context, proof);
         var counts = CountDefinitions(definition, definitionRootSlot);
         return new("1", "regenerate", document.CreationId, statePath, null, hash, action, previousRootId,
-            "delete-first", true, counts, null, evidence, [], false);
+            "delete-first", true, counts, null, evidence, diagnostics, false);
     }
 
     private static async Task<string> ResolveParentAsync(string selector, CreationObservationContext context)
@@ -164,5 +193,7 @@ public sealed class CreationApplyService(IResoniteClient client)
         return new(slots, components);
     }
 
-    private static RLoopException ModeMismatch(string message) => new("CREATION_MODE_MISMATCH", message, ExitCodes.InvalidArguments);
+    private static RLoopException ModeMismatch(string message) =>
+        new("CREATION_MODE_MISMATCH", message, ExitCodes.InvalidArguments);
+
 }

@@ -1,0 +1,74 @@
+# Creation regenerate and recovery workflow (experimental)
+
+Creation regenerate rebuilds one complete owned root from a hand-written JSON envelope. It is experimental and has not been verified in a live Resonite session. Read this workflow before using it. The feature does not take ownership of a root by name or path alone.
+
+## Scope and input
+
+The current input is a JSON file with this envelope and a schema v1 definition:
+
+```json
+{
+  "schemaVersion": "creation-1",
+  "kind": "resoloop-creation",
+  "creationVersion": "1",
+  "creationId": "room",
+  "definition": {
+    "schemaVersion": "1",
+    "ownership": { "key": "room" },
+    "slot": { "key": "root", "name": "Room", "parent": "Root" },
+    "components": [],
+    "children": []
+  }
+}
+```
+
+This is a hand-authored JSON entrypoint. There is no TSX creation entrypoint or build-bundle support. Asset, Flux and Script placement are unsupported. The implementation also rejects cameras, tests, migration declarations and nested child Slots with their own parent. Unsupported declarations must be removed or handled by another workflow; they are not silently ignored.
+
+Creation state schema v4 is separate from ordinary apply state v3. No v3-to-v4 migration is provided. Keep the state file safe and available. Planning and applying require `--url auto --session S-ID`, where `S-ID` is the exact discovered session ID. An explicit URL alone does not prove the session.
+
+## Plan, inspect, apply
+
+Run plan first and review its root, replacement order and counts. A plan is a connected observation and never writes to the world:
+
+```powershell
+resoloop plan creation.json --mode regenerate --state creation-state.json --url auto --session S-ID --json
+```
+
+The plan result reports `mode: "regenerate"`, `creationId`, `stateFile`, `inputHash`, `action` (`create` or `replace`), `previousRootId`, `replaceOrder`, `definitionsReset`, Slot/Component counts, ownership/session evidence, diagnostics and `atomic: false`. Replacing a root is delete-first. Before confirming, inspect the exact recorded root and the entire subtree that belongs to it. Every Slot under the root is deleted, including content manually added after the prior run.
+
+Apply only after reviewing that scope:
+
+```powershell
+resoloop apply creation.json --mode regenerate --state creation-state.json --replace-order delete-first --url auto --session S-ID --yes --json
+```
+
+The first apply also requires `--yes`; it is not an implicit confirmation bypass. `--replace-order` currently accepts only `delete-first`. This order deletes the old root before creating the replacement, so there is a period with no root. If creation fails after deletion, recovery does not restore the old root (nor does a failed create). The result includes exact previous/new root IDs, `replaced`, `definitionsReset`, counts, phase, evidence, diagnostics, `atomic: false`, and any retained pending operation.
+
+Resonite may add Components on its own (for example UIX Components add a `RectTransform`). Regenerate does not fail on this: the Slot count must match the definition exactly, the Component count must be at least the defined count, and the result's `engineAddedComponents` reports how many extra Components were observed (`creation recover --action finish` reports it too). Engine-added Components are not in the definition, so they cannot be referenced or have values set from it; declare any Component whose values you need explicitly.
+
+If the recorded root was deleted by hand in Resonite, the next plan or apply creates a new root (nothing is deleted) when the recorded root ID is exactly absent in the matched session, and reports the warning `CREATION_PREVIOUS_ROOT_ABSENT`. Anything short of an exact absence observation (partial data, timeout, session change) still stops. A root left in the world after `--discard-pending` is not deleted automatically; check the IDs in the result and delete it by hand.
+
+Keep the state file and read the full JSON result, especially `phase`, `pending`, `evidence` and `diagnostics`. Failures retain operation context such as `stateFile`, `operationId`, stage and exact IDs. An uncertain write or readback is not proof of success. Do not retry apply while a pending operation exists; plan and apply block on pending state until it is reconciled.
+
+## Recover a pending operation
+
+First inspect the saved state, operation ID, previous/candidate root IDs and the exact IDs reported in pending evidence. Confirm the currently selected discovery session. Recovery requires the same matched session proof (`--url auto --session S-ID`) and explicit `--yes`:
+
+```powershell
+resoloop creation recover --state creation-state.json --action rollback --url auto --session S-ID --yes --json
+resoloop creation recover --state creation-state.json --action finish --url auto --session S-ID --yes --json
+```
+
+Choose `rollback` to clean up a candidate only when its complete ownership can be proven from the exact ID, parent, generation, creation stamp, uniqueness and subtree evidence. It retains a verified old root when one remains. If delete-first already removed the old root, rollback does not recreate it and records no active root when its absence is proven. A candidate without a proven creation stamp is never deleted automatically. Unknown IDs and incomplete observations remain pending; inspect only the exact reported IDs and do not guess from names, order or type.
+
+Choose `finish` only when the pending operation has a staged candidate, a recorded complete tree and counts, and the candidate's structure and ownership can be reverified. Finish records that candidate as active; it does not replay or rewrite content. If these conditions are not met, the pending state is retained with an error and recovery context.
+
+If world cleanup cannot be proven and the operator deliberately chooses to clear only local evidence, discard requires the exact operation ID and `--yes`:
+
+```powershell
+resoloop creation recover --state creation-state.json --discard-pending OP --yes --json
+```
+
+This is local-only: it does not connect, inspect, delete or otherwise clean the world. The active-root record is retained and the result warns about possible remaining root IDs. Discard does not make a later apply exempt from its normal state and ownership checks. Inspect the world and exact IDs before deciding what to do next.
+
+`creation recover --bind-root` is unsupported, and `creation migrate` and `creation inspect` are unavailable. Use the existing ordinary `inspect` and `hierarchy` commands for bounded observation of exact IDs, then inspect again after any authorized change. Preserve Reflection-first behavior for Component/member details, keep observations bounded, delete only proven exact targets, and perform post-change inspection.

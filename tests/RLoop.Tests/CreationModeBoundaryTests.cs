@@ -76,10 +76,20 @@ public sealed class CreationModeBoundaryTests : IDisposable
     }
 
     [Fact]
-    public async Task RegenerateApplyIsUnavailableBeforeConnection()
+    public async Task RegenerateApplyRequiresConfirmationBeforeConnection()
     {
         var path = Save("apply-regenerate.json", Envelope);
-        await AssertModeMismatch(["apply", path, "--mode", "regenerate", "--json"], "not available in this version");
+        var report = Path.Combine(root, "apply-confirmation.json");
+        var connects = 0;
+        var exit = await Program.RunAsync(["apply", path, "--mode", "regenerate", "--json", "--report", report], _ =>
+        {
+            connects++;
+            throw new InvalidOperationException("Confirmation rejection must happen before connection.");
+        });
+        Assert.Equal(ExitCodes.ValidationFailed, exit);
+        Assert.Equal(0, connects);
+        using var parsed = JsonDocument.Parse(File.ReadAllText(report));
+        Assert.Equal("CONFIRMATION_REQUIRED", parsed.RootElement.GetProperty("error").GetProperty("code").GetString());
     }
 
     [Theory]

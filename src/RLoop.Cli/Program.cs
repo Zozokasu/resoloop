@@ -172,15 +172,39 @@ public static class Program
                 ["backend"] = parsed.Option("backend"), ["workbench-pipe"] = parsed.Option("workbench-pipe")
             };
             var resolution = ConfigResolver.Resolve(Environment.CurrentDirectory, cliConfig);
-            BackendSupport.RequireSupported(parsed.Positionals[0], resolution.Config.Backend,
-                parsed.Positionals.Count > 1 ? parsed.Positionals[1] : null);
+            if (!CreationCommands.IsRecovery(parsed))
+                BackendSupport.RequireSupported(parsed.Positionals[0], resolution.Config.Backend,
+                    parsed.Positionals.Count > 1 ? parsed.Positionals[1] : null);
             commandCancellation = CancellationTokenSource.CreateLinkedTokenSource(userCancellation.Token);
             commandCancellation.CancelAfter(TimeSpan.FromSeconds(resolution.Config.CommandTimeoutSeconds));
             var commandToken = commandCancellation.Token;
             if (parsed.Has("verbose")) Console.Error.WriteLine(JsonSerializer.Serialize(new { configSources = resolution.Sources }));
 
-            if (CreationCommands.IsRegeneratePlan(parsed))
+            if (CreationCommands.IsRecovery(parsed))
             {
+                if (resolution.Config.Backend == "workbench")
+                    throw new RLoopException("BACKEND_UNSUPPORTED", "Creation recovery requires the ResoniteLink backend.", ExitCodes.OperationFailed);
+                IResoniteClient recoveryClient;
+                if (connect is not null)
+                    recoveryClient = await connect(commandToken);
+                else
+                {
+                    var uri = await ResoniteClientFactory.ResolveConnectionUrlAsync(parsed, resolution.Config, commandToken);
+                    recoveryClient = await ResoniteClientFactory.ConnectAsync(parsed, resolution.Config, ReflectionCacheFrom(parsed), commandToken, uri);
+                }
+                await using (recoveryClient)
+                {
+                    var result = await new CreationRecoveryService(recoveryClient).RecoverAsync(
+                        new CreationRecoveryOptions(parsed.RequireOption("state"), parsed.RequireOption("action"),
+                            parsed.RequireOption("session"), parsed.Has("yes")), commandToken);
+                    output.Success(result);
+                }
+                return ExitCodes.Success;
+            }
+
+            if (CreationCommands.IsRegeneratePlan(parsed) || CreationCommands.IsRegenerateApply(parsed))
+            {
+                var isCreationApply = CreationCommands.IsRegenerateApply(parsed);
                 if (parsed.Has("build-id"))
                     throw new RLoopException("INVALID_OPTION", "--build-id is unavailable for creation envelopes in this version.", ExitCodes.InvalidArguments);
                 if (resolution.Config.Backend == "workbench")
@@ -190,6 +214,10 @@ public static class Program
 
                 var creation = CreationDocument.Load(parsed.Positional(1, "Creation envelope"));
                 creation.ValidatePlanInput();
+                var creationPreflight = CreationRegeneratePreflight.Validate(creation);
+                if (creationPreflight.Count > 0)
+                    throw new RLoopException("CREATION_DOCUMENT_INVALID", creationPreflight[0].Message, ExitCodes.ValidationFailed,
+                        new Dictionary<string, object?> { ["issues"] = creationPreflight });
                 var creationValidation = await creation.ValidateAsync(commandToken);
                 if (!creationValidation.Valid)
                     throw new RLoopException("CREATION_DOCUMENT_INVALID",
@@ -197,11 +225,20 @@ public static class Program
                         new Dictionary<string, object?> { ["issues"] = creationValidation.Issues });
                 var statePath = CreationStateStore.ResolvePath(creation, parsed.Option("state"));
                 output.ProtectDiagnosticsPath(statePath);
+                if (isCreationApply && !parsed.Has("yes"))
+                    throw new RLoopException("CONFIRMATION_REQUIRED", "apply --mode regenerate requires --yes after inspecting the plan.", ExitCodes.ValidationFailed);
                 var state = CreationStateStore.Load(statePath, creation.CreationId, parsed.Has("require-state"));
                 if (state?.Pending is { } pending)
-                    throw new RLoopException("APPLY_WRITE_UNVERIFIED", "Creation state contains a pending operation that must be reconciled before planning.",
+                    throw new RLoopException("APPLY_WRITE_UNVERIFIED", isCreationApply
+                        ? "Creation state contains a pending operation that must be reconciled before applying."
+                        : "Creation state contains a pending operation that must be reconciled before planning.",
                         ExitCodes.OperationFailed, new Dictionary<string, object?>
-                        { ["stateFile"] = statePath, ["operationId"] = pending.OperationId, ["pending"] = pending });
+                        {
+                            ["stateFile"] = statePath, ["operationId"] = pending.OperationId, ["stage"] = pending.Stage,
+                            ["previousRootId"] = pending.PreviousRoot?.Id, ["candidateRootId"] = pending.CandidateRoot?.Id,
+                            ["pending"] = pending, ["completeness"] = "unknown"
+                        },
+                        [$"Resolve the retained creation state with: resoloop creation recover --state \"{statePath}\" --action rollback|finish --url auto --session {pending.Session.DiscoverSessionId ?? "S-ID"} --yes"]);
 
                 if (parsed.Option("url") != "auto" || parsed.Option("session") is not { } selectedSession ||
                     !selectedSession.StartsWith("S-", StringComparison.Ordinal))
@@ -217,10 +254,23 @@ public static class Program
                 }
                 await using (creationClient)
                 {
-                    var plan = await new CreationApplyService(creationClient).PlanAsync(creation,
-                        new CreationPlanOptions(parsed.Option("state"), parsed.Has("require-state"),
-                            parsed.Option("parent"), parsed.Option("replace-order") ?? "delete-first", selectedSession), commandToken);
-                    output.Success(plan);
+                    var generatedContentSource = GeneratedContentMetadata.SourceForVersion(ProductVersion());
+                    if (isCreationApply)
+                    {
+                        var result = await new CreationApplyService(creationClient).ApplyAsync(creation,
+                            new CreationApplyOptions(parsed.Option("state"), parsed.Has("require-state"),
+                                parsed.Option("parent"), parsed.Option("replace-order") ?? "delete-first", selectedSession,
+                                parsed.Has("yes"), generatedContentSource), commandToken);
+                        output.Success(result);
+                    }
+                    else
+                    {
+                        var plan = await new CreationApplyService(creationClient).PlanAsync(creation,
+                            new CreationPlanOptions(parsed.Option("state"), parsed.Has("require-state"),
+                                parsed.Option("parent"), parsed.Option("replace-order") ?? "delete-first", selectedSession,
+                                generatedContentSource), commandToken);
+                        output.Success(plan);
+                    }
                 }
                 return ExitCodes.Success;
             }
@@ -1549,20 +1599,43 @@ Default declaration output: project .resoloop/catalog-types.d.ts. JsonValue fall
 """,
             "apply" => """
 resoloop apply FILE [--build-id R] [--state FILE] [--require-state] [--adopt] [--profile] [--ndjson-progress] [--prune --yes]
+resoloop apply creation.json --mode regenerate --state creation-state.json --replace-order delete-first --url auto --session S-ID --yes --json
+resoloop creation recover --state creation-state.json --action rollback --url auto --session S-ID --yes --json
+resoloop creation recover --state creation-state.json --action finish --url auto --session S-ID --yes --json
+resoloop creation recover --state creation-state.json --discard-pending OP --yes --json
 
 Validates and plans the complete document before mutation. State checkpoints make a failed non-atomic apply resumable.
 --adopt binds one verified existing root. --prune deletes stale owned targets and always requires --yes.
 --discard-pending OPERATION_ID --yes discards only that pending record offline and exits; do not combine with --prune/--adopt.
 Inspect first: an untracked successful creation can be duplicated by the next apply; delete unwanted objects only by exact IDs.
+Regenerate is experimental: it deletes the entire owned root, including manually added content. Inspect its plan and pass --yes; it requires --url auto --session S-ID.
+It accepts hand-written JSON envelopes only (no TSX creation entrypoint), is live-unverified, and uses separate v4 state with no v3 migration. Delete-first creates a gap; failure does not restore the old root. Asset/Flux/Script placement is unsupported.
 """,
             "plan" or "diff" => """
 resoloop plan|diff FILE [--build-id R] [--state FILE] [--require-state] [--adopt]
   [--changes-only | --creates-only | --deletes-only | --summary]
+resoloop plan creation.json --mode regenerate --state creation-state.json --url auto --session S-ID --json
 
 Never changes the world. Without --brief, JSON includes a separate changes array; output filters affect only operations.
 --brief emits one compact target/reason list (changes by default); --summary --brief emits counts only.
 --report NEW_FILE.json saves the full standard JSON, including all changes. Existing files are never overwritten.
 Review --deletes-only before apply --prune --yes.
+Regenerate planning is experimental and requires --url auto --session S-ID. Creation state v4 is separate from legacy v3; no v3 migration is provided. It accepts hand-written JSON envelopes only (no TSX entrypoint). Asset/Flux/Script placement is unsupported; live behavior is unverified.
+Apply deletes the entire owned root, including manual additions, and needs --yes after plan review. Delete-first creates a gap and a failed create does not restore the old root.
+Regenerate may add Components automatically in Resonite (for example RectTransform); apply accepts extras and reports engineAddedComponents. Slot counts must match the definition.
+Recover pending work only after inspecting state and exact IDs. An unmarked candidate is never deleted automatically; discard-pending clears only the local pending record (no world cleanup, no exemption from the next apply checks):
+  resoloop creation recover --state creation-state.json --action rollback --url auto --session S-ID --yes --json
+  resoloop creation recover --state creation-state.json --action finish --url auto --session S-ID --yes --json
+  resoloop creation recover --state creation-state.json --discard-pending OP --yes --json
+""",
+            "creation" => """
+resoloop creation recover --state STATE --action rollback|finish --url auto --session S-ID --yes --json
+resoloop creation recover --state STATE --discard-pending OP --yes --json
+
+Recovery is experimental and requires inspection of the retained state, operation ID and exact Slot IDs first.
+rollback removes only a fully proven candidate and retains a proven old root when present; it does not recreate an old root that was already deleted.
+finish is available only when the complete staged tree and ownership can be reverified. discard-pending clears the local record only: it does not inspect or clean the world.
+State v4 is separate from legacy v3 with no migration. This workflow accepts hand-written JSON envelopes only; TSX creation, Asset/Flux/Script placement, creation recover --bind-root, creation migrate and creation inspect are unavailable. Live behavior is unverified.
 """,
             "find" => """
 resoloop find (--name TEXT [--exact] | --component TYPE) [--under SLOT] [--direct-children]
@@ -1651,6 +1724,11 @@ Editing:
   resoloop validate FILE [--build-id R] [--catalog FILE] [--strict]
   resoloop plan|diff FILE [--build-id R] [--state FILE] [--require-state] [--adopt] [--changes-only|--creates-only|--deletes-only|--summary]
   resoloop apply FILE [--build-id R] [--state FILE] [--require-state] [--adopt] [--profile] [--ndjson-progress] [--prune --yes]
+  resoloop plan creation.json --mode regenerate --state creation-state.json --url auto --session S-ID --json
+  resoloop apply creation.json --mode regenerate --state creation-state.json --replace-order delete-first --url auto --session S-ID --yes --json
+  resoloop creation recover --state creation-state.json --action rollback --url auto --session S-ID --yes --json
+  resoloop creation recover --state creation-state.json --action finish --url auto --session S-ID --yes --json
+  resoloop creation recover --state creation-state.json --discard-pending OP --yes --json
   Bundle input requires --build-id R and its embedded catalog; ordinary JSON omits --build-id.
   --diagnostics FILE writes versioned detailed diagnostics to a new file for validate/diff/plan/apply.
   resoloop test FILE.json [--state FILE] [--probe --yes]
@@ -1692,6 +1770,8 @@ List announcements with discover; auto requires exactly one match. Explicit URLs
 Exact Slot path (PowerShell): 'path:["Root","A/B"," Label "]' preserves separators and spaces in names.
 Configuration priority: CLI > environment > .resoloop.json > ~/.resoloop/config.json
 Environment: RESONITE_LINK_URL, RESOLOOP_TIMEOUT_SECONDS, RESOLOOP_COMMAND_TIMEOUT_SECONDS, RESOLOOP_FLUX_EXECUTABLE, RESONITE_MANAGED_DATA_PATH, RESONITE_LOG_PATH, RESOLOOP_BLENDER_EXECUTABLE, RESOLOOP_BACKEND, RESOLOOP_WORKBENCH_PIPE
+
+Experimental creation regenerate uses handwritten JSON envelopes and separate v4 state (no legacy v3 migration). It requires a matched --url auto --session S-ID; apply requires --yes and deletes the whole root, including manual additions. Delete-first leaves a gap and failure does not restore the old root. Asset/Flux/Script placement and TSX creation are unavailable; live behavior is unverified. See resoloop help creation for recovery limits.
 """);
     }
 }

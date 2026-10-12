@@ -89,7 +89,16 @@ public sealed record CreationDocument(
                 if (value.ValueKind != JsonValueKind.Array)
                     throw Invalid($"{name} must be an empty array; this field is not supported in this version.");
                 if (value.GetArrayLength() != 0)
-                    throw Invalid($"{name} is not supported in this version.");
+                {
+                    var path = $"$.{name}[0]";
+                    const string message = "This content is not supported by regenerate in this version.";
+                    throw new RLoopException("CREATION_DOCUMENT_INVALID", $"{name} is not supported in this version.",
+                        ExitCodes.ValidationFailed,
+                        new Dictionary<string, object?>
+                        {
+                            ["issues"] = new[] { new ApplyValidationIssue("CREATION_DOCUMENT_INVALID", message, path) }
+                        });
+                }
             }
             if (root.TryGetProperty("diagnostics", out var diagnostics) && diagnostics.ValueKind != JsonValueKind.Array)
                 throw Invalid("diagnostics must be an array.");

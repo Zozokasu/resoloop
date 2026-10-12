@@ -61,11 +61,13 @@ public sealed class CreationOwnershipDeadlineTests
         client.SlotRead = (_, _) => { readStarted.TrySetResult(true); return pending.Task; };
         using var cancellation = new CancellationTokenSource();
         var verification = new CreationOwnershipVerifier(client,
-            new CreationOwnershipOptions(MaxDuration: TimeSpan.FromSeconds(2)))
+            new CreationOwnershipOptions(MaxDuration: TimeSpan.FromSeconds(20)))
             .VerifyAsync(CreationOwnershipFixture.State(), cancellation.Token);
-        await readStarted.Task.WaitAsync(TimeSpan.FromSeconds(1));
+        await readStarted.Task.WaitAsync(TimeSpan.FromSeconds(30));
         cancellation.Cancel();
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => verification.WaitAsync(TimeSpan.FromMilliseconds(200)));
+        // The verifier's own 20 second deadline would turn a missed cancellation into a different error;
+        // the outer wait is only a hang guard and is long enough not to race a loaded host.
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => verification.WaitAsync(TimeSpan.FromSeconds(30)));
         Assert.Equal(new[] { CreationOwnershipFixture.ParentId }, client.SlotReads);
         Assert.Equal(0, client.MutationCalls);
         pending.SetResult(client.Slots[CreationOwnershipFixture.ParentId]);

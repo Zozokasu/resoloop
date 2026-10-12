@@ -269,7 +269,7 @@ public sealed class CreationOwnershipVerifier
             if (full.Members is null)
                 throw ObservationIncomplete("A Component's member set is unknown.");
             var variableNameExists = HasMember(full, "VariableName");
-            if (!TryFindStringMember(full, "VariableName", out var variableName))
+            if (!TryFindVariableName(full, out var variableName))
             {
                 if (full.Type == VariableComponentType || variableNameExists)
                     throw ObservationIncomplete("Runtime Component data did not expose the stamp type's VariableName value.");
@@ -303,6 +303,23 @@ public sealed class CreationOwnershipVerifier
         }
         return false;
     }
+
+    private static bool TryFindVariableName(ComponentInfo component, out string? value)
+    {
+        value = null;
+        if (component.Members is null) return false;
+        var member = component.Members.FirstOrDefault(pair => pair.Key == "VariableName").Value;
+        if (member is null || member.Kind != "field" || member.Type is not null && !IsStringType(member.Type)) return false;
+        if (member.Value is null) return IsStringType(member.Type);
+        if (member.Value is JsonValue json && json.TryGetValue<string>(out var memberValue))
+        {
+            value = memberValue;
+            return true;
+        }
+        return false;
+    }
+
+    private static bool IsStringType(string? type) => type is "string" or "System.String" or "[System.Private.CoreLib]System.String";
 
     internal static void VerifyStampValue(CreationObservedStamp observed, string expectedValue, CreationStamp expectedStamp, string target)
     {

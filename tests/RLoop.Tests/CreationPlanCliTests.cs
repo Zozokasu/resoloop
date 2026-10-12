@@ -40,7 +40,7 @@ public sealed class CreationPlanCliTests : IDisposable
         Assert.Equal("{\"resultVersion\":\"1\",\"mode\":\"regenerate\",\"creationId\":\"room\",\"stateFile\":" +
             JsonSerializer.Serialize(Path.GetFullPath(state)) + ",\"buildId\":null,\"inputHash\":\"" + InputHash +
             "\",\"action\":\"create\",\"previousRootId\":null,\"replaceOrder\":\"delete-first\",\"definitionsReset\":true," +
-            "\"counts\":{\"slots\":1,\"components\":1},\"pending\":null,\"evidence\":{\"overall\":\"complete\"," +
+            "\"counts\":{\"slots\":1,\"components\":2},\"pending\":null,\"evidence\":{\"overall\":\"complete\"," +
             "\"session\":\"complete\",\"exactId\":\"unknown\",\"parent\":\"complete\",\"rootStamp\":\"unknown\"," +
             "\"siblingUniqueness\":\"complete\",\"descendantBoundary\":\"unknown\"},\"diagnostics\":[],\"atomic\":false}",
             plan.RootElement.GetProperty("data").GetRawText());
@@ -79,7 +79,7 @@ public sealed class CreationPlanCliTests : IDisposable
         const string expected = "{\"resultVersion\":\"1\",\"mode\":\"regenerate\",\"creationId\":\"room\",\"stateFile\":\"";
         var exact = expected + Path.GetFullPath(state).Replace("\\", "\\\\", StringComparison.Ordinal) +
             "\",\"buildId\":null,\"inputHash\":\"" + InputHash + "\",\"action\":\"replace\",\"previousRootId\":\"created-root\"," +
-            "\"replaceOrder\":\"delete-first\",\"definitionsReset\":true,\"counts\":{\"slots\":1,\"components\":1},\"pending\":null," +
+            "\"replaceOrder\":\"delete-first\",\"definitionsReset\":true,\"counts\":{\"slots\":1,\"components\":2},\"pending\":null," +
             "\"evidence\":{\"overall\":\"complete\",\"session\":\"complete\",\"exactId\":\"complete\",\"parent\":\"complete\"," +
             "\"rootStamp\":\"complete\",\"siblingUniqueness\":\"complete\",\"descendantBoundary\":\"complete\"},\"diagnostics\":[],\"atomic\":false}";
         Assert.Equal(exact, plan.RootElement.GetProperty("data").GetRawText());

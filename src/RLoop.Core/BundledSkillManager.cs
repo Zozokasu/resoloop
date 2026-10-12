@@ -21,6 +21,7 @@ public static class BundledSkillManager
     public static IReadOnlyList<string> Files { get; } = Names.Select(name => name + "/SKILL.md")
         .Concat(["resonite-build/references/apply-recovery.md", "resonite-build/references/object-authoring.md",
             "resonite-build/references/variables-authoring.md",
+            "resonite-build/references/creation-regenerate.md",
             "resonite-uix/references/assets.md", "resonite-uix/references/layout.md",
             "resonite-uix/references/interaction-and-migration.md", "resonite-uix/references/recipes.md",
             "resonite-uix/references/control-verification.md"])
