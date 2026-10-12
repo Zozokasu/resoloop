@@ -460,7 +460,7 @@ public static class Program
         {
             var error = new RLoopException("COMMAND_TIMEOUT",
                 "The apply command exceeded its configured deadline; completed operations were checkpointed.",
-                ExitCodes.Timeout, ex.Context, TimeoutSuggestions(ex), ex);
+                ExitCodes.Timeout, ex.Context, TimeoutSuggestions(ex, parsed), ex);
             output.Error(error);
             return error.ExitCode;
         }
@@ -485,10 +485,13 @@ public static class Program
     }
 
     /// <summary>Keeps the creation recovery guidance when a regenerate apply or recover times out with a pending operation.</summary>
-    internal static string[] TimeoutSuggestions(RLoopException cancelled)
+    internal static string[] TimeoutSuggestions(RLoopException cancelled, ParsedArguments parsed)
     {
         const string general = "Inspect the state, pending evidence and exact targets before reconciling or explicitly discarding a pending operation. Increase --command-timeout only after checking responsiveness.";
-        var creationPending = cancelled.Context.TryGetValue("pending", out var pending) && pending is not null &&
+        var creationCommand = CreationCommands.IsRecovery(parsed) || parsed.Positionals.Count > 0 &&
+            parsed.Positionals[0].Equals("apply", StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(parsed.Option("mode"), "regenerate", StringComparison.OrdinalIgnoreCase);
+        var creationPending = creationCommand && cancelled.Context.TryGetValue("pending", out var pending) && pending is not null &&
             cancelled.Context.ContainsKey("operationId") && cancelled.Context.ContainsKey("stateFile");
         return creationPending ? [.. cancelled.Suggestions, general] : [general];
     }

@@ -86,6 +86,38 @@ public sealed class CreationApplyReplacementTests : IDisposable
         Assert.Null(final.Pending);
     }
 
+    [Fact]
+    public async Task ReplacementRechecksOwnershipAfterPreparationBeforeDeletingOldRoot()
+    {
+        var statePath = Path.Combine(root, "stamp-removed-during-prepare.json");
+        var prior = CreationOwnershipFixture.State();
+        var client = new CreationMutationTestClient();
+        client.RegisterType("Probe");
+        client.SeedOwnedRoot(prior, prior.ActiveRoot!.Stamp);
+        CreationStateStore.Save(statePath, prior);
+        SessionLockTestIsolation.Share(client, Path.Combine(root, "locks-stamp-removed"));
+        client.BeforeDescribeComponentType = type =>
+        {
+            if (type != "Probe") return;
+            client.Slots[prior.ActiveRoot.Id] = client.Slots[prior.ActiveRoot.Id] with
+            {
+                Components = []
+            };
+            client.Components.Remove("seed-stamp");
+        };
+        var document = CreationDocument.Parse(Envelope.Replace("\"components\":[]",
+            "\"components\":[{\"type\":\"Probe\",\"key\":\"probe\"}]", StringComparison.Ordinal));
+
+        var error = await Assert.ThrowsAsync<RLoopException>(() => new CreationApplyService(client).ApplyAsync(document,
+            new CreationApplyOptions(StateFile: statePath, Yes: true, RequestedSessionId: FixtureSessionId,
+                GeneratedContentSource: GeneratedContentMetadata.SourceForVersion("test"))));
+
+        Assert.Equal("CREATION_OWNER_UNPROVEN", error.Code);
+        Assert.Empty(client.SendLog);
+        Assert.Contains(prior.ActiveRoot.Id, client.Slots.Keys);
+        Assert.Null(CreationStateStore.Load(statePath, "room", true)!.Pending);
+    }
+
     private static Task<CreationApplyResult> Apply(CreationMutationTestClient client, string statePath,
         string requestedSessionId = "S-test") =>
         new CreationApplyService(client).ApplyAsync(CreationDocument.Parse(Envelope),

@@ -34,6 +34,8 @@ internal sealed partial class CreationMutationTestClient : IResoniteClient, IApp
     public string? IncompleteSlotId { get; set; }
     public Func<SlotInfo, int, SlotInfo>? SlotReadOverride { get; set; }
     public Func<ComponentInfo, int, ComponentInfo>? ComponentReadOverride { get; set; }
+    public Func<string, ApplyDeletionObservation>? DeletionObservationOverride { get; set; }
+    public Action<string>? BeforeDescribeComponentType { get; set; }
     public Action<string, string, string>? AfterAddComponent { get; set; }
     public List<string> SlotReadIds { get; } = [];
     public List<string> DeletionObservationIds { get; } = [];
@@ -114,7 +116,7 @@ internal sealed partial class CreationMutationTestClient : IResoniteClient, IApp
         var slot = SlotReadOverride?.Invoke(ReadSlot(id), ++_slotReadCount) ?? ReadSlot(id);
         SlotReadIds.Add(id);
         var complete = id != IncompleteSlotId;
-        return Task.FromResult(new ApplyDeletionObservation(slot, complete, complete));
+        return Task.FromResult(DeletionObservationOverride?.Invoke(id) ?? new ApplyDeletionObservation(slot, complete, complete));
     }
 
     public Task<SlotInfo> GetSlotAsync(string id, int depth, bool includeComponentData, CancellationToken cancellationToken = default)
@@ -258,8 +260,12 @@ internal sealed partial class CreationMutationTestClient : IResoniteClient, IApp
             throw new RLoopException("COMPONENT_MEMBER_NOT_FOUND", $"Unknown fake member '{member}'.", ExitCodes.ValidationFailed);
         return Task.CompletedTask;
     }
-    public Task<ComponentTypeInfo> DescribeComponentTypeAsync(string type, CancellationToken cancellationToken = default) =>
-        Task.FromResult(Types.TryGetValue(type, out var found) ? found : throw new RLoopException("COMPONENT_TYPE_NOT_FOUND", type, ExitCodes.NotFound));
+    public Task<ComponentTypeInfo> DescribeComponentTypeAsync(string type, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        BeforeDescribeComponentType?.Invoke(type);
+        return Task.FromResult(Types.TryGetValue(type, out var found) ? found : throw new RLoopException("COMPONENT_TYPE_NOT_FOUND", type, ExitCodes.NotFound));
+    }
     public Task<TypeInfo> DescribeTypeAsync(string type, CancellationToken cancellationToken = default) =>
         Task.FromResult(new TypeInfo(type, "FrooxEngine", null, type, null, false, false, false, false, true, false, true, [], []));
 

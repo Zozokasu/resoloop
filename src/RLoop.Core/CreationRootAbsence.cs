@@ -17,34 +17,36 @@ internal static class CreationRootAbsence
     };
 
     public static async Task<bool> IsExactAbsentAsync(IResoniteClient client, CreationOwnershipVerifier verifier,
-        CreationSession? session, CreationSessionProof proof, string id, CancellationToken ct)
+        CreationSession? session, CreationSessionProof proof, string id, CancellationToken ct,
+        CreationObservationContext? context = null)
     {
         if (client is not IApplyDeletionObservation observer)
             throw CreationOwnershipVerifier.ObservationIncomplete("Exact Slot observation is unavailable.");
-        await VerifySession(verifier, session, proof, ct);
+        context ??= verifier.CreateContext(ct);
+        await VerifySession(verifier, session, proof, context);
         try
         {
             var result = await observer.ObserveDeletionSlotAsync(id, ct);
             if (result is null || result.Slot is null || result.Slot.Id != id || !result.ChildrenObserved || !result.ComponentsObserved || result.Slot.IsReferenceOnly)
                 throw CreationOwnershipVerifier.ObservationIncomplete("The exact Slot observation is partial or has a different ID.");
-            await VerifySession(verifier, session, proof, ct);
+            await VerifySession(verifier, session, proof, context);
             return false;
         }
         catch (RLoopException ex) when (ex.Code == "SLOT_NOT_FOUND")
         {
-            await VerifySession(verifier, session, proof, ct);
+            await VerifySession(verifier, session, proof, context);
             return true;
         }
-        catch (RLoopException) { await VerifySession(verifier, session, proof, ct); throw; }
+        catch (RLoopException) { await VerifySession(verifier, session, proof, context); throw; }
         catch (OperationCanceledException) { throw; }
         catch (Exception ex)
         {
-            await VerifySession(verifier, session, proof, ct);
+            await VerifySession(verifier, session, proof, context);
             throw CreationOwnershipVerifier.ObservationIncomplete("The exact Slot observation is unknown: " + ex.Message);
         }
     }
 
     private static async Task VerifySession(CreationOwnershipVerifier verifier, CreationSession? session,
-        CreationSessionProof proof, CancellationToken ct) =>
-        await verifier.VerifySessionAsync(session, verifier.CreateContext(ct), proof);
+        CreationSessionProof proof, CreationObservationContext context) =>
+        await verifier.VerifySessionAsync(session, context, proof);
 }

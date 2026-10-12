@@ -31,15 +31,24 @@ public sealed class CreationPlanPrepareTests : IDisposable
     }
 
     [Fact]
-    public void TimeoutKeepsTheCreationRecoveryGuidanceWhenAPendingOperationExists()
+    public void TimeoutShowsCreationRecoveryGuidanceOnlyForRegenerateAndRecoverCommands()
     {
-        var withPending = new RLoopException("APPLY_CANCELLED", "x", ExitCodes.OperationFailed,
-            new Dictionary<string, object?> { ["pending"] = new object(), ["operationId"] = "op", ["stateFile"] = "s.json" },
+        var context = new Dictionary<string, object?>
+        {
+            ["pending"] = new object(), ["operationId"] = "op", ["stateFile"] = "s.json"
+        };
+        var withPending = new RLoopException("APPLY_CANCELLED", "x", ExitCodes.OperationFailed, context,
             ["resoloop creation recover --state \"s.json\" --action rollback --url auto --session S-ID --yes"]);
-        var without = new RLoopException("APPLY_CANCELLED", "x", ExitCodes.OperationFailed);
+        var ordinaryApply = ParsedArguments.Parse(["apply", "file.json"]);
+        var regenerateApply = ParsedArguments.Parse(["apply", "file.json", "--mode", "regenerate"]);
+        var recover = ParsedArguments.Parse(["creation", "recover", "--state", "s.json"]);
 
-        Assert.Contains(Program.TimeoutSuggestions(withPending), item => item.Contains("creation recover", StringComparison.Ordinal));
-        Assert.DoesNotContain(Program.TimeoutSuggestions(without), item => item.Contains("creation recover", StringComparison.Ordinal));
+        Assert.Equal("Inspect the state, pending evidence and exact targets before reconciling or explicitly discarding a pending operation. Increase --command-timeout only after checking responsiveness.",
+            Assert.Single(Program.TimeoutSuggestions(withPending, ordinaryApply)));
+        Assert.Contains(Program.TimeoutSuggestions(withPending, regenerateApply),
+            item => item.Contains("creation recover", StringComparison.Ordinal));
+        Assert.Contains(Program.TimeoutSuggestions(withPending, recover),
+            item => item.Contains("creation recover", StringComparison.Ordinal));
     }
 
     public void Dispose() => Directory.Delete(root, recursive: true);

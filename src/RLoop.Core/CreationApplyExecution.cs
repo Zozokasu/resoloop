@@ -40,8 +40,8 @@ public sealed partial class CreationApplyService
             throw Pending(lockedPending, statePath);
 
         var verifier = new CreationOwnershipVerifier(client);
-        var context = verifier.CreateContext(cancellationToken);
-        var sessionProof = await verifier.VerifySessionAsync(state?.Session, context, expectedSession: null);
+        var proofContext = verifier.CreateContext(cancellationToken);
+        var sessionProof = await verifier.VerifySessionAsync(state?.Session, proofContext, expectedSession: null);
         if (!string.Equals(sessionLease.NormalizedUrl, sessionProof.NormalizedUrl, StringComparison.Ordinal))
             throw CreationOwnershipVerifier.SessionUnproven("The connected session URL changed after its write lease was acquired.");
         var connectionGeneration = sessionProof.ConnectionGeneration;
@@ -51,9 +51,13 @@ public sealed partial class CreationApplyService
             client is not IApplyDeletionObservation)
             throw CreationOwnershipVerifier.SessionUnproven("Creation apply requires connection-generation and exact deletion-observation support.");
 
+        var prepared = await new CreationTreeExecutor(client).PrepareAsync(definition, cancellationToken);
+        var context = verifier.CreateContext(cancellationToken);
+        await verifier.VerifySessionAsync(state?.Session, context, sessionProof);
+        var root = prepared.Definition.Slot ?? throw Invalid("Creation tree root Slot is missing.");
         var recorded = state?.ActiveRoot;
         var previousAbsent = recorded is not null &&
-            await CreationRootAbsence.IsExactAbsentAsync(client, verifier, state!.Session, sessionProof, recorded.Id, cancellationToken);
+            await CreationRootAbsence.IsExactAbsentAsync(client, verifier, state!.Session, sessionProof, recorded.Id, cancellationToken, context);
         var previous = previousAbsent ? null : recorded;
         IReadOnlyList<object?> diagnostics = previousAbsent ? [CreationRootAbsence.Diagnostic(recorded!.Id)] : [];
         CreationPlanEvidence evidence;
@@ -75,15 +79,12 @@ public sealed partial class CreationApplyService
                 if (requestedParent != previous.ParentId)
                     throw CreationOwnershipVerifier.OwnerUnproven("The requested parent differs from the recorded activeRoot parent.");
             }
-            await verifier.VerifyAsync(state!, context);
             await verifier.VerifySessionAsync(state!.Session, context, sessionProof);
+            await verifier.VerifyAsync(state!, context);
             parentId = previous.ParentId;
             previousRootId = previous.Id;
             evidence = new("complete", "complete", "complete", "complete", "complete", "complete", "complete");
         }
-        var prepared = await new CreationTreeExecutor(client).PrepareAsync(definition, cancellationToken);
-        var root = prepared.Definition.Slot ?? throw Invalid("Creation tree root Slot is missing.");
-        await verifier.VerifySessionAsync(state?.Session, context, sessionProof);
         var counts = CountDefinitions(prepared.Definition, root);
         var ownerNonce = state?.OwnerNonce ?? CreationStamp.CreateOwnerNonce();
         var stamp = CreationStamp.Create(document.CreationId, ownerNonce);

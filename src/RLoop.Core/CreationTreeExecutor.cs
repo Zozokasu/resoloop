@@ -128,10 +128,18 @@ internal sealed class CreationTreeExecutor(IResoniteClient client)
             catch (RLoopException ex) when (ex.Code == "COMPONENT_NOT_FOUND")
             {
                 // Resonite may drop a declared Component as a duplicate of one it added itself; use that one if it is unambiguous.
-                var owner = await client.GetSlotAsync(slotId, 0, false, ct);
-                var candidates = (owner.Components ?? []).Where(candidate => !allIds.Contains(candidate.Id) &&
+                if (client is not IApplyDeletionObservation observer) throw;
+                var observed = await observer.ObserveDeletionSlotAsync(slotId, ct);
+                var owner = observed.Slot;
+                var summaries = owner.Components;
+                if (owner.Id != slotId || owner.IsReferenceOnly || !observed.ChildrenObserved ||
+                    !observed.ComponentsObserved || summaries is null ||
+                    summaries.Any(candidate => string.IsNullOrWhiteSpace(candidate.Id)) ||
+                    summaries.Select(candidate => candidate.Id).Distinct(StringComparer.Ordinal).Count() != summaries.Count)
+                    throw;
+                var candidates = summaries.Where(candidate => !allIds.Contains(candidate.Id) &&
                     StableEffectiveKeys.NormalizeType(candidate.Type) == StableEffectiveKeys.NormalizeType(component.RuntimeType)).ToArray();
-                if (owner.Id != slotId || candidates.Length != 1) throw;
+                if (candidates.Length != 1) throw;
                 id = candidates[0].Id;
                 allIds.Add(id);
                 if (immediate.Count > 0)
