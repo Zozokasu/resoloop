@@ -8,6 +8,7 @@ import type { CatalogMemberRuntime, CatalogRuntimeTable } from "./catalog-runtim
 import { catalogMember, verifyRuntimeTable } from "./catalog-runtime.js";
 import { boundFieldMetadata, checkBoundFieldParent } from "./bound-field.js";
 import { expandObjects } from "./object-expand.js";
+import { expandVariables } from "./variables-expand.js";
 export type { ApplyDocument, ApplyOwnershipSpec, ApplySlotSpec, ApplyComponentSpec, ApplyNodeSpec } from "./generated/apply-types.js";
 import { copyOrigin, bindIr, markBuildError, markBuildErrorOrigin, originOfElement, bindIrOrigin, unknown, type Origin } from "./source-map.js";
 import { scopeKey, scopeValue } from "./scope.js";
@@ -211,6 +212,7 @@ export function evaluate(
   const inputRoot = root;
   root = expandObjects(root, options.catalogs ?? []);
   const objectPassRan = root !== inputRoot;
+  root = expandVariables(root, options.catalogs ?? []);
   const draft = options.draft === true;
   const warnings: string[] = [];
   const scopes = new Set<string>();

@@ -23,6 +23,10 @@
     "./source-runtime": {
       "types": "./dist/src/source-map.d.ts",
       "default": "./dist/src/source-map.js"
+    },
+    "./variables": {
+      "types": "./dist/src/variables.d.ts",
+      "default": "./dist/src/variables.js"
     }
   },
   "engines": {

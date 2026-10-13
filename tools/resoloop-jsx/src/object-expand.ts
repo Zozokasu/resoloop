@@ -4,8 +4,9 @@ import { boundFieldMetadata, copyBoundFieldMetadata } from "./bound-field.js";
 import type { ObjectDescriptor } from "./object-definition.js";
 import type { ObjectElement } from "./elements.js";
 import { handleDefinitionIdentity, isReferenceToken, type DecodedReference } from "./object-refs.js";
-import { copyOrigin, markBuildErrorOrigin, originOfElement, unknown, type Origin } from "./source-map.js";
+import { copyOrigin, markBuildError, markBuildErrorOrigin, originOfElement, unknown, type Origin } from "./source-map.js";
 import { scopeKey } from "./scope.js";
+import { fieldBindingDescriptor } from "./variables-internal.js";
 import { validateObjectBoundaries as applyObjectBoundaries, validateObjectExports } from "./object-boundary.js";
 
 export interface DeclaredTarget {
@@ -264,18 +265,36 @@ export function collectObjects(root: unknown, catalogs: readonly CatalogRuntimeT
     pendingAliases.push({ alias, member, componentKey, componentType, owner, element });
   }
 
+  function collectBindingChildren(value: unknown, declarations: Set<string>): void {
+    if (value === null || value === undefined || typeof value === "boolean") return;
+    if (Array.isArray(value)) {
+      value.forEach(item => collectBindingChildren(item, declarations));
+      return;
+    }
+    if (!isElement(value)) return;
+    if (value.kind === "fragment") {
+      collectBindingChildren(value.props?.children, declarations);
+      return;
+    }
+    if (value.kind !== "field") return;
+    const member = value.props?.name;
+    if (typeof member === "string" && fieldBindingDescriptor(value.props?.value)) declarations.add(member);
+  }
+
   function fieldChildren(value: unknown, componentKey: string | undefined, componentType: string | undefined,
-    scope: string, owner: string | undefined, path: string, members: Set<string>, fieldDeclarations: Set<string>): void {
+    scope: string, owner: string | undefined, path: string, members: Set<string>, fieldDeclarations: Set<string>,
+    bindingDeclarations: Set<string>): void {
     if (value === null || value === undefined || typeof value === "boolean") return;
     if (Array.isArray(value)) {
       value.forEach((item, index) => fieldChildren(item, componentKey, componentType, scope, owner,
-        `${path}[${index}]`, members, fieldDeclarations));
+        `${path}[${index}]`, members, fieldDeclarations, bindingDeclarations));
       return;
     }
     if (!isElement(value) || value.kind === "fragment") {
       if (isElement(value) && value.kind === "fragment") {
         context.contexts.set(value, { scope, owner });
-        fieldChildren(value.props?.children, componentKey, componentType, scope, owner, path, members, fieldDeclarations);
+        fieldChildren(value.props?.children, componentKey, componentType, scope, owner, path, members,
+          fieldDeclarations, bindingDeclarations);
       }
       return;
     }
@@ -284,10 +303,19 @@ export function collectObjects(root: unknown, catalogs: readonly CatalogRuntimeT
     const props = value.props ?? {};
     const member = props.name;
     if (typeof member !== "string" || !member.trim()) return;
-    if (fieldDeclarations.has(member))
+    const binding = fieldBindingDescriptor(props.value) !== undefined;
+    if (fieldDeclarations.has(member)) {
+      if (binding || bindingDeclarations.has(member)) {
+        const error = new BuildError("CREATION_DRIVEN_FIELD_DECLARED",
+          `Variable binding target '${member}' is declared more than once.`);
+        markBuildError(error, value, props.value !== undefined ? "value" : "name");
+        throw error;
+      }
       throw new BuildError("APPLY_FIELD_DUPLICATE", `Member '${member}' at ${path} is declared more than once`);
+    }
     members.add(member);
     fieldDeclarations.add(member);
+    if (binding) bindingDeclarations.add(member);
     if (componentKey !== undefined)
       context.targets.set(`member:${componentKey}.${member}`, { key: `${componentKey}.${member}`, kind: "member",
         owner, element: value, componentType, member });
@@ -347,9 +375,23 @@ export function collectObjects(root: unknown, catalogs: readonly CatalogRuntimeT
       const componentKey = key;
       const componentType = typeof props.type === "string" ? props.type : undefined;
       const fieldDeclarations = new Set<string>();
-      for (const section of [props.fields, props.initialFields])
-        if (section !== null && typeof section === "object" && !Array.isArray(section))
-          Object.keys(section).forEach(member => fieldDeclarations.add(member));
+      const bindingDeclarations = new Set<string>();
+      for (const [sectionName, section] of [["fields", props.fields], ["initialFields", props.initialFields]] as const) {
+        if (section === null || typeof section !== "object" || Array.isArray(section)) continue;
+        for (const member of Object.keys(section)) {
+          const property = Object.getOwnPropertyDescriptor(section, member);
+          const binding = property && "value" in property && fieldBindingDescriptor(property.value) !== undefined;
+          if (fieldDeclarations.has(member) && (binding || bindingDeclarations.has(member))) {
+            const error = new BuildError("CREATION_DRIVEN_FIELD_DECLARED",
+              `Variable binding target '${member}' is declared more than once.`);
+            const sectionOrigin = originOfElement(value)?.attributes[sectionName];
+            markBuildErrorOrigin(error, sectionOrigin?.children?.[member] ?? sectionOrigin);
+            throw error;
+          }
+          fieldDeclarations.add(member);
+          if (binding) bindingDeclarations.add(member);
+        }
+      }
       const members = new Set(fieldDeclarations);
       if (props.propertyModes !== null && typeof props.propertyModes === "object" && !Array.isArray(props.propertyModes))
         Object.keys(props.propertyModes).forEach(member => members.add(member));
@@ -363,7 +405,9 @@ export function collectObjects(root: unknown, catalogs: readonly CatalogRuntimeT
         for (const [alias, member] of Object.entries(props.fieldAliases))
           if (typeof member === "string") registerAlias(scope ? scopedKey(scope, alias, `${path}.fieldAliases`, value, "fieldAliases") : alias,
             member, componentKey, componentType, value, owner);
-      fieldChildren(props.children, componentKey, componentType, scope, owner, path, members, fieldDeclarations);
+      collectBindingChildren(props.children, bindingDeclarations);
+      fieldChildren(props.children, componentKey, componentType, scope, owner, path, members,
+        fieldDeclarations, bindingDeclarations);
     }
   }
 

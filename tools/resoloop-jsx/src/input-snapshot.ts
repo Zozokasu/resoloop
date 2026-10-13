@@ -29,7 +29,7 @@ export function snapshotInputs(program: ts.Program, projectRoot: string, catalog
     }
     if (!program.isSourceFileDefaultLibrary(source)) {
       const moduleName = (name: string): void => {
-        if (["resoloop-jsx", "resoloop-jsx/jsx-runtime", "resoloop-jsx/draft"].includes(name)) return;
+        if (["resoloop-jsx", "resoloop-jsx/jsx-runtime", "resoloop-jsx/draft", "resoloop-jsx/variables"].includes(name)) return;
         if (!name.startsWith("./") && !name.startsWith("../")) throw new Error(`inputUnknown: external module ${name}`);
         const resolved = ts.resolveModuleName(name, file, program.getCompilerOptions(), ts.sys).resolvedModule;
         if (!resolved || !program.getSourceFile(resolved.resolvedFileName)) throw new Error(`inputUnknown: unresolved module ${name}`);

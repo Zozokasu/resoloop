@@ -168,7 +168,12 @@ export function sourceTransformer(program: ts.Program, inputs: InputFile[]): ts.
       if (!ts.isCallExpression(node) || !ts.isPropertyAccessExpression(node.expression)) return false;
       return node.expression.name.text !== "" && isImported(node.expression.expression, "ref", ["resoloop-jsx", "resoloop-jsx/draft"]);
     }
+    function variableCall(node: ts.Expression, names: readonly string[]): boolean {
+      return ts.isCallExpression(node) && ts.isIdentifier(node.expression) &&
+        names.some(name => isImported(node.expression, name, ["resoloop-jsx/variables"]));
+    }
     function buildCall(node: ts.CallExpression): boolean {
+      if (variableCall(node, ["variable", "defineVariables", "drive", "bind"])) return true;
       if (ts.isIdentifier(node.expression) && isImported(node.expression, "componentFields", ["resoloop-jsx", "resoloop-jsx/draft"])) return true;
       if (!ts.isPropertyAccessExpression(node.expression)) return false;
       if (node.expression.name.text === "export" &&
@@ -225,7 +230,7 @@ export function sourceTransformer(program: ts.Program, inputs: InputFile[]): ts.
     function value(node: ts.Expression): Origin {
       if (ts.isParenthesizedExpression(node) || ts.isAsExpression(node) || ts.isSatisfiesExpression(node)) return value(node.expression);
       const forwarded = transfer(node);
-      const direct = ts.isLiteralExpression(node) || referenceCall(node) ||
+      const direct = ts.isLiteralExpression(node) || referenceCall(node) || variableCall(node, ["drive", "bind"]) ||
         node.kind === ts.SyntaxKind.NullKeyword || node.kind === ts.SyntaxKind.TrueKeyword || node.kind === ts.SyntaxKind.FalseKeyword ||
         ts.isPrefixUnaryExpression(node) && (node.operator === ts.SyntaxKind.PlusToken || node.operator === ts.SyntaxKind.MinusToken) &&
           ts.isNumericLiteral(node.operand);

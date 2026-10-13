@@ -39,6 +39,8 @@ public static class Program
                 return ExitCodes.Success;
             }
 
+            ValidateSlotActiveArguments(args, parsed);
+
             var applyCommand = parsed.Positionals[0].ToLowerInvariant() is "validate" or "diff" or "plan" or "apply";
             if (parsed.Has("diagnostics") && !applyCommand)
                 throw new RLoopException("INVALID_OPTION", "--diagnostics is supported only by validate/diff/plan/apply.", ExitCodes.InvalidArguments);
@@ -50,6 +52,7 @@ public static class Program
                 output.ProtectDiagnosticsPath(parsed.Option("state"));
                 output.ProtectDiagnosticsPath(parsed.Option("catalog"));
             }
+            if (CreationCommands.Handle(parsed, output) is { } creationExit) return creationExit;
             if (parsed.Has("build-id") && !applyCommand)
                 throw new RLoopException("INVALID_OPTION", "--build-id is supported only by validate/diff/plan/apply.", ExitCodes.InvalidArguments);
             // flux deploy/deploy-manifest discard their own pending records in RunFlux (offline, like apply).
@@ -169,12 +172,108 @@ public static class Program
                 ["backend"] = parsed.Option("backend"), ["workbench-pipe"] = parsed.Option("workbench-pipe")
             };
             var resolution = ConfigResolver.Resolve(Environment.CurrentDirectory, cliConfig);
-            BackendSupport.RequireSupported(parsed.Positionals[0], resolution.Config.Backend,
-                parsed.Positionals.Count > 1 ? parsed.Positionals[1] : null);
+            if (!CreationCommands.IsRecovery(parsed))
+                BackendSupport.RequireSupported(parsed.Positionals[0], resolution.Config.Backend,
+                    parsed.Positionals.Count > 1 ? parsed.Positionals[1] : null);
             commandCancellation = CancellationTokenSource.CreateLinkedTokenSource(userCancellation.Token);
             commandCancellation.CancelAfter(TimeSpan.FromSeconds(resolution.Config.CommandTimeoutSeconds));
             var commandToken = commandCancellation.Token;
             if (parsed.Has("verbose")) Console.Error.WriteLine(JsonSerializer.Serialize(new { configSources = resolution.Sources }));
+
+            if (CreationCommands.IsRecovery(parsed))
+            {
+                if (resolution.Config.Backend == "workbench")
+                    throw new RLoopException("BACKEND_UNSUPPORTED", "Creation recovery requires the ResoniteLink backend.", ExitCodes.OperationFailed);
+                IResoniteClient recoveryClient;
+                if (connect is not null)
+                    recoveryClient = await connect(commandToken);
+                else
+                {
+                    var uri = await ResoniteClientFactory.ResolveConnectionUrlAsync(parsed, resolution.Config, commandToken);
+                    recoveryClient = await ResoniteClientFactory.ConnectAsync(parsed, resolution.Config, ReflectionCacheFrom(parsed), commandToken, uri);
+                }
+                await using (recoveryClient)
+                {
+                    var result = await new CreationRecoveryService(recoveryClient).RecoverAsync(
+                        new CreationRecoveryOptions(parsed.RequireOption("state"), parsed.RequireOption("action"),
+                            parsed.RequireOption("session"), parsed.Has("yes")), commandToken);
+                    output.Success(result);
+                }
+                return ExitCodes.Success;
+            }
+
+            if (CreationCommands.IsRegeneratePlan(parsed) || CreationCommands.IsRegenerateApply(parsed))
+            {
+                var isCreationApply = CreationCommands.IsRegenerateApply(parsed);
+                if (parsed.Has("build-id"))
+                    throw new RLoopException("INVALID_OPTION", "--build-id is unavailable for creation envelopes in this version.", ExitCodes.InvalidArguments);
+                if (resolution.Config.Backend == "workbench")
+                    throw new RLoopException("BACKEND_UNSUPPORTED", "Creation regenerate planning requires the ResoniteLink backend.", ExitCodes.OperationFailed);
+                if (parsed.Option("replace-order") is { } order && order != "delete-first")
+                    throw new RLoopException("CREATION_MODE_MISMATCH", $"--replace-order {order} is not available in this version; use delete-first.", ExitCodes.InvalidArguments);
+
+                var creation = CreationDocument.Load(parsed.Positional(1, "Creation envelope"));
+                creation.ValidatePlanInput();
+                var creationPreflight = CreationRegeneratePreflight.Validate(creation);
+                if (creationPreflight.Count > 0)
+                    throw new RLoopException("CREATION_DOCUMENT_INVALID", creationPreflight[0].Message, ExitCodes.ValidationFailed,
+                        new Dictionary<string, object?> { ["issues"] = creationPreflight });
+                var creationValidation = await creation.ValidateAsync(commandToken);
+                if (!creationValidation.Valid)
+                    throw new RLoopException("CREATION_DOCUMENT_INVALID",
+                        creationValidation.Issues.FirstOrDefault()?.Message ?? "Creation document is invalid.", ExitCodes.ValidationFailed,
+                        new Dictionary<string, object?> { ["issues"] = creationValidation.Issues });
+                var statePath = CreationStateStore.ResolvePath(creation, parsed.Option("state"));
+                output.ProtectDiagnosticsPath(statePath);
+                if (isCreationApply && !parsed.Has("yes"))
+                    throw new RLoopException("CONFIRMATION_REQUIRED", "apply --mode regenerate requires --yes after inspecting the plan.", ExitCodes.ValidationFailed);
+                var state = CreationStateStore.Load(statePath, creation.CreationId, parsed.Has("require-state"));
+                if (state?.Pending is { } pending)
+                    throw new RLoopException("APPLY_WRITE_UNVERIFIED", isCreationApply
+                        ? "Creation state contains a pending operation that must be reconciled before applying."
+                        : "Creation state contains a pending operation that must be reconciled before planning.",
+                        ExitCodes.OperationFailed, new Dictionary<string, object?>
+                        {
+                            ["stateFile"] = statePath, ["operationId"] = pending.OperationId, ["stage"] = pending.Stage,
+                            ["previousRootId"] = pending.PreviousRoot?.Id, ["candidateRootId"] = pending.CandidateRoot?.Id,
+                            ["pending"] = pending, ["completeness"] = "unknown"
+                        },
+                        [$"Resolve the retained creation state with: resoloop creation recover --state \"{statePath}\" --action rollback|finish --url auto --session {pending.Session.DiscoverSessionId ?? "S-ID"} --yes"]);
+
+                if (parsed.Option("url") != "auto" || parsed.Option("session") is not { } selectedSession ||
+                    !selectedSession.StartsWith("S-", StringComparison.Ordinal))
+                    throw new RLoopException("CREATION_SESSION_UNPROVEN", "Creation planning requires --url auto and an explicit --session S-ID.", ExitCodes.ValidationFailed);
+                IResoniteClient creationClient;
+                if (connect is not null)
+                    creationClient = await connect(commandToken);
+                else
+                {
+                    var creationUri = await ResoniteClientFactory.ResolveConnectionUrlAsync(parsed, resolution.Config, commandToken);
+                    creationClient = await ResoniteClientFactory.ConnectAsync(parsed, resolution.Config,
+                        ReflectionCacheFrom(parsed), commandToken, creationUri);
+                }
+                await using (creationClient)
+                {
+                    var generatedContentSource = GeneratedContentMetadata.SourceForVersion(ProductVersion());
+                    if (isCreationApply)
+                    {
+                        var result = await new CreationApplyService(creationClient).ApplyAsync(creation,
+                            new CreationApplyOptions(parsed.Option("state"), parsed.Has("require-state"),
+                                parsed.Option("parent"), parsed.Option("replace-order") ?? "delete-first", selectedSession,
+                                parsed.Has("yes"), generatedContentSource), commandToken);
+                        output.Success(result);
+                    }
+                    else
+                    {
+                        var plan = await new CreationApplyService(creationClient).PlanAsync(creation,
+                            new CreationPlanOptions(parsed.Option("state"), parsed.Has("require-state"),
+                                parsed.Option("parent"), parsed.Option("replace-order") ?? "delete-first", selectedSession,
+                                generatedContentSource), commandToken);
+                        output.Success(plan);
+                    }
+                }
+                return ExitCodes.Success;
+            }
 
             if (parsed.Positionals[0].Equals("catalog", StringComparison.OrdinalIgnoreCase))
             {
@@ -361,8 +460,7 @@ public static class Program
         {
             var error = new RLoopException("COMMAND_TIMEOUT",
                 "The apply command exceeded its configured deadline; completed operations were checkpointed.",
-                ExitCodes.Timeout, ex.Context,
-                ["Inspect the state, pending evidence and exact targets before reconciling or explicitly discarding a pending operation. Increase --command-timeout only after checking responsiveness."], ex);
+                ExitCodes.Timeout, ex.Context, TimeoutSuggestions(ex, parsed), ex);
             output.Error(error);
             return error.ExitCode;
         }
@@ -384,6 +482,18 @@ public static class Program
             output.WriteDiagnostics();
             commandCancellation?.Dispose();
         }
+    }
+
+    /// <summary>Keeps the creation recovery guidance when a regenerate apply or recover times out with a pending operation.</summary>
+    internal static string[] TimeoutSuggestions(RLoopException cancelled, ParsedArguments parsed)
+    {
+        const string general = "Inspect the state, pending evidence and exact targets before reconciling or explicitly discarding a pending operation. Increase --command-timeout only after checking responsiveness.";
+        var creationCommand = CreationCommands.IsRecovery(parsed) || parsed.Positionals.Count > 0 &&
+            parsed.Positionals[0].Equals("apply", StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(parsed.Option("mode"), "regenerate", StringComparison.OrdinalIgnoreCase);
+        var creationPending = creationCommand && cancelled.Context.TryGetValue("pending", out var pending) && pending is not null &&
+            cancelled.Context.ContainsKey("operationId") && cancelled.Context.ContainsKey("stateFile");
+        return creationPending ? [.. cancelled.Suggestions, general] : [general];
     }
 
     private static void RunUixRecipe(ParsedArguments args, OutputWriter output)
@@ -979,7 +1089,8 @@ public static class Program
             {
                 var parent = await world.ResolveSlotSelectorAsync(args.Option("parent") ?? "Root", args.Option("state"), ct);
                 var result = await client.CreateSlotAsync(new SlotCreateRequest(parent, args.RequireOption("name"),
-                    ParseVector(args, "position"), ParseQuaternion(args, "rotation"), ParseVector(args, "scale"), args.Option("id")), ct);
+                    ParseVector(args, "position"), ParseQuaternion(args, "rotation"), ParseVector(args, "scale"), args.Option("id"),
+                    IsActive: ParseSlotActive(args)), ct);
                 var generatedContentComponentId = await world.EnsureGeneratedContentTagAsync(result, ct);
                 output.Success(new { id = result, parentId = parent, name = args.Option("name"), generatedContentComponentId },
                     w => w.WriteLine(result));
@@ -988,9 +1099,11 @@ public static class Program
             case "set":
             {
                 var id = await world.ResolveSlotSelectorAsync(args.Positional(2, "Slot ID, path, or $slot:key"), args.Option("state"), ct);
-                if (args.Option("name") is null && args.Option("position") is null && args.Option("rotation") is null && args.Option("scale") is null)
-                    throw new RLoopException("UPDATE_EMPTY", "slot set requires at least one of --name, --position, --rotation, or --scale.", ExitCodes.InvalidArguments);
-                await client.UpdateSlotAsync(new SlotUpdateRequest(id, args.Option("name"), ParseVector(args, "position"), ParseQuaternion(args, "rotation"), ParseVector(args, "scale")), ct);
+                if (args.Option("name") is null && args.Option("position") is null && args.Option("rotation") is null && args.Option("scale") is null &&
+                    args.Option("active") is null)
+                    throw new RLoopException("UPDATE_EMPTY", "slot set requires at least one of --name, --position, --rotation, --scale, or --active.", ExitCodes.InvalidArguments);
+                await client.UpdateSlotAsync(new SlotUpdateRequest(id, args.Option("name"), ParseVector(args, "position"), ParseQuaternion(args, "rotation"), ParseVector(args, "scale"),
+                    IsActive: ParseSlotActive(args)), ct);
                 output.Success(new { id, updated = true });
                 break;
             }
@@ -1439,6 +1552,42 @@ public static class Program
 
     private static Vector3Value? ParseVector(ParsedArguments args, string name) => args.Option(name) is { } text ? Vector3Value.Parse(text, $"--{name}") : null;
     private static QuaternionValue? ParseQuaternion(ParsedArguments args, string name) => args.Option(name) is { } text ? QuaternionValue.Parse(text, $"--{name}") : null;
+    private static bool? ParseSlotActive(ParsedArguments args) => args.Option("active") switch
+    {
+        null => null,
+        "true" => true,
+        "false" => false,
+        var value => throw InvalidSlotActive(value)
+    };
+
+    private static void ValidateSlotActiveArguments(IReadOnlyList<string> rawArgs, ParsedArguments parsed)
+    {
+        if (parsed.Positionals.Count < 2 || !parsed.Positionals[0].Equals("slot", StringComparison.OrdinalIgnoreCase) ||
+            parsed.Positionals[1].ToLowerInvariant() is not ("create" or "set")) return;
+
+        for (var index = 0; index < rawArgs.Count; index++)
+        {
+            var token = rawArgs[index];
+            if (token.Equals("--active", StringComparison.OrdinalIgnoreCase))
+            {
+                if (index + 1 >= rawArgs.Count || rawArgs[index + 1].StartsWith("--", StringComparison.Ordinal))
+                    throw InvalidSlotActive(null);
+                ValidateSlotActiveValue(rawArgs[++index]);
+            }
+            else if (token.StartsWith("--active=", StringComparison.OrdinalIgnoreCase))
+                ValidateSlotActiveValue(token[9..]);
+        }
+    }
+
+    private static void ValidateSlotActiveValue(string value)
+    {
+        if (value is not ("true" or "false")) throw InvalidSlotActive(value);
+    }
+
+    private static RLoopException InvalidSlotActive(string? value) => new("INVALID_OPTION",
+        value is null ? "--active requires exactly 'true' or 'false'." : $"--active must be exactly 'true' or 'false'; got '{value}'.",
+        ExitCodes.InvalidArguments);
+
     private static void RequireYes(ParsedArguments args, string operation)
     {
         if (!args.Has("yes")) throw new RLoopException("CONFIRMATION_REQUIRED", $"{operation} is destructive and requires --yes.", ExitCodes.ValidationFailed);
@@ -1461,20 +1610,43 @@ Default declaration output: project .resoloop/catalog-types.d.ts. JsonValue fall
 """,
             "apply" => """
 resoloop apply FILE [--build-id R] [--state FILE] [--require-state] [--adopt] [--profile] [--ndjson-progress] [--prune --yes]
+resoloop apply creation.json --mode regenerate --state creation-state.json --replace-order delete-first --url auto --session S-ID --yes --json
+resoloop creation recover --state creation-state.json --action rollback --url auto --session S-ID --yes --json
+resoloop creation recover --state creation-state.json --action finish --url auto --session S-ID --yes --json
+resoloop creation recover --state creation-state.json --discard-pending OP --yes --json
 
 Validates and plans the complete document before mutation. State checkpoints make a failed non-atomic apply resumable.
 --adopt binds one verified existing root. --prune deletes stale owned targets and always requires --yes.
 --discard-pending OPERATION_ID --yes discards only that pending record offline and exits; do not combine with --prune/--adopt.
 Inspect first: an untracked successful creation can be duplicated by the next apply; delete unwanted objects only by exact IDs.
+Regenerate is experimental: it deletes the entire owned root, including manually added content. Inspect its plan and pass --yes; it requires --url auto --session S-ID.
+It accepts hand-written JSON envelopes only (no TSX creation entrypoint), is live-unverified, and uses separate v4 state with no v3 migration. Delete-first creates a gap; failure does not restore the old root. Asset/Flux/Script placement is unsupported.
 """,
             "plan" or "diff" => """
 resoloop plan|diff FILE [--build-id R] [--state FILE] [--require-state] [--adopt]
   [--changes-only | --creates-only | --deletes-only | --summary]
+resoloop plan creation.json --mode regenerate --state creation-state.json --url auto --session S-ID --json
 
 Never changes the world. Without --brief, JSON includes a separate changes array; output filters affect only operations.
 --brief emits one compact target/reason list (changes by default); --summary --brief emits counts only.
 --report NEW_FILE.json saves the full standard JSON, including all changes. Existing files are never overwritten.
 Review --deletes-only before apply --prune --yes.
+Regenerate planning is experimental and requires --url auto --session S-ID. Creation state v4 is separate from legacy v3; no v3 migration is provided. It accepts hand-written JSON envelopes only (no TSX entrypoint). Asset/Flux/Script placement is unsupported; live behavior is unverified.
+Apply deletes the entire owned root, including manual additions, and needs --yes after plan review. Delete-first creates a gap and a failed create does not restore the old root.
+Regenerate may add Components automatically in Resonite (for example RectTransform); apply accepts extras and reports engineAddedComponents. Slot counts must match the definition.
+Recover pending work only after inspecting state and exact IDs. An unmarked candidate is never deleted automatically; discard-pending clears only the local pending record (no world cleanup, no exemption from the next apply checks):
+  resoloop creation recover --state creation-state.json --action rollback --url auto --session S-ID --yes --json
+  resoloop creation recover --state creation-state.json --action finish --url auto --session S-ID --yes --json
+  resoloop creation recover --state creation-state.json --discard-pending OP --yes --json
+""",
+            "creation" => """
+resoloop creation recover --state STATE --action rollback|finish --url auto --session S-ID --yes --json
+resoloop creation recover --state STATE --discard-pending OP --yes --json
+
+Recovery is experimental and requires inspection of the retained state, operation ID and exact Slot IDs first.
+rollback removes only a fully proven candidate and retains a proven old root when present; it does not recreate an old root that was already deleted.
+finish is available only when the complete staged tree and ownership can be reverified. discard-pending clears the local record only: it does not inspect or clean the world.
+State v4 is separate from legacy v3 with no migration. This workflow accepts hand-written JSON envelopes only; TSX creation, Asset/Flux/Script placement, creation recover --bind-root, creation migrate and creation inspect are unavailable. Live behavior is unverified.
 """,
             "find" => """
 resoloop find (--name TEXT [--exact] | --component TYPE) [--under SLOT] [--direct-children]
@@ -1549,8 +1721,8 @@ Blender (offline; no installation or world mutation):
     --preserve-hierarchy keeps local geometry/pivots; --pack-pbr packs direct Non-Color scalar maps.
 
 Editing:
-  resoloop slot create --name NAME [--parent SLOT] [--position x,y,z] [--rotation x,y,z,w] [--scale x,y,z]
-  resoloop slot set SLOT [--name NAME] [--position x,y,z] [--rotation x,y,z,w] [--scale x,y,z]
+  resoloop slot create --name NAME [--parent SLOT] [--position x,y,z] [--rotation x,y,z,w] [--scale x,y,z] [--active true|false]
+  resoloop slot set SLOT [--name NAME] [--position x,y,z] [--rotation x,y,z,w] [--scale x,y,z] [--active true|false]
   resoloop slot delete SLOT --yes
   resoloop component list SLOT
   resoloop component inspect COMPONENT_ID|$component:key [--state WORLD_STATE]
@@ -1563,6 +1735,11 @@ Editing:
   resoloop validate FILE [--build-id R] [--catalog FILE] [--strict]
   resoloop plan|diff FILE [--build-id R] [--state FILE] [--require-state] [--adopt] [--changes-only|--creates-only|--deletes-only|--summary]
   resoloop apply FILE [--build-id R] [--state FILE] [--require-state] [--adopt] [--profile] [--ndjson-progress] [--prune --yes]
+  resoloop plan creation.json --mode regenerate --state creation-state.json --url auto --session S-ID --json
+  resoloop apply creation.json --mode regenerate --state creation-state.json --replace-order delete-first --url auto --session S-ID --yes --json
+  resoloop creation recover --state creation-state.json --action rollback --url auto --session S-ID --yes --json
+  resoloop creation recover --state creation-state.json --action finish --url auto --session S-ID --yes --json
+  resoloop creation recover --state creation-state.json --discard-pending OP --yes --json
   Bundle input requires --build-id R and its embedded catalog; ordinary JSON omits --build-id.
   --diagnostics FILE writes versioned detailed diagnostics to a new file for validate/diff/plan/apply.
   resoloop test FILE.json [--state FILE] [--probe --yes]
@@ -1604,6 +1781,8 @@ List announcements with discover; auto requires exactly one match. Explicit URLs
 Exact Slot path (PowerShell): 'path:["Root","A/B"," Label "]' preserves separators and spaces in names.
 Configuration priority: CLI > environment > .resoloop.json > ~/.resoloop/config.json
 Environment: RESONITE_LINK_URL, RESOLOOP_TIMEOUT_SECONDS, RESOLOOP_COMMAND_TIMEOUT_SECONDS, RESOLOOP_FLUX_EXECUTABLE, RESONITE_MANAGED_DATA_PATH, RESONITE_LOG_PATH, RESOLOOP_BLENDER_EXECUTABLE, RESOLOOP_BACKEND, RESOLOOP_WORKBENCH_PIPE
+
+Experimental creation regenerate uses handwritten JSON envelopes and separate v4 state (no legacy v3 migration). It requires a matched --url auto --session S-ID; apply requires --yes and deletes the whole root, including manual additions. Delete-first leaves a gap and failure does not restore the old root. Asset/Flux/Script placement and TSX creation are unavailable; live behavior is unverified. See resoloop help creation for recovery limits.
 """);
     }
 }

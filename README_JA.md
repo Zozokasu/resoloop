@@ -122,6 +122,8 @@ Component の `propertyModes` は member ごとに `config`・`initial`・`runti
 
 schema v1はComponentの任意`fieldAliases`とSlotの`tag`にも対応します。TSXでは`<Field>`子要素と`<Slot tag>`を使えます。alias参照はcanonicalな`$member`へ解決され、tagを省略すると既存値を保ちます。記法・診断・適用条件は[宣言の詳細](docs/DECLARATIVE.md)を参照してください。
 
+Slotを直接変更する場合は、正確なSlotをinspectしてから `resoloop slot set VERIFIED_SLOT --active false` または `--active true` を実行し、もう一度inspectして `data.isActive` を確認します。作成時は `resoloop slot create --parent VERIFIED_PARENT --name NAME --active false` を指定できます。値は小文字の `true` / `false` のみです。省略すると既定値または現在値を保ちます。宣言型applyにactive指定はありません。
+
 state v3 は確定済みの対応と保留を保存します。v1/v2 は読めますが、保存は v3 になり、古い CLI は v3 を拒否します。サーバが明示的に拒否した要求は保留を解消します。次の apply は、discovery の identity・受付・正確な ID・型・親・所有の証拠がそろった保留を照合し、一致した部分を確定します。確認できた不一致は保留を解消し、今の観測から再計画します。作成 ID や受付、identity が不明なら自動では解消しません。同名・型・順番による作成の回収も行いません。明示の `--url` で接続すると identity は不明になり、中断した保留を自動で確定できません。discovery 経由の接続なら一致を照合できます。
 
 失敗後は `context.reason`、`stateFile`、`operationId`、確定部分と completeness を読み、`inspect EXACT_SLOT_ID --members` または `component inspect EXACT_COMPONENT_ID` で実機を確認してください。そのうえで、指定した保留だけを破棄できます。
@@ -139,6 +141,33 @@ resoloop apply FILE --state STATE --discard-pending OPERATION_ID --yes
 prune は `--prune --yes` が必須です。prune と relocate の移動元削除は、直前に stable key・正確な ID・所有 Slot を再確認します。Slot の部分木を完全に観測できない、管理していない子孫がある場合は削除を送りません。engine が自動で足した Component も、出現しただけでは所有物にしません。削除後は正確な ID の不在を `SLOT_NOT_FOUND` / `COMPONENT_NOT_FOUND` だけで確認します。直接の `slot delete` / `component remove` は既存の対象確認・`--yes`・Root 拒否を維持します。古い driver が新しい参照を妨げる入替えは、先に古い driver を宣言から外し、diff を確認して `--prune --yes` で削除します。不在を確認してから新しい driver を足して apply してください。readback 不一致を越えて一回で入れ替えることはできません。
 
 保証するのは観測した競合の検出と、同じ PC・同じ OS ユーザーの、この版以降の ResoLoop 間の書込み調整です。操作は `atomic:false` で rollback はありません。古い CLI、別 PC・別ユーザー、人、外部ツール、ProtoFlux への排他や、観測の外・確認後の競合、値の将来の保持は保証しません。[停止後の詳しい手順](README-DETAILS.md#apply-の停止後は保留と実機を確認する)を参照してください。
+
+## 実験的な creation regenerate
+
+creation regenerate は所有root全体を作り直す実験機能です。実機では未検証です。planとapplyには `--url auto --session S-ID` が必要で、applyにはplan確認後の明示的な `--yes` も必要です。置換はdelete-first方式です。先に旧rootを削除するため、その間は制作物がない状態になり、新rootの作成に失敗しても旧rootは戻りません。root配下は手動で追加した内容も含めてすべて削除されます。実行前に対象rootと配下を正確に確認してください。
+
+入力は手書きJSON envelopeのみです。TSXから作る入口はありません。Asset・Flux・Scriptの配置には対応していません。creation state v4は通常のstate v3とは別形式で、移行機能はありません。
+
+```powershell
+resoloop plan creation.json --mode regenerate --state creation-state.json --url auto --session S-ID --json
+resoloop apply creation.json --mode regenerate --state creation-state.json --replace-order delete-first --url auto --session S-ID --yes --json
+```
+
+保留が残ったら、再applyせずstate、operation ID、rootの正確なIDを確認してから復旧方法を選びます。
+
+```powershell
+resoloop creation recover --state creation-state.json --action rollback --url auto --session S-ID --yes --json
+resoloop creation recover --state creation-state.json --action finish --url auto --session S-ID --yes --json
+resoloop creation recover --state creation-state.json --discard-pending OP --yes --json
+```
+
+Resoniteは、Componentを付けると別のComponent（例: UIXの `RectTransform`）を自動で足すことがあります。作り直しはこれを失敗にせず、足された数を結果の `engineAddedComponents`（`creation recover --action finish` も同じ）で返します。自動で足されたComponentは定義に無いため、定義から参照も値の指定もできません。値を決めたいComponentは定義に明示して書いてください。Slotの数は定義と一致しないと失敗します（`APPLY_WRITE_UNVERIFIED`）。
+
+定義したComponentを、Resoniteが自分で足したものの重複として消した場合（例: UIXのComponentの後に書いた `RectTransform`）、作り直しは、足されていた方へ定義の値を書いて使います。定義の順には依りません（警告 `CREATION_COMPONENT_MERGED_WITH_ENGINE_ADDED`）。採用するのは、持ち主のSlotを完全に観測でき、同じ型の候補がちょうど1つの場合だけです。それ以外は `COMPONENT_NOT_FOUND` で失敗します。`plan --mode regenerate` も、Componentの型と値を `apply` と同じに検査します（書込みはしません）。コマンドの期限切れでpendingが残ったときは、`suggestions` に `creation recover` の案内が出ます。
+
+記録したrootをResoniteの中で手で消した場合、次のplan／applyは止まらず、一致を確かめたsessionで記録IDが正確に不在なら初回の作成として進みます（何も削除せず、警告 `CREATION_PREVIOUS_ROOT_ABSENT` が付きます）。`--discard-pending` の後に世界へ残ったrootは自動では消えません。結果に出たIDを確かめて、手で消してください。
+
+rollbackが削除するのは所有を証明できたcandidate全体だけです。残っていて所有を確認できた旧rootは保持しますが、delete-firstですでに消えた旧rootは復元しません。印のないcandidateは自動削除しません。finishは、作成完了を示す記録とtree全体の所有を再検証できた場合だけ状態を確定します。discardはローカルの保留記録だけを消し、worldの確認・清掃は行わず、残ったrootの可能性を警告します。`creation recover --bind-root`、`creation migrate`、`creation inspect` は未提供です。通常のinspectで正確なIDを確認してください。詳しい手順は[creation recovery workflow](skills/codex/resonite-build/references/creation-regenerate.md)を参照してください。
 
 ## インストール
 
@@ -243,3 +272,5 @@ TSX の受け渡しでは build 前に毎回新しい要求 ID R を生成し、
 成功しても `strict: false` のままです。`--catalog --strict` は catalog preflight 後に従来の live strict を実行し、接続先の version も照合します。live 実行は別途認可が必要です。catalog 未指定の validate・diff・plan・apply、schema/state、出力 JSON は変更しません。catalog の hash は改変検出用で、実機取得の証明ではありません。識別情報のない旧 reflection cache は catalog に昇格できません。V11 の固定原本・identity/hash・手書き診断表は合成 fixture で、実 Component の検証結果ではありません。[開発用 export/import tool](tools/RLoop.CatalogExport/README.md) を参照してください。Reflection、範囲を絞った現況観測、変更後 inspection は引き続き必要です。
 
 TSX の修正位置は `validate|diff|plan|apply FILE --diagnostics NEW_FILE.json` で確認できます。別 JSON の `diagnosticVersion` は `"1"`。key/member/IR path、known/unknown の source・expected・observed、completeness を持ち、既知の null と未取得を区別します。bundle/map v1 は元 AST の UTF-16 offset・1 始まりの行/列・終端を含まない range と source hash を保持します。誤 member は property 名、誤参照は値を作った式に戻ります。関数 props の直接転送、Scope、fragment、map、選択された条件枝は元の位置を保持します。spread・動的 member 名・追跡できない転送は primary が unknown、実在する式や呼出しは related です。TSX を直して新しい R で再 build し、生成 JSON の行を修正入口にしません。手書き・従来生成 JSON でも利用でき、source は unknown です。既存 stdout/stderr JSON、context.issues、report、state は不変です。診断は既存の書込み可能ディレクトリの新規ファイルに出し、書出し失敗を stderr へ明示して検証/apply の判定・exit code を維持します。catalog の成功だけで runtime 検証を complete にしません。
+
+実験的な変数APIは `resoloop-jsx/variables` subpath から利用します。bool変数とcatalog-bound Fieldの `drive`/`bind` の使い方は[package guide](tools/resoloop-jsx/README.md#experimental-variables-api)を参照してください。このAPIは実機のResoniteでは未検証です。

@@ -23,12 +23,14 @@ public static class ApplyDocumentCompiler
     internal static Result CompileBundleIr(string text, ApplyBuildBundle? bundle = null)
     {
         var root = JsonNode.Parse(text) as JsonObject ?? throw new JsonException("The root must be an object.");
+        using (var parsed = JsonDocument.Parse(root.ToJsonString())) CreationDocument.RejectLegacyInput(parsed.RootElement);
         if (root.ContainsKey("include")) ApplyBuildBundle.Fail("inputUnknown", "Bundle IR cannot read external includes.");
         return CompileRoot(root, new Context { Bundle = bundle });
     }
 
     private static Result CompileRoot(JsonObject root, Context context)
     {
+        using (var parsed = JsonDocument.Parse(root.ToJsonString())) CreationDocument.RejectLegacyInput(parsed.RootElement);
         if (root.Remove("limits", out var limits))
         {
             if (limits is not JsonObject settings || settings.Any(pair => pair.Key != "expandedNodes") ||
@@ -75,6 +77,8 @@ public static class ApplyDocumentCompiler
         {
             current = JsonNode.Parse(File.ReadAllText(path)) as JsonObject
                       ?? throw new JsonException("The root must be an object.");
+            using var parsed = JsonDocument.Parse(current.ToJsonString());
+            CreationDocument.RejectLegacyInput(parsed.RootElement);
         }
         catch (JsonException ex)
         {

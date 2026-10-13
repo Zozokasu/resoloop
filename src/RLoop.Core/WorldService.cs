@@ -1633,7 +1633,7 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
         return true;
     }
 
-    private static bool MemberMatchesRaw(MemberValue member, string raw)
+    internal static bool MemberMatchesRaw(MemberValue member, string raw)
     {
         if (member.Kind == "reference") return string.Equals(member.TargetId ?? "null", raw, StringComparison.Ordinal);
         if (member.Kind is "syncObject" or "dictionary")

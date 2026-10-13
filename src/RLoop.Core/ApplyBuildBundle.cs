@@ -50,6 +50,7 @@ internal sealed class ApplyBuildBundle
         using (parsed)
         {
             var root = parsed.RootElement;
+            CreationDocument.RejectLegacyInput(root);
             var isBundle = root.ValueKind == JsonValueKind.Object &&
                 (root.TryGetProperty("kind", out _) || root.TryGetProperty("bundleVersion", out _));
             if (!isBundle)

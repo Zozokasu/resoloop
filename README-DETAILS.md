@@ -232,7 +232,7 @@ Exit codeは、2=引数、3=設定、4=接続、5=not found、6=validation、7=�
 | Connection | status, ping |
 | Observe | hierarchy profile, hierarchy query, hierarchy, find, inspect |
 | Compare | snapshot create, snapshot diff |
-| Slot | slot create, slot set, slot delete --yes |
+| Slot | slot create/set [--active true\|false], slot delete --yes |
 | Component | component list/inspect/add/set/remove |
 | Reflection | type search, type describe |
 | Declarative | validate, plan/diff, apply [--prune --yes], scene summary, capture, test |
@@ -255,6 +255,33 @@ Material、家具、照明、ReflectionMaterial、TouchButtonを含むnestedな�
 ~~~powershell
 resoloop apply examples/house-world.json --json
 ~~~
+
+### Experimental creation regenerate
+
+Creation regenerate rebuilds a complete owned root and is experimental; live behavior is unverified. Its plan and apply require a matched discovery session (`--url auto --session S-ID`), and apply requires `--yes` after plan review. It uses delete-first replacement: all content below the old root, including manual additions, is deleted before creation starts. This leaves a gap, and failure does not restore the deleted root. Inspect the exact root boundary before confirmation.
+
+Input is a hand-written JSON envelope. TSX creation input is not available. Asset, Flux and Script placement are unsupported. Creation state v4 is separate from ordinary apply state v3; no migration is provided.
+
+~~~powershell
+resoloop plan creation.json --mode regenerate --state creation-state.json --url auto --session S-ID --json
+resoloop apply creation.json --mode regenerate --state creation-state.json --replace-order delete-first --url auto --session S-ID --yes --json
+~~~
+
+If pending state remains, inspect the state, operation ID and exact root IDs before selecting recovery. Do not reapply while pending. `rollback` deletes only a candidate whose complete ownership is proven, keeps a verified old root if it still exists, and cannot restore an old root already deleted. An unmarked candidate is not deleted automatically. `finish` saves the candidate as active only after the staged tree and ownership pass revalidation. `--discard-pending` clears the local record only; it does not inspect or clean the world and warns about possible remaining roots.
+
+~~~powershell
+resoloop creation recover --state creation-state.json --action rollback --url auto --session S-ID --yes --json
+resoloop creation recover --state creation-state.json --action finish --url auto --session S-ID --yes --json
+resoloop creation recover --state creation-state.json --discard-pending OP --yes --json
+~~~
+
+Resonite may add Components on its own (for example UIX Components add a `RectTransform`). Regenerate does not treat this as a failure: the final structure check requires the Slot count to match the definition exactly and the Component count to be at least the defined count, and the number of extra Components is returned as `engineAddedComponents` (also by `creation recover --action finish`). Engine-added Components are not in the definition, so they cannot be referenced or have values set from it; declare any Component whose values you need explicitly. A Slot count that differs from the definition still fails with `APPLY_WRITE_UNVERIFIED`.
+
+If Resonite removes a declared Component as a duplicate of one it already added itself (for example a declared `RectTransform` written after a UIX Component), regenerate writes the declared values to the engine-added Component and uses it, whatever the order in the definition, and reports the warning `CREATION_COMPONENT_MERGED_WITH_ENGINE_ADDED`. A candidate is adopted only when its owner Slot is fully observed and exactly one same-type candidate exists; otherwise the operation fails. `plan --mode regenerate` checks Component types and values the same way as `apply` (read-only). When a regenerate or recover command times out with a pending operation, `suggestions` include the `creation recover` guidance.
+
+If the recorded root was deleted by hand in Resonite, the next plan or apply does not stop: when the recorded root ID is exactly absent in the matched session, it is treated as a first creation (nothing is deleted) and the result carries the warning `CREATION_PREVIOUS_ROOT_ABSENT`. A root left in the world after `--discard-pending` is not removed automatically; check the IDs in the result and delete it by hand.
+
+`creation recover --bind-root`, `creation migrate` and `creation inspect` are unavailable. Use ordinary exact-ID inspection for runtime checks. The bundled [creation recovery workflow](skills/codex/resonite-build/references/creation-regenerate.md) includes the manual JSON envelope and diagnostic guidance.
 
 schema v1では、top-levelに `schemaVersion: "1"`、`ownership.key`、root `slot.key`が必要です。ownershipごとのstateは既定でproject内の `.resoloop/state/<ownership>.json` に保存され、途中経過もcheckpointされます。このdirectoryは `resoloop init` が生成するignore設定によりversion controlから除外されます。
 
@@ -498,7 +525,7 @@ OneDriveなどで保存先が異なる環境は、環境変数 `RESOLOOP_SCREENS
 
 `ownership`には一時camera Slotの`parentId`／`slotId`／`slotName`と`cleanupCompleted`を返します。現在はRootへ作成し、exact ID・名前を確認してcleanupします。`scene summary`の`bounds.kind`は`geometry`／`partial`／`pivots`で根拠を区別し、ローカルmesh assetの頂点から外形を取得します。親transform適用後のrest AABBであり、動作中の掃引範囲や衝突形状ではありません。
 
-Slotの`--position`／`--scale`／`--rotation`はJSON配列・objectと従来comma形式に対応し、有限値を要求します。例: `resoloop slot update VERIFIED_SLOT --position '[1,2,3]'`。inspectにはSlot自身の`members`とIDも含まれ、item auditはその所有root内のPosition／Rotation fieldなどを内部参照として扱います。
+Slotの`--position`／`--scale`／`--rotation`はJSON配列・objectと従来comma形式に対応し、有限値を要求します。例: `resoloop slot set VERIFIED_SLOT --position '[1,2,3]'`。直接Slot作成時は `slot create --parent VERIFIED_PARENT --name NAME --active false`、切替時は `slot set VERIFIED_SLOT --active true` または `--active false` を使えます。`--active` は小文字の `true` / `false` のみ受け付け、省略時は既定値または現在値を保ちます。書込み前後に正確な対象をinspectし、結果の `data.isActive` を確認してください。inspectにはSlot自身の`members`とIDも含まれ、item auditはその所有root内のPosition／Rotation fieldなどを内部参照として扱います。
 
 strict validationはadapterの書込み変換を実行し、Nullable enumを含む不正値をasset import前に検出します。nested SyncObjectは指定された子だけを再帰比較し、省略された既定値を差分にせず、宣言値のdriftは検出します。古いcheckpointにmanifestのidentityFieldsを足すだけでは識別根拠は追加されません。候補と所有範囲を確認して復旧してください。新規Blender exportはproviderを名前付きSlotへ分け、旧root配置には`--legacy-root-providers`を指定できます。
 
@@ -688,3 +715,5 @@ Slot の削除前は各 Slot の直下 children/components を読み、部分木
 観測した値・型・writer の可能性の競合を検出し、同じ PC・同じ OS ユーザーの、この版以降の ResoLoop 間で書込みを調整します。これにより別 project の未確定書込みを飛び越しません。
 
 操作は `atomic:false` です。全体の原子性や rollback、古い CLI・別 PC/ユーザー・人・外部ツール・ProtoFlux への排他、観測外や確認と送信の間の競合、readback 後の値の保持は保証しません。state の flush と atomic replacement は行いますが、電源断や filesystem 固有の耐久性も無条件には保証しません。同じコマンドの再実行だけで安全に収束すると判断せず、保留と実機の証拠から続行を決めてください。
+
+実験的な変数APIは `resoloop-jsx/variables` subpath を使います。bool変数と確認済みcatalog-bound Fieldへの `drive`/`bind` の詳細は[package guide](tools/resoloop-jsx/README.md#experimental-variables-api)を参照してください。実機のResoniteでは未検証です。

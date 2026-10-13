@@ -21,6 +21,8 @@ Component `propertyModes` maps member names to `config`, `initial`, `runtime` or
 
 Schema v1 also supports optional Component `fieldAliases` and Slot `tag`; TSX supports `<Field>` children and `<Slot tag>`. Aliases resolve to canonical `$member` selectors, and omitted tags preserve the live value. See [declarative authoring details](docs/DECLARATIVE.md) for syntax, policy and diagnostics.
 
+For a direct Slot edit, inspect the exact Slot, then run `resoloop slot set VERIFIED_SLOT --active false` or `--active true` and inspect it again; confirm `data.isActive`. Creation can use `resoloop slot create --parent VERIFIED_PARENT --name NAME --active false`. The option accepts lowercase `true` or `false`; omitting it leaves the default or current value unchanged. Declarative apply has no active field.
+
 Keep the reported state file. State v3 stores confirmed bindings and pending operations; v1/v2 can be read, saves use v3, and older CLIs reject v3. Explicit server rejection clears the pending operation. A later apply can reconcile an accepted result with matching discovery identity and exact target/owner evidence: confirmed values commit, known mismatches clear and planning uses the current observation. Unknown creation IDs, unproven acceptance or identity remain pending; names, types and order are never used to recover a lost creation. Explicit `--url` connections have unknown identity and cannot automatically settle interrupted pending operations; a discovery-selected connection can supply matching identity evidence.
 
 On failure, read `context.reason`, `stateFile`, `operationId`, confirmed results and completeness; inspect the exact Slot/Component IDs before deciding how to continue. After inspecting the world, clear only a chosen operation with:
@@ -36,6 +38,27 @@ ResoniteLink writers share an exclusive handle at `<LocalApplicationData>/ResoLo
 Prune requires `--prune --yes`. Prune and relocation-source deletion recheck stable key, exact ID and owner Slot immediately before deletion. Slot deletion requires complete child/component observation and rejects unmanaged descendants, including automatically added components without ownership evidence. Absence readback uses only exact `SLOT_NOT_FOUND` / `COMPONENT_NOT_FOUND`. Direct `slot delete` / `component remove` retain their existing exact-target/`--yes` protections and Root refusal. To replace a driver whose old owner prevents a new reference from sticking, first remove the old driver from the declaration, review diff and apply with `--prune --yes`; inspect its absence, then add the new driver and apply. One apply cannot perform that replacement through a failed readback.
 
 These checks detect observed conflicts and coordinate this and later cooperating ResoLoop versions on the same PC and OS user. Operations remain `atomic:false`; there is no rollback or exclusion of older CLIs, other PCs/users, people, external tools or ProtoFlux. Changes outside observation or between checking and sending remain possible. Readback does not guarantee future value retention. See [failure recovery and deletion details](README-DETAILS.md#apply-の停止後は保留と実機を確認する).
+
+## Experimental creation regenerate
+
+Creation regenerate replaces a whole owned root. It is experimental and has not been verified in a live Resonite session. The plan and apply require `--url auto --session S-ID`; apply also requires an explicit `--yes` after reviewing the plan. Replacement uses delete-first: the old root is deleted before the new one is created, so there is a gap and a failed creation does not restore the old root. Every Slot under the owned root is removed, including content added manually. Inspect the exact root and its contents before confirming.
+
+The workflow accepts hand-written JSON envelopes only; there is no TSX creation entrypoint. Asset, Flux and Script placement are unsupported. Creation state v4 is separate from ordinary state v3, and migration is unavailable. To plan and apply, use:
+
+~~~powershell
+resoloop plan creation.json --mode regenerate --state creation-state.json --url auto --session S-ID --json
+resoloop apply creation.json --mode regenerate --state creation-state.json --replace-order delete-first --url auto --session S-ID --yes --json
+~~~
+
+If an operation remains pending, do not apply again. Read the state, operation ID and exact root IDs, then choose rollback or finish:
+
+~~~powershell
+resoloop creation recover --state creation-state.json --action rollback --url auto --session S-ID --yes --json
+resoloop creation recover --state creation-state.json --action finish --url auto --session S-ID --yes --json
+resoloop creation recover --state creation-state.json --discard-pending OP --yes --json
+~~~
+
+Rollback cleans up only a candidate whose complete ownership can be proven. It retains a verified old root when one remains, but cannot restore an old root deleted by delete-first; an unmarked candidate is never deleted automatically. Finish records a candidate only when its complete staged tree and ownership pass revalidation. Discard clears only the local pending record, does not inspect or clean the world, and warns about possible remaining roots. `creation recover --bind-root` is unsupported, and `creation migrate` and `creation inspect` are unavailable; inspect exact IDs with the existing ordinary inspection commands. See the [creation recovery workflow](skills/codex/resonite-build/references/creation-regenerate.md) for the full procedure.
 
 ## Installation
 
@@ -249,3 +272,5 @@ Capture and its result are not runtime verification.
 Catalog success leaves `strict: false`. With both `--catalog` and `--strict`, catalog preflight runs first, then the existing live validation checks the selected session's versions; it requires an authorized live connection. The commands without `--catalog` retain their existing behavior. Catalog checks do not replace bounded observation, current-ID verification or post-change inspection.
 
 The developer tool also supports lower-level snapshot export/import: `dotnet run --project tools/RLoop.CatalogExport --no-build -- export SNAPSHOT.json CATALOG.json` or `... -- import CATALOG.json OUTPUT.json`. Snapshots preserve recursive SDK definitions and identity (Resonite/server Link/client package/mapper versions and acquisition time). Catalogs include a content hash and `live`, identity-matched `version-cache`, or refused `unverified` provenance; a hash proves integrity, not runtime acquisition. Legacy reflection caches without acquisition identity are refused. The V11 fixtures are **synthetic**, with a fixed original, identity/hash and handwritten diagnostic table. See [catalog tool](tools/RLoop.CatalogExport/README.md).
+
+Experimental variables use the `resoloop-jsx/variables` subpath for bool declarations and catalog-bound `drive`/`bind`; see [the package guide](tools/resoloop-jsx/README.md#experimental-variables-api). This API has not been verified against a live Resonite session.

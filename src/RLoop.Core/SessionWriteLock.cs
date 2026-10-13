@@ -64,11 +64,22 @@ internal sealed class SessionWriteLock : IDisposable
                 // The state's kind selects the pending rule. A state without kind is an apply state (ownershipKey).
                 if (json.RootElement.TryGetProperty("kind", out var kind))
                 {
-                    if (kind.ValueKind != JsonValueKind.String || kind.GetString() != FluxDeployState.KindValue)
-                        throw new JsonException("Unknown state kind.");
-                    if (FluxDeployStateStore.Parse(text, previous).Pending.Count > 0)
-                        throw Blocked(previous, "previousFluxStatePending");
-                    return;
+                    if (kind.ValueKind != JsonValueKind.String) throw new JsonException("Unknown state kind.");
+                    if (kind.GetString() == FluxDeployState.KindValue)
+                    {
+                        if (FluxDeployStateStore.Parse(text, previous).Pending.Count > 0)
+                            throw Blocked(previous, "previousFluxStatePending");
+                        return;
+                    }
+                    if (kind.GetString() == "creation")
+                    {
+                        var creationId = json.RootElement.GetProperty("creationId").GetString()
+                            ?? throw new JsonException("Missing creation ID.");
+                        if (CreationStateStore.Load(previous, creationId, requireState: true)?.Pending is not null)
+                            throw Blocked(previous, "previousCreationStatePending");
+                        return;
+                    }
+                    throw new JsonException("Unknown state kind.");
                 }
                 var ownership = json.RootElement.GetProperty("ownershipKey").GetString();
                 if (string.IsNullOrWhiteSpace(ownership)) throw new JsonException("Missing state ownership.");

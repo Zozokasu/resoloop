@@ -4,6 +4,8 @@ import { BuildError } from "./evaluate.js";
 import type { FieldProps, JsxNode } from "./elements.js";
 import { markBuildError, captureElement } from "./source-map.js";
 import { isReferenceToken, targetReference, type FieldRef, type ScalarRepresentation } from "./object-refs.js";
+import type { FieldBinding } from "./variables.js";
+import { fieldBindingDescriptor, variableRefDescriptor } from "./variables-internal.js";
 
 type Registry<T extends keyof CatalogComponentRegistry & string> = CatalogComponentRegistry[T];
 type Members<T extends keyof CatalogComponentRegistry & string> =
@@ -25,6 +27,14 @@ type Rep<T extends keyof CatalogComponentRegistry & string, K extends string> =
   K extends keyof Metadata<T> ? Metadata<T>[K] extends { scalar: infer R } ? R : never : never;
 type RefValue<R> = R extends "boolean" ? boolean : R extends "string" ? string :
   R extends "int32" | "single" ? number : never;
+type FieldValue<T extends keyof CatalogComponentRegistry & string, K extends string> =
+  [Metadata<T>] extends [never]
+    ? Value<T, K>
+    : K extends keyof Metadata<T>
+      ? Metadata<T>[K] extends { kind: "field"; confirmed: true; scalar: "boolean"; fieldInterface: string }
+        ? Value<T, K> | FieldBinding<"bool">
+        : Value<T, K>
+      : Value<T, K>;
 type Policy<V> =
   | { mode?: "config" | "initial"; value: V }
   | { mode: "runtime" | "driver-owned"; value?: V };
@@ -72,7 +82,7 @@ function validateScalarValue(value: unknown, representation: ScalarRepresentatio
 export interface BoundComponentFields<T extends keyof CatalogComponentRegistry & string> {
   readonly type: T;
   Field<const K extends Names<T>>(
-    props: Omit<FieldProps, "name" | "value" | "mode"> & { name: K } & Policy<Value<T, NoInfer<K>>>
+    props: Omit<FieldProps, "name" | "value" | "mode"> & { name: K } & Policy<FieldValue<T, NoInfer<K>>>
   ): JsxNode;
   ref<const K extends RefNames<T>>(
     componentKey: string, member: K
@@ -88,13 +98,31 @@ export function componentFields<const T extends keyof CatalogComponentRegistry &
   const table = verifyRuntimeTable(catalog);
   const canonical = canonicalType(table, type, "<type>");
   function createField<const K extends Names<T>>(
-    props: Omit<FieldProps, "name" | "value" | "mode"> & { name: K } & Policy<Value<T, NoInfer<K>>>
+    props: Omit<FieldProps, "name" | "value" | "mode"> & { name: K } & Policy<FieldValue<T, NoInfer<K>>>
   ): JsxNode {
-    const descriptor = catalogMember(table, type, props.name);
     const fieldProps = { ...props, name: props.name } as unknown as FieldProps;
     const captured = { kind: "field", props: fieldProps };
     captureElement(captured);
-    if (props.value !== undefined && descriptor.scalar !== null)
+    const binding = fieldBindingDescriptor(props.value);
+    if (!binding && variableRefDescriptor(props.value)) {
+      const error = new BuildError("CREATION_VARIABLE_UNRESOLVED",
+        "Variable reference requires drive(...) or bind(...).");
+      markBuildError(error, captured, "value");
+      throw error;
+    }
+    let descriptor: CatalogMemberRuntime;
+    try { descriptor = catalogMember(table, type, props.name); }
+    catch (error) {
+      if (binding) return unsupportedBinding(type, props.name, captured);
+      throw error;
+    }
+    if (binding && descriptor.kind === "field" && descriptor.confirmed === true && descriptor.scalar !== null &&
+        typeof descriptor.fieldInterface === "string" && descriptor.scalar !== "boolean")
+      return mismatchedBinding(type, props.name, descriptor.scalar, captured);
+    if (binding && (descriptor.kind !== "field" || descriptor.confirmed !== true ||
+        descriptor.scalar !== "boolean" || typeof descriptor.fieldInterface !== "string"))
+      return unsupportedBinding(type, props.name, captured);
+    if (!binding && props.value !== undefined && descriptor.scalar !== null)
       validateScalarValue(props.value, descriptor.scalar, captured);
     metadata.set(captured, { type: canonical, member: props.name, descriptor, catalogHash: table.contentHash });
     return captured as JsxNode;
@@ -111,6 +139,20 @@ export function componentFields<const T extends keyof CatalogComponentRegistry &
         FieldRef<RefValue<Rep<T, K>>, Extract<Rep<T, K>, ScalarRepresentation>>;
     },
   });
+}
+
+function unsupportedBinding(type: string, member: string, element: object): never {
+  const error = new BuildError("CREATION_VARIABLE_TYPE_UNSUPPORTED",
+    `Variable binding target '${type}.${member}' requires a confirmed bool Field.`);
+  markBuildError(error, element, "value");
+  throw error;
+}
+
+function mismatchedBinding(type: string, member: string, scalar: ScalarRepresentation, element: object): never {
+  const error = new BuildError("CREATION_VARIABLE_TYPE_MISMATCH",
+    `Variable 'bool' cannot bind to Field '${type}.${member}' of type '${scalar}'.`);
+  markBuildError(error, element, "value");
+  throw error;
 }
 
 export function boundFieldMetadata(field: object): BoundFieldMetadata | undefined {

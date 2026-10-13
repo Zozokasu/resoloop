@@ -138,7 +138,8 @@ public sealed record SlotCreateRequest(
     QuaternionValue? Rotation = null,
     Vector3Value? Scale = null,
     string? RequestedId = null,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Tag = null);
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Tag = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] bool? IsActive = null);
 
 public sealed record SlotUpdateRequest(
     string Id,
@@ -147,7 +148,8 @@ public sealed record SlotUpdateRequest(
     QuaternionValue? Rotation = null,
     Vector3Value? Scale = null,
     string? ParentId = null,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Tag = null);
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Tag = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] bool? IsActive = null);
 
 public sealed record MemberDefinitionInfo(
     string Name,
