@@ -163,7 +163,8 @@ public sealed record CreationDocument(
             if (Authoring is not null) definition = definition with { Authoring = Authoring, ResolvedProjectContext = null };
             if (definition.Authoring is not null)
                 definition = definition with { ResolvedProjectContext = ApplyProjectContext.Resolve(definition) };
-            var result = await ApplyDocumentValidator.ValidateAsync(definition, cancellationToken: cancellationToken);
+            var result = await ApplyDocumentValidator.ValidateAsync(definition, cancellationToken: cancellationToken,
+                allowDuplicateSiblingNames: true);
             return result.Valid ? result : result with { Issues = InvalidIssues(result.Issues) };
         }
         catch (Exception ex) when (ex is RLoopException or JsonException or InvalidOperationException or ArgumentException)
