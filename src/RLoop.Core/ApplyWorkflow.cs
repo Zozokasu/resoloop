@@ -699,6 +699,7 @@ internal sealed class ApplyState
     public int SchemaVersion { get; set; } = 3;
     public string OwnershipKey { get; set; } = string.Empty;
     public string? SessionId { get; set; }
+    public ApplySessionObservation? Session { get; set; }
     public Dictionary<string, ApplyStateSlot> Slots { get; set; } = new(StringComparer.Ordinal);
     public Dictionary<string, ApplyStateComponent> Components { get; set; } = new(StringComparer.Ordinal);
     public Dictionary<string, ApplyStateAsset> Assets { get; set; } = new(StringComparer.Ordinal);

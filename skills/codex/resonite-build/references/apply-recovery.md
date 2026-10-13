@@ -23,6 +23,13 @@ of the sent attributes/members. A mismatch or incomplete result remains pending 
 stops with `APPLY_WRITE_UNVERIFIED` (exit 7); no reference replay happens at the end.
 Cancellation, timeout and persistence errors keep their existing error codes and also
 require inspecting pending evidence. Do not promise convergence from an unconditional retry.
+For same-type Components on one Slot that saved evidence cannot distinguish, apply may
+continue with their recorded IDs only when the saved and current session observations both
+prove the same Discover S-ID and normalized URL. A changed or unknown session keeps the
+`STABLE_COMPONENT_AMBIGUOUS` stop. Explicit `--url ws://…` does not by itself prove session
+identity; `--url auto` can prove it when discovery provides a unique matching announcement.
+Recorded IDs may be reused only after the previous apply completed successfully; a failed apply stops even in the same session.
+Use `identityFields` or separate named Slots when matching must survive session changes.
 
 Explicit server rejection clears its pending operation and stops with the original error.
 On a later apply, matching discovery identity, acceptance and exact ID/type/parent/owner
