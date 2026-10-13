@@ -2,6 +2,34 @@
 
 群を 1 つ終えるたびに、日付の見出しの節を先頭へ足す。進捗は `tasks.md` のチェックだけに書き、ここには写さない。全体の順序は `openspec/roadmap.md`、未検証の一覧は `openspec/unverified.md` にある。
 
+## 2026-10-13 21:35 JST — 群 2（B2c-1 を閉じる）の途中
+
+task 2.1 と 2.2 だけを終えた。2.3（重いレビューの起動）はユーザーに伺う前で、レビューは起動していない。
+
+### Codex の利用枠（task 2.1）
+
+- 前の窓: 16:35 に開いた。使用済みは約 58 万 token（15.8 万 + 24.3 万 + 13.0 万 + 5.0 万）。予算 50 万を超えているので、この窓では起動しない。
+- 次の窓: 21:35 ごろに開く見込み。開いた後の使用済みは 0、重いレビューの見積もりは 22 万 token で、残り（50 万）に収まる。
+- 判断: 21:35 より後で、ユーザーが 2.3 を承認した後に起動する。起動した時刻を、新しい窓の開始時刻として、ここへ書き足す。同じ窓に入るのは、レビュー（22 万）と修正 1 回（19 万）まで（計 41 万）。修正が 2 回になる場合は、次の窓を待つ。
+
+### help と README の残り（task 2.2）
+
+slot3（`agent/better-b2c`、`061b054`）で `rg -n -i "hand-?written|TSX" src/RLoop.Cli/Program.cs README.md README-DETAILS.md` を実行した（21:31）。
+
+| 場所 | 内容 | 扱い |
+| --- | --- | --- |
+| `src/RLoop.Cli/Program.cs:1623` | `apply` の help:「It accepts hand-written JSON envelopes only (no TSX creation entrypoint)」 | 直す（2.4 の契約に入れる） |
+| `src/RLoop.Cli/Program.cs:1634` | `plan` の help:「It accepts hand-written JSON envelopes only (no TSX entrypoint)」 | 直す |
+| `src/RLoop.Cli/Program.cs:1649` | `creation recover` の help:「This workflow accepts hand-written JSON envelopes only; TSX creation, … are unavailable」 | 直す（TSX creation を「unavailable」の列から外す） |
+| `src/RLoop.Cli/Program.cs:1785` | 全体の help:「Experimental creation regenerate uses handwritten JSON envelopes」 | 直す |
+| `README.md:46`、`README-DETAILS.md:263` | TSX を `--target creation` で build する説明（B2c-1 で足した文） | 残す |
+| `README.md:219` | 「handwritten runtime table」（Object の例の注意。作り直しとは無関係） | 残す |
+| そのほかの一致（`README.md` 9 行、`README-DETAILS.md` 12 行） | 通常の TSX の build・bundle・診断・Scope の説明 | 残す |
+
+- 直す 4 行は、B2c-1 で TSX の入口（`resoloop-jsx build --target creation`）が入った後も、古い文のまま残っている。README とは食い違っている。
+- 同じ 4 行にある「live-unverified」「Live behavior is unverified」は、2.2 の検索の対象ではないので、扱いを決めていない。L1・L3 で確かめた範囲（`handoff` の下の節）と合わせて、2.4 の契約を書くときに、直すかをユーザーに示す。
+- help を変えるので、2.4 では `AGENTS.md` の規則（help・README・配布する Skill の同期）に従い、配布する Skill の該当の文も確かめる。
+
 ## 2026-10-13 21:30 JST — 群 1（記録を揃える）を終えた
 
 `better-handoff-2026-10-13.md`（12:20 JST）と `task.json` の内容のうち、いまも正しいものを移した。以後の引き継ぎは、この文書だけに書く。

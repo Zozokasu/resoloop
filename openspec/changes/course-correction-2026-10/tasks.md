@@ -21,8 +21,8 @@
 
 ## 2. B2c-1 を閉じる（slot3、`agent/better-b2c`）
 
-- [ ] 2.1 `handoff.md` に、Codex の窓の開始時刻・使用済み・重いレビューの見積もり 22 万 token を書く。見積もりが残り（50 万 − 使用済み）を超えるなら、次の窓が開く時刻を書いて待つ。確かめ方: 記録があり、起動するかどうかの判断が書かれている
-- [ ] 2.2 slot3 の `resoloop help` と `README.md`・`README-DETAILS.md` に、「作り直しの入力は手書きの JSON だけ」「TSX の入口は無い」に当たる文が残っていないかを `rg -n -i "hand-?written|TSX" src/RLoop.Cli/Program.cs README.md README-DETAILS.md` で確かめる。残っていれば、2.4 の修正の契約に入れる。確かめ方: 一致した行と、残す・直すの別が `handoff.md` にある
+- [x] 2.1 `handoff.md` に、Codex の窓の開始時刻・使用済み・重いレビューの見積もり 22 万 token を書く。見積もりが残り（50 万 − 使用済み）を超えるなら、次の窓が開く時刻を書いて待つ。確かめ方: 記録があり、起動するかどうかの判断が書かれている
+- [x] 2.2 slot3 の `resoloop help` と `README.md`・`README-DETAILS.md` に、「作り直しの入力は手書きの JSON だけ」「TSX の入口は無い」に当たる文が残っていないかを `rg -n -i "hand-?written|TSX" src/RLoop.Cli/Program.cs README.md README-DETAILS.md` で確かめる。残っていれば、2.4 の修正の契約に入れる。確かめ方: 一致した行と、残す・直すの別が `handoff.md` にある
 - [ ] 2.3 【伺う】重いレビューを起動してよいか伺う（2026-10-13 に予約が消えた後、ユーザーの言葉なしに起動し直さないと決めてある）。承認されたら、main の作業ツリーで `codex exec --model gpt-6.1-sol -c model_reasoning_effort=high --sandbox workspace-write -C C:/Users/jojoh/Documents/resoloop-worktrees/slot3 -o .ccg/tasks/resoloop-slimming/better-impl-b2c-review-report.md - < .ccg/tasks/resoloop-slimming/better-impl-b2c-review-charter.md > .ccg/tasks/resoloop-slimming/better-impl-b2c-review-codex.log 2>&1` を実行する。確かめ方: 報告のファイルに、PASS か FAIL と、P1〜P3 の件数がある
 - [ ] 2.4 レビューの P1・P2 と、2.2 で直すと決めた行を直す。修正の契約 `cc-b2c-fix2-contract.md` を、1.7 (c) の事前確認つきで書き、`gpt-6-luna` high へ渡す。Opus が slot3 で sandbox の外から検証する（build 警告 0・エラー 0、RLoop.Tests 失敗 0・成功 1994 以上・skip 4、Workbench 190、Integration、`npm test` 失敗 0・成功 335 以上、contract の検査）。通ったら `agent/better-b2c` へ commit する。修正は 4 回までで、超えたらユーザーに伝える。P1・P2 が 0 件で 2.2 の残りも無ければ、何も変えずにチェックを付ける。確かめ方: 検証の log が slot3 `TestResults/BETTER-B2C/opus/` にあり、件数が `handoff.md` にある
 - [ ] 2.5 `design.md` の PBT の P10・P11 を、既存の test が確かめていることを確認する（`CreationApplyReplacementTests.cs`、`CreationOwnership*Tests.cs` など）。性質ごとに test の名前を `handoff.md` に書く。確かめている test が無い性質は、2.4 と同じ手順で test を足す。確かめ方: P10・P11 のそれぞれに test の名前があり、`dotnet test tests/RLoop.Tests --filter "FullyQualifiedName~Creation"` が失敗 0
