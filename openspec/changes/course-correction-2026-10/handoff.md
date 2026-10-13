@@ -11,6 +11,10 @@ task 2.1 と 2.2 だけを終えた。2.3（重いレビューの起動）はユ
 - 前の窓: 16:35 に開いた。使用済みは約 58 万 token（15.8 万 + 24.3 万 + 13.0 万 + 5.0 万）。予算 50 万を超えているので、この窓では起動しない。
 - 次の窓: 21:35 ごろに開く見込み。開いた後の使用済みは 0、重いレビューの見積もりは 22 万 token で、残り（50 万）に収まる。
 - 判断: 21:35 より後で、ユーザーが 2.3 を承認した後に起動する。起動した時刻を、新しい窓の開始時刻として、ここへ書き足す。同じ窓に入るのは、レビュー（22 万）と修正 1 回（19 万）まで（計 41 万）。修正が 2 回になる場合は、次の窓を待つ。
+- **2.3 の返事**（2026-10-13 21:33 ごろ、原文）:「200kくらいまでならつかっていいです。レビューを始めて下さい。」重いレビューの起動を承認。上限は約 20 万 token（見積もり 22 万より少ない）。
+- **起動した**: 2026-10-13 21:34:52 JST（Codex の session `01a13542-301a-7e22-bf74-7fb2541a4129`。利用上限の拒否は出なかった）。新しい窓の開始は、この時刻とする。報告は `.ccg/tasks/resoloop-slimming/better-impl-b2c-review-report.md`、log は同 `better-impl-b2c-review-codex.log`、開始と終了の時刻は同 `cc-b2c-review-times.txt`。レビューの間、slot3 では build と test を実行しない（1 つの作業ツリーで build するのは 1 担当）。
+- **起動の前の記録**（21:34）: 新しい窓の開始は、この起動の時刻。使用済み 0、見積もり 22 万、ユーザーの上限 約 20 万。指示書 `better-impl-b2c-review-charter.md` は書き換えず、上限を伝える前書き `cc-b2c-review-budget-note.md` を前に付けて渡す（重点の番号の順に見て、足りなくなったら打ち切って「見なかった範囲」を書く）。Codex は使用量を自分では正確に止められないので、上限を超えることがありうる。終了後に log の `tokens used` を、ここへ書く。
+- **指示書の事前確認**（21:35、slot3。実機に触れない）: `git status --short` は未追跡の `examples/object-lamp-a/`・`-b/` だけ、HEAD は `061b054`。`npm.cmd run`（終了 code 0）で、指示書が使う `test` と `contract` の script があることを確かめた。`src/RLoop.Cli/obj` と `tools/resoloop-jsx/node_modules` はあり、restore は要らない。build と test のコマンドは、同じ形を 2026-10-13 午後の受け入れで実行済み（slot3 `TestResults/BETTER-B2C/opus/accept*.log`）。指示書の報告先 `TestResults/BETTER-B2C/review-final/` は、まだ無い。
 
 ### help と README の残り（task 2.2）
 
