@@ -1,0 +1,23 @@
+{
+  "schemaVersion": "creation-1",
+  "kind": "resoloop-creation",
+  "creationVersion": "1",
+  "creationId": "house",
+  "definition": {
+    "schemaVersion": "1",
+    "ownership": {
+      "key": "house"
+    },
+    "slot": {
+      "name": "Room",
+      "key": "room"
+    },
+    "components": [],
+    "children": []
+  },
+  "authoring": {
+    "projectRoot": "FIXTURE_ROOT",
+    "source": "creation-entry/ownership.tsx",
+    "ownershipSource": "entry-export"
+  }
+}

@@ -184,6 +184,7 @@ function assertFiniteNumbers(value: unknown, path: string): void {
 export interface EvaluateOptions {
   ownership?: unknown;
   draft?: boolean;
+  creation?: boolean;
   catalogs?: readonly CatalogRuntimeTable[];
 }
 
@@ -207,13 +208,13 @@ export function evaluate(
   const ownership = options.ownership;
   if (hasOwnership && (ownership === null || typeof ownership !== "object" || Array.isArray(ownership) ||
       Object.keys(ownership).length !== 1 || !("key" in ownership) ||
-      typeof ownership.key !== "string" || ownership.key.trim().length === 0))
+      (options.creation !== true && (typeof ownership.key !== "string" || ownership.key.trim().length === 0))))
     throw new Error("ownership export must be an object containing one non-empty string key");
   const inputRoot = root;
   root = expandObjects(root, options.catalogs ?? []);
   const objectPassRan = root !== inputRoot;
   root = expandVariables(root, options.catalogs ?? []);
-  const draft = options.draft === true;
+  const draft = options.creation === true ? false : options.draft === true;
   const warnings: string[] = [];
   const scopes = new Set<string>();
   let generatedKeys = false;
@@ -248,14 +249,20 @@ export function evaluate(
     scope: string
   ): string {
     const key = props.key;
-    if (scope) return scopeKey(scope, key, path);
-    if (typeof key === "string" && key.trim().length > 0) return key;
+    const explicitKey = typeof key === "string" && key.trim().length > 0;
+    const generated = `${parentKey ?? "root"}/${slug(displayName)}#${siblingIndex}`;
+    if (scope) {
+      if (explicitKey) return scopeKey(scope, key, path);
+      if (options.creation === true && key === undefined) return generated;
+      return scopeKey(scope, key, path);
+    }
+    if (explicitKey) return key;
+    if (options.creation === true) return generated;
     if (!draft)
       throw new BuildError(
         "EXPLICIT_KEY_REQUIRED",
         `${kind} "${displayName}" at ${path} requires an explicit 'key' prop (or rebuild with --draft)`
       );
-    const generated = `${parentKey ?? "root"}/${slug(displayName)}#${siblingIndex}`;
     generatedKeys = true;
     warnings.push(
       `warning: generated key "${generated}" for ${kind} "${displayName}" (--draft)`
@@ -379,20 +386,22 @@ export function evaluate(
     // keys (mirrors APPLY_SIBLING_NAME_DUPLICATE in the C# validator).
     const seenNames = new Map<string, number>();
     let nameRank = 0;
-    for (const child of flat) {
-      if (child.kind !== "slot") continue;
-      const childName = child.props?.name;
-      if (typeof childName === "string") {
-        const firstAt = seenNames.get(childName);
-        if (firstAt !== undefined)
-          throw new BuildError(
-            "DUPLICATE_SIBLING_NAME",
-            `Sibling slot name "${childName}" is repeated under ${path} ` +
-              `(children[${firstAt}] and children[${nameRank}]); choose distinct sibling names`
-          );
-        seenNames.set(childName, nameRank);
+    if (options.creation !== true) {
+      for (const child of flat) {
+        if (child.kind !== "slot") continue;
+        const childName = child.props?.name;
+        if (typeof childName === "string") {
+          const firstAt = seenNames.get(childName);
+          if (firstAt !== undefined)
+            throw new BuildError(
+              "DUPLICATE_SIBLING_NAME",
+              `Sibling slot name "${childName}" is repeated under ${path} ` +
+                `(children[${firstAt}] and children[${nameRank}]); choose distinct sibling names`
+            );
+          seenNames.set(childName, nameRank);
+        }
+        nameRank++;
       }
-      nameRank++;
     }
 
     const spec = copySlot(props, key, path, el.scope ?? "", isRoot, { assertFiniteNumbers, scopeValue });
@@ -438,6 +447,14 @@ export function evaluate(
       `The entry module's default export must evaluate to exactly one <Slot> element; ` +
         `got ${roots.length === 0 ? "none" : `${roots.length} (${roots.map((r) => r.kind).join(", ")})`}`
     );
+
+  if (options.creation === true) {
+    const candidate = hasOwnership ? (ownership as { key?: unknown }).key : roots[0].props?.key;
+    if (typeof candidate !== "string" || candidate.trim().length === 0 || candidate.length < 1 || candidate.length > 128 ||
+        /[\u0000-\u001f\u007f-\u009f]/.test(candidate))
+      throw new BuildError("CREATION_ID_INVALID",
+        "creationId must be 1..128 characters and contain no control characters; export ownership or add an explicit key to the root Slot.");
+  }
 
   const converted = convertSlot(roots[0], undefined, 0, "$", true);
   const document: ApplyDocument = {
