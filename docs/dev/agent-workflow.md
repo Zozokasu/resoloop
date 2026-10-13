@@ -107,25 +107,11 @@ charterはファイルから標準入力で渡す。Windowsの改行入り引数
 
 Devinを使う場合はsandbox外で、信頼済みの担当slot、自己完結したprompt file、`.devin/config.local.json`で許可された完全一致コマンドを使う。任意の外部起動や閲覧を推測しない。信頼設定を編集せず、`--permission-mode dangerous`は使わない。未信頼なら別の実装担当へ渡す。起動例は`devin --model swe-2-max --permission-mode accept-edits -p --prompt-file "<指示ファイル>"`。その制限の実効性も実行環境で確認する。
 
-## S3実機テストとフィードバック修正で試験する
-
-ユーザーからS3実装完了の報告を受けた。完了した実装と実機で確認済みの挙動を分け、以下を新体制の最初の試験手順とする。指示ファイルの切り替え自体はliveの実行許可ではない。
-
-1. マネージャがS3の対象commit/未commit差分、既存offline証拠、未検証事項を確認し、開始時点を記録する。実装を最初からやり直さない。
-2. Opusがユーザーの実行許可と正確な対象を確認し、マネージャへlive charterを渡す。セッション、接続先、`ResoLoop_Test*` Slot、許可操作、cleanup、再接続時の再観測を記録する。
-3. マネージャが検証担当を一人指定する。`AGENTS.md`のopt-in（`RESOLOOP_RUN_INTEGRATION=1`、`RESONITE_LINK_URL`、`Category=Integration`）と許可済みのシナリオを使う。ライブ用排他ラッパーは未整備なので、Opusが使用を調整し、正確な実験Slotだけをfinallyで片付ける。
-4. 指摘ごとにID、期待/実際、再現手順、対象差分、セッションとSlot、ログ・観測証拠を記録する。環境・前提・製品バグを切り分け、既存feedbackの指定先を使う。正式planは書き換えない。
-5. マネージャが修正をリスク分類し、実装担当へ委任する。範囲内の局所修正は通常二層で進め、共有契約変更はOpusへ返す。関連offline検証と必要な重点レビューを行う。
-6. 実機再検証は、実行許可が覆う同じ対象・操作・範囲で行う。対象や操作が広がれば付与元へ返す。シナリオの期待結果とcleanup結果を別に記録する。実行できなかった項目は未検証のまま残す。
-7. 指摘IDごとの修正差分・offline/live結果・未決事項と、委任待ち時間・修正回数・モデル費用など取得できた運用指標をまとめ、OpusがS3の受け入れを判断する。
-
-S3試験中は、通常の局所修正がOpusの再判断なしで進むこと、範囲拡張が正しい担当へ戻ること、検証証拠が受け入れまで維持されることを観察する。速度向上を理由に権限や検証を省略しない。実効隔離や自動中継が未整備なら、その限界を報告する。
-
 ## 開発方針の前提
 
 通常制作は直結: TSX/JSON/ProtoGraph → ResoLoop → RLoop.ResoniteLink（選択した単一セッション）、またはRLoop.Flux → IFluxDeployer → F# deployer → Flux-SDK。Workbench backend（`src/RLoop.Workbench`、`--backend workbench`、`wb`）は凍結し、新機能・書込みadapter・backend同等化・自動fallbackへ投資しない。既存planのS1〜S5に従い、old W4を再開しない。
 
-`.ccg/`のmanaged領域、`plan/`、信頼設定を無断変更しない。既存ユーザー変更と未追跡ファイルを保持する。製品の`skills/codex/*`を開発担当の指示へ転用しない。
+`.ccg/`のmanaged領域と信頼設定を無断変更しない。計画の正本は`openspec/`にあり、計画の変更は新しいchangeとしてユーザーの承認を得る。`plan/`は履歴で、変更しない。既存ユーザー変更と未追跡ファイルを保持する。製品の`skills/codex/*`を開発担当の指示へ転用しない。
 
 ## 決定論的な検証を自動化する（2026-10-05）
 
@@ -165,3 +151,29 @@ build、テスト実行、件数集計、差分・hash照合、merge前のGit状
 - 実装のタスクは、その挙動を確かめるtestの追加・更新を同じ契約に含める。担当が実行し、結果を報告する。期待値は契約に書いた値から作り、実装の出力から作らない。
 - testは機能や単位ごとにファイルを分ける。新しいtestのファイルは300行以内を目安にする。既に500行を超えるファイルへは足さず、新しいファイルを作る。既存の大きいファイルの分割は、頼まれた場合だけ行う。
 - 1つのtestは1つの挙動を確かめる。共有する準備は小さなhelperにまとめる。
+
+## 指示書を出す前の確認
+
+`openspec/changes/course-correction-2026-10/specs/plan-governance/spec.md`の「指示書は出す前に確かめる」を手順にしたもの。指示書を書いた担当が、担当へ渡す前に行う。
+
+- 指示書に書いたコマンドは、対象のworktreeで実行する（`--help`か、実機に触れない実行）。コマンドと終了codeを、指示書の「事前確認」に書く。使い方の誤りで終わるコマンドが残る指示書は出さない。
+- 変えてよいtestと、変えてはならないtestを、ファイル名で書く。
+- 停止・保留・所有の確認の挙動を変える指示書では、`rg`で見つけた既存のtest（`ApplyWorkflowTests.S3*.cs`、`SameSessionComponentIdentityTests.cs`、`Creation*Tests.cs`の該当）を「通り続けること」として挙げる。
+
+## Codexの利用枠
+
+- 窓は約5時間。1つの窓の予算は50万tokenとし、管理役は並べない。
+- 見積もりの目安は、設計35万、実装の1段階25万、重いレビュー22万、修正1回19万token。
+- 起動の前に、窓の開始時刻・使用済み・見積もりを、changeの`handoff.md`に書く。見積もりが残りを超えるなら起動せず、次の窓が開く時刻を書く。
+- 容量切れ（`Selected model is at capacity`）では指示書を書き換えず、同じ指示書で起動し直す。
+
+## 記録の置き場
+
+| 記録 | 場所 |
+| --- | --- |
+| 進捗 | changeの`tasks.md`のチェックだけ。別の追跡表へ同じ進捗を書かない |
+| 全体の順序 | `openspec/roadmap.md` |
+| 未検証 | `openspec/unverified.md` |
+| 引き継ぎ | changeの`handoff.md` |
+| 作業ファイル（指示書・報告・log） | `.ccg/tasks/resoloop-slimming/cc-*` |
+| Notion | 人間が確認するための写し。食い違う場合は`openspec/`を優先する |

@@ -6,7 +6,7 @@ ResoLoopは、AIコーディングエージェントがResoniteLink経由でReso
 アーキテクチャ、コマンド、Resonite安全規則、上流の扱い、テストとSkillの同期規則は[`AGENTS.md`](AGENTS.md)を正とする。
 この文書はClaude向けの入口で、AGENTS.mdと重複する規則は書かない。
 
-このリポジトリはorange3134/resoloopのforkである。当面はupstreamを取り込まない。通常制作は直結（ResoniteLink）主経路へ統一し、Workbench backendは凍結・S5で除去予定である（計画: `plan/resoloop-slimming-plan.md`）。方針と調査結果は[`docs/dev/fork-strategy.md`](docs/dev/fork-strategy.md)にある。
+このリポジトリはorange3134/resoloopのforkである。当面はupstreamを取り込まない。通常制作は直結（ResoniteLink）主経路へ統一し、Workbench backendは凍結・S5で除去予定である（順序: `openspec/roadmap.md` の R12）。方針と調査結果は[`docs/dev/fork-strategy.md`](docs/dev/fork-strategy.md)にある。
 
 ## 製品ファイルと開発用ファイルの区別
 
@@ -20,10 +20,10 @@ ResoLoopは、AIコーディングエージェントがResoniteLink経由でReso
 
 ## 計画とフィードバック
 
-- 正式な計画は`plan/`（git管理外）に置く。ユーザーが明示的に頼まない限り、エージェントは`plan/`を変更しない。
-- 方針変更の提案は`feedback/`（git管理外）に書く。提案は正式計画を自動で置き換えない。反映するかはユーザーが決める。
+- 計画の正本は`openspec/`に置く。全体の順序は`openspec/roadmap.md`、未検証の一覧は`openspec/unverified.md`、進行中の計画は`openspec/changes/`にある。進捗はchangeの`tasks.md`だけに書く。`plan/`（git管理外）は履歴で、ユーザーが明示的に頼まない限り変更しない。Notionは人間が確認するための写しで、食い違う場合は`openspec/`を優先する。
+- 方針変更の提案は、新しいchange（`/ccg:spec-research`）として書く。ユーザーが承認するまで実装しない。`feedback/`（git管理外）は2026-10-13までの提案の履歴である。
 - ccg-workflowの手順、起動方法、モデル解決、managed領域（`.ccg/`）はccg-workflowに委ねる。独自の起動コマンドを作らず、ccg管理ファイルを自動変更しない。
-- フェーズやマイルストーンの区切りでは引き継ぎ文書を書く。仕組み、確認済みの事実、後回しにした項目、未検証の事項を分け、未達の完了条件を完了扱いにしない。
+- フェーズやマイルストーンの区切りでは引き継ぎ文書を書く。仕組み、確認済みの事実、後回しにした項目、未検証の事項を分け、未達の完了条件を完了扱いにしない。場所はchangeの`handoff.md`。
 
 ## エージェント体制
 
@@ -33,7 +33,6 @@ ResoLoopは、AIコーディングエージェントがResoniteLink経由でReso
 - Codex `gpt-6.1-sol` highは技術管理に専任し、製品コードの実装・修正・競合解消を下部エージェントへ委任する。管理規則は[`.claude/agents/feature-manager.md`](.claude/agents/feature-manager.md)。Sonnet版は管理役の予備である。
 - 実装担当は[`.claude/agents/coding-worker.md`](.claude/agents/coding-worker.md)に従う。2026-10-08のユーザー決定により、Codexの実装と修正は`gpt-6-luna` high、ログの取得・build／testの実行・結果の要約は`gpt-6-luna`へ渡す。lunaへの契約は短く明確に書き、実装にはtestを含め、testのファイルを大きくしすぎない。実効モデルとeffortを記録する。
 - 目的・契約・権限・所有・検証・受け入れを固定し、その内側で分割、参照情報、モデル、並列数を調整する。指示、worktree、sandboxだけで限定閲覧を保証したと報告しない。
-- 新体制の最初の試験はS3の実機テストとフィードバック修正。ユーザーの「S3実装完了」という報告を起点に、テスト対象の正確な差分と既存証拠を確認する。実機テストの実行許可・対象は別に確認し、この指示変更を実行許可と解釈しない。
 
 起動方法、実効権限、委任能力の確認、局所・統合・live検証、重点レビュー、ログ、commit/mergeの規則は正本へ集約する。ccg本体のlifecycleとHARD STOPゲートは維持する。
 

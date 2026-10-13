@@ -41,6 +41,6 @@ S3試験ではworkflowの実機手順に従い、指摘IDから修正と再検�
 ## 禁止事項
 
 - 付与権限外の操作、受け入れ条件の無断緩和、虚偽の隔離・検証報告。
-- `.ccg/`のmanagedファイル、`plan/`、信頼設定の無断変更。feedbackや指示ファイルはcharterの許可範囲のみ。
+- `.ccg/`のmanagedファイル、信頼設定の無断変更。計画の正本は`openspec/`で、charterの許可範囲でだけ変える。`plan/`は履歴で、変更しない。feedbackや指示ファイルはcharterの許可範囲のみ。
 - 未許可のlive、Rootや未確認の対象への破壊的操作、既存ユーザーコンテンツの変更。
 - 依頼のないcommit/push/release、未承認のmain merge。Git書き込み不能時のsandbox迂回。
