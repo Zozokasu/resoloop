@@ -34,6 +34,38 @@ slot3（`agent/better-b2c`、`061b054`）で `rg -n -i "hand-?written|TSX" src/R
 - 同じ 4 行にある「live-unverified」「Live behavior is unverified」は、2.2 の検索の対象ではないので、扱いを決めていない。L1・L3 で確かめた範囲（`handoff` の下の節）と合わせて、2.4 の契約を書くときに、直すかをユーザーに示す。
 - help を変えるので、2.4 では `AGENTS.md` の規則（help・README・配布する Skill の同期）に従い、配布する Skill の該当の文も確かめる。
 
+### P10・P11 を確かめている既存の test（task 2.5 の下調べ。21:40）
+
+読み取りだけの調査（Claude の scout）の結果。test は実行していない（レビューの間、slot3 で build と test を実行しないため）。場所は slot3 `tests/RLoop.Tests/`。「未確認」は、調査が test の全文を読んでいない所で、成功として扱わない。2.5 のチェックは、test を足して実行した後に付ける。
+
+**P10（どれか 1 つでも記録と違えば、削除を 1 件も送らない）**
+
+| 崩し方 | `apply` を通す test（偽の client `CreationMutationTestClient`。`SendLog`・`RequestHistory` が空であることを確かめる） | 所有の確認だけの test（`CreationTestClient`。`MutationCalls` が 0） |
+| --- | --- | --- |
+| 印が違う | `CreationApplyOwnershipTests.OwnershipAndEvidenceFailuresStopBeforeAnyMutation("stamp")` | `CreationOwnershipTests.RequiresObservedStampToMatchStateAsAnExactOrdinalString`（書込み 0 の assert は未確認） |
+| 印が無い（準備の間に消えた） | `CreationApplyReplacementTests.ReplacementRechecksOwnershipAfterPreparationBeforeDeletingOldRoot` | `CreationOwnershipTests.RejectsDuplicateAndWrongTypeReservedStampComponents` |
+| 親が違う | 同 `("parent")` | `CreationOwnershipTests.RequiresExactParentExistingRootAndNonRootId`（書込み 0 の assert は未確認） |
+| session が違う | 同 `("session")`。ただし状態を `unknown` にする形だけで、別の S-ID・別の URL への差し替えは無い | `CreationOwnershipObservationTests.SessionMustBeProvenAtStartAndEndAndConnectionGenerationMustHold`（6 通り） |
+| 世代が違う（接続の世代） | `CreationApplyOwnershipTests.GenerationChangeAtReplacementDeleteGuardPreventsDeleteAndCreate` | 上の 6 通りに含む |
+| 世代が違う（記録の `GenerationId` だけを変える） | **該当なし**（印の文字列を変える形で間接に確かめているだけ） | `RequiresObservedStampToMatchStateAsAnExactOrdinalString`（世代 1 文字違い） |
+| 印の複製（同じ世代の印つきの兄弟／子孫に別の印） | 同 `("duplicate-sibling")`、`("foreign-descendant")` | `CreationOwnershipObservationTests.RejectsMatchingSiblingGenerationAndAnyOwnedDescendant` |
+| 印の複製（同じ root に印の Component が 2 つ） | **該当なし** | `RejectsDuplicateAndWrongTypeReservedStampComponents` |
+| 観測が不完全（root の `Children=null`） | 同 `("partial")` | `CreationOwnershipObservationTests.PartialCoverageUnknownObserverAndUnreadableValueStayIncomplete`、`CreationOwnershipTests.UnknownMemberSetIsIncompleteAtInitialChildSiblingAndDescendant…` |
+| 観測が不完全（子や Component の一覧が欠ける個別の形） | **該当なし** | 上の 2 件 |
+
+**P11（2 回続けると、所有する有効な root はちょうど 1 つ残り、値は定義と一致する）**
+
+| 崩し方 | 既存の test | 足りない点 |
+| --- | --- | --- |
+| 同じ定義で 2 回 | `CreationApplyReplacementTests.SameHashSecondReplacementStillDeletesOldExactIdFirstAndKeepsOwnerNonce` | 送信の順・世代・保留は確かめるが、root の数と、値が定義と一致することを確かめていない |
+| 値を変えた定義で 2 回目 | **該当なし** | — |
+| root と同じ名前の Slot が親の下にある | `CreationRootSameNameTests.FreshApplyDoesNotSendToUnownedSameNamedRootChild`、`ReplacementDoesNotSendToUnownedSameNamedChildOfActiveParent` | 印の無い Slot が残ることは確かめる。新しい root が 1 つであることは確かめていない |
+| 同じ名前の兄弟 | `CreationSiblingNamesTests.CreationExecutorCreatesSameNamedSiblingsAndResolvesReferencesByKey`（作成の部分だけ） | 作り直しを 2 回続ける test は無い |
+| 作成の応答の重複 | **該当なし**（偽の client に、Slot の作成の応答を二重にする仕掛けが無い） | — |
+
+- 見立て（Opus）: P10 は 2 つの層で大半を確かめているが、`apply` を通す層に 3 つの穴がある（記録の世代だけを変える／同じ root に印が 2 つ／一覧が欠ける個別の形）。P11 は、性質そのもの（root がちょうど 1 つ、値が一致）を確かめる assert が無い。2.5 のとおり、test を足す。足す先は新しいファイル（既存の test は変えない）で、レビューの指摘と 2.2 の help の 4 行と合わせて、修正の契約 `cc-b2c-fix2-contract.md` に入れる。
+- 未確認のまま残した test: `CreationRecoverySafetyTests`、`CreationPreviousRootAbsentTests`、`CreationApplyFaultMatrixTests`、`CreationApplyMergeObservationTests`（全文を読んでいない）。契約を書く前に、足す test と重ならないかを確かめる。
+
 ## 2026-10-13 21:30 JST — 群 1（記録を揃える）を終えた
 
 `better-handoff-2026-10-13.md`（12:20 JST）と `task.json` の内容のうち、いまも正しいものを移した。以後の引き継ぎは、この文書だけに書く。
