@@ -601,6 +601,7 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
                         component.Id = creation.Id = created.Id;
                         component.ResolvedType = creation.Type = created.Type;
                     }, cancellationToken);
+                    prepared.VerifiedComponentIds[component.StableKey] = component.Id!;
                     counts.ComponentsAdded++;
                 }
                 if (!string.IsNullOrWhiteSpace(component.Spec.Key)) byKey[component.Spec.Key!] = component;
@@ -757,6 +758,11 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
                 .Concat(ApplyDiagnostics.ForException(detailed, "apply").Diagnostics).Distinct().ToArray());
             throw failure;
         }
+
+        var completedState = ApplyStateStore.Copy(prepared.State);
+        completedState.Session = SessionForVerifiedState(prepared, completedState);
+        ApplyStateStore.Save(prepared.StatePath, completedState);
+        prepared.State = completedState;
 
         stopwatch.Stop();
         var metrics = client is IResoniteClientDiagnostics profiled ? profiled.SnapshotMetrics() :
@@ -1043,6 +1049,10 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
         var state = ApplyStateStore.Load(statePath, document.Ownership!.Key, options.RequireState);
         var pendingDiagnostics = new List<ApplyDiagnostic>();
         var session = await client.GetSessionInfoAsync(cancellationToken);
+        var sessionObservation = (client as IApplySessionObservation)?.ObserveApplySession() ??
+            ApplySessionObservation.Observe(session.Url);
+        var sessionProof = StateSessionProof(state.Session, sessionObservation);
+        if (sessionProof != "matched") state.Session = null;
         document.BuildBundle?.VerifySession(session);
         if (state.Pending.Count > 0 || state.Slots.Values.Any(s => string.IsNullOrWhiteSpace(s.Id)) ||
             state.Components.Values.Any(c => string.IsNullOrWhiteSpace(c.Id)))
@@ -1104,7 +1114,7 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
                 }
             }
             var prepared = new PreparedApply(document, options, state, statePath, session, parentId, snapshots,
-                migrations.Slots, migrations.Components, parentSegments);
+                migrations.Slots, migrations.Components, parentSegments, sessionObservation, sessionProof);
             var rootSpec = new ApplyNodeSpec(document.Slot, document.Components, document.Children);
             BuildNode(prepared, rootSpec, null, parent, parentPath, true);
             await RequireStoredSlotIdsAbsentBeforeCreateAsync(prepared, cancellationToken);
@@ -1129,6 +1139,16 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
             ApplyDiagnostics.AttachRuntime(failure, pendingDiagnostics.Concat(ApplyDiagnostics.ForException(error, "apply").Diagnostics).ToArray());
             throw failure;
         }
+    }
+
+    private static string StateSessionProof(ApplySessionObservation? recorded, ApplySessionObservation current)
+    {
+        if (recorded is null) return "notRecorded";
+        if (recorded.IdentityStatus != "matched" || current.IdentityStatus != "matched" ||
+            string.IsNullOrWhiteSpace(recorded.DiscoverSessionId) || string.IsNullOrWhiteSpace(current.DiscoverSessionId))
+            return "unknown";
+        return recorded.DiscoverSessionId == current.DiscoverSessionId && recorded.NormalizedUrl == current.NormalizedUrl
+            ? "matched" : "changed";
     }
 
     private static void BuildNode(PreparedApply prepared, ApplyNodeSpec spec, NodeRuntime? parentRuntime,
@@ -1209,7 +1229,7 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
                 var newManagedComponent = stateComponent is null && prepared.State.Slots.ContainsKey(node.StableKey);
                 var existing = relocating || newManagedComponent ? null :
                     MatchComponent(prepared, node.Existing?.Components ?? [], spec.Type, ordinal, stateComponent,
-                        topologyTargets);
+                        topologyTargets, stableKey);
                 var componentIndex = existing is null
                     ? (node.Existing?.Components.Count ?? 0) + prepared.Components.Count(candidate => candidate.Node == node && candidate.Existing is null)
                     : node.Existing!.Components.ToList().FindIndex(candidate => candidate.Id == existing.Id);
@@ -1220,7 +1240,7 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
                     var sourceSlot = FindStateSlot(prepared, stateComponent!.SlotKey);
                     runtime.RelocationSource = sourceSlot is null ? null :
                         MatchComponent(prepared, sourceSlot.Components, spec.Type, ordinal, stateComponent,
-                            topologyTargets);
+                            topologyTargets, stableKey);
                     if (runtime.RelocationSource?.Id == existing?.Id) runtime.RelocationSource = null;
                 }
                 prepared.Components.Add(runtime);
@@ -1827,7 +1847,7 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
         prepared.State.Slots.TryGetValue(slotKey, out var stateSlot) ? FindManagedSlot(prepared, stateSlot) : null;
 
     private static ComponentSummary? MatchComponent(PreparedApply prepared, IReadOnlyList<ComponentSummary> components, string type, int ordinal,
-        ApplyStateComponent? state, IReadOnlyDictionary<string, string>? referenceTargets = null)
+        ApplyStateComponent? state, IReadOnlyDictionary<string, string>? referenceTargets = null, string? stateKey = null)
     {
         if (state is not null)
         {
@@ -1835,14 +1855,22 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
             // Slot. Several equal candidates require individual identity or verified reference evidence.
             var resolution = ResolveComponentOnSlot(components, state.Type, state.Id, state.MemberNames, state.IdentityValues,
                 referenceTargets);
-            if (resolution.Match is not null) return resolution.Match;
+            if (resolution.Match is not null)
+            {
+                if (stateKey is not null) prepared.VerifiedComponentIds[stateKey] = resolution.Match.Id;
+                return resolution.Match;
+            }
             if (resolution.Candidates.Count > 1)
-                throw new RLoopException("STABLE_COMPONENT_AMBIGUOUS",
-                    $"Stable Component on Slot '{state.SlotKey}' matches multiple runtime Components.", ExitCodes.ValidationFailed,
-                    new Dictionary<string, object?> { ["candidateIds"] = resolution.Candidates.Select(candidate => candidate.Id).ToArray(),
-                        ["type"] = state.Type },
-                    ["Inspect candidateIds and preserve the existing state. Adding identityFields to a manifest does not populate an older checkpoint's identity values.",
-                     "Prefer named provider Slots for new content. For existing content, verify ownership and each candidate before an explicit recovery; never guess by ordinal, componentIndex or stored ID."]);
+            {
+                var among = resolution.Candidates.FirstOrDefault(candidate => candidate.Id == state.Id);
+                var duplicateId = prepared.State.Components.Count(pair => pair.Value.SlotKey == state.SlotKey && pair.Value.Id == state.Id) > 1;
+                if (prepared.SessionProof == "matched" && among is not null && !duplicateId)
+                {
+                    if (stateKey is not null) prepared.VerifiedComponentIds[stateKey] = among.Id;
+                    return among;
+                }
+                throw AmbiguousStoredComponent(state, resolution.Candidates, prepared.SessionProof, among is not null);
+            }
             return null;
         }
         // No record yet (first apply or explicit adopt): the declared ordinal among same-type Components.
@@ -1884,13 +1912,43 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
         var slot = FindStateSlot(prepared, componentState.SlotKey);
         if (slot is null) return null;
         var referenceTargets = ResolveStateTopologyTargets(prepared, componentState, resolving);
-        var match = ResolveComponentOnSlot(slot.Components, componentState.Type, componentState.Id, componentState.MemberNames,
-            componentState.IdentityValues, referenceTargets).Match;
+        var match = ResolveStateComponent(prepared, slot.Components, componentState, referenceTargets, syntax.Key);
         if (match is null) return null;
         if (syntax.Kind == "component") return match.Id;
         return match.Members?.FirstOrDefault(member =>
             member.Key.Equals(syntax.MemberName, StringComparison.OrdinalIgnoreCase)).Value?.Id;
     }
+
+    private static ComponentSummary? ResolveStateComponent(PreparedApply prepared, IReadOnlyList<ComponentSummary> live,
+        ApplyStateComponent state, IReadOnlyDictionary<string, string>? referenceTargets, string stateKey)
+    {
+        var resolution = ResolveComponentOnSlot(live, state.Type, state.Id, state.MemberNames, state.IdentityValues, referenceTargets);
+        if (resolution.Match is not null)
+        {
+            prepared.VerifiedComponentIds[stateKey] = resolution.Match.Id;
+            return resolution.Match;
+        }
+        if (resolution.Candidates.Count <= 1) return null;
+        var stored = resolution.Candidates.FirstOrDefault(candidate => candidate.Id == state.Id);
+        var duplicateId = prepared.State.Components.Count(pair => pair.Value.SlotKey == state.SlotKey && pair.Value.Id == state.Id) > 1;
+        if (prepared.SessionProof == "matched" && stored is not null && !duplicateId)
+        {
+            prepared.VerifiedComponentIds[stateKey] = stored.Id;
+            return stored;
+        }
+        return null;
+    }
+
+    private static RLoopException AmbiguousStoredComponent(ApplyStateComponent state,
+        IReadOnlyList<ComponentSummary> candidates, string sessionProof, bool storedIdAmongCandidates) =>
+        new("STABLE_COMPONENT_AMBIGUOUS",
+            $"Stable Component on Slot '{state.SlotKey}' matches multiple runtime Components.", ExitCodes.ValidationFailed,
+            new Dictionary<string, object?> { ["candidateIds"] = candidates.Select(candidate => candidate.Id).ToArray(),
+                ["type"] = state.Type, ["sessionProof"] = sessionProof,
+                ["storedIdAmongCandidates"] = storedIdAmongCandidates },
+            ["A recorded Component ID can continue matching only within the same proven session. After the session changes, distinguish Components with identityFields or separate named Slots.",
+             "Inspect candidateIds and preserve the existing state. Adding identityFields to a manifest does not populate an older checkpoint's identity values.",
+             "After a session change, never guess by ordinal, componentIndex or stored ID; verify ownership and each candidate before explicit recovery."]);
 
     private static ComponentSummary[] StableComponentCandidates(IReadOnlyList<ComponentSummary> components, string type,
         IReadOnlyList<string>? memberNames, IReadOnlyDictionary<string, string>? identityValues,
@@ -2193,8 +2251,19 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
     private static void Checkpoint(PreparedApply prepared, ApplyState next)
     {
         next.SessionId = prepared.Session.UniqueSessionId;
+        next.Session = null;
         ApplyStateStore.Save(prepared.StatePath, next);
         prepared.State = next;
+    }
+
+    private static ApplySessionObservation? SessionForVerifiedState(PreparedApply prepared, ApplyState state)
+    {
+        if (prepared.SessionObservation.IdentityStatus != "matched" ||
+            string.IsNullOrWhiteSpace(prepared.SessionObservation.DiscoverSessionId)) return null;
+        if (prepared.SessionProof == "matched") return prepared.SessionObservation;
+        return state.Components.All(pair => prepared.VerifiedComponentIds.TryGetValue(pair.Key, out var verifiedId) &&
+            string.Equals(verifiedId, pair.Value.Id, StringComparison.Ordinal))
+            ? prepared.SessionObservation : null;
     }
 
     private static int MaxDepth(IReadOnlyList<ApplyNodeSpec>? children) => children is null || children.Count == 0
@@ -2264,7 +2333,8 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
 
     private sealed class PreparedApply(ApplyDocument document, ApplyOptions options, ApplyState state,
         string statePath, SessionInfo session, string parentId, IReadOnlyList<(SlotInfo Slot, string Path)> snapshots,
-        IReadOnlyDictionary<string, string> slotMigrations, IReadOnlyDictionary<string, string> componentMigrations, IReadOnlyList<string> parentSegments)
+        IReadOnlyDictionary<string, string> slotMigrations, IReadOnlyDictionary<string, string> componentMigrations,
+        IReadOnlyList<string> parentSegments, ApplySessionObservation sessionObservation, string sessionProof)
     {
         public ApplyDocument Document { get; } = document;
         public ApplyOptions Options { get; } = options;
@@ -2273,6 +2343,9 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
         public SessionWriteLock? SessionWriter { get; set; }
         public string StatePath { get; } = statePath;
         public SessionInfo Session { get; } = session;
+        public ApplySessionObservation SessionObservation { get; } = sessionObservation;
+        public string SessionProof { get; } = sessionProof;
+        public Dictionary<string, string> VerifiedComponentIds { get; } = new(StringComparer.Ordinal);
         public string ParentId { get; } = parentId;
         public IReadOnlyList<string> ParentSegments { get; } = parentSegments;
         public IReadOnlyDictionary<string, IReadOnlyList<string>> SnapshotSegments { get; } = BuildSegments(snapshots, state, parentId, parentSegments);
