@@ -2,7 +2,7 @@
 
 ## Agent workflow
 
-For `/ccg:go` work, read [the agent workflow](docs/dev/agent-workflow.md). It is the tracked source for roles, optional Devin delegation, worktree ownership, and verification tiers. `CLAUDE.md` is the Claude entry point and may be absent in a worktree.
+For all development and `/ccg:go` work, read [the agent workflow](docs/dev/agent-workflow.md), the authoritative delegation policy (2026-10-02). Opus owns goals, shared contracts and acceptance; gpt-6.1-sol/high manages and delegates product implementation to coding workers. Routine execution stays between manager and worker. Managers may apply worker output mechanically but must delegate product-code fixes and conflict resolution. Workers receive self-contained task contracts with separate read/write scopes, risk, verification and acceptance criteria. Explicit project authorization permits delegation within the assigned charter; do not spawn unbounded or duplicate workers. `CLAUDE.md` is the Claude entry point and may be absent in a worktree.
 
 Preserve existing user changes and untracked files. Do not edit `.ccg/` managed files or `plan/` unless the user specifically asks; `feedback/` holds proposals and never replaces the plan. Do not commit, push, or release without a request.
 
