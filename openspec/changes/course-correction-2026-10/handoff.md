@@ -2,9 +2,45 @@
 
 群を 1 つ終えるたびに、日付の見出しの節を先頭へ足す。進捗は `tasks.md` のチェックだけに書き、ここには写さない。全体の順序は `openspec/roadmap.md`、未検証の一覧は `openspec/unverified.md` にある。
 
+## 2026-10-13 22:00 JST — 重いレビューの結果は FAIL（task 2.3 済み、2.4 は未着手）
+
+### 判定と使用量
+
+- 判定: **FAIL**。A（同じ session の ID での照合、`711ef87`）は FAIL（P1 1 件、P2 2 件）。B（B2c-1、`03479cf..061b054`）は PASS_WITH_P2（P2 1 件）。P3 は 0 件。
+- 報告: `.ccg/tasks/resoloop-slimming/better-impl-b2c-review-report.md`（同じ内容が slot3 `TestResults/BETTER-B2C/review-final/report.md`）。再現の script と log は slot3 `TestResults/BETTER-B2C/review-final/`。
+- 実行: 2026-10-13 21:34:52〜21:58:08 JST。使用量は 216,083 token（ユーザーの上限 約 20 万を、約 1.6 万超えた）。この窓（21:34:52 開始）の使用済みは約 21.6 万、残りは約 28.4 万（予算 50 万）。
+- レビュー担当は製品・test・文書を変えていない（終了後の slot3 の `git status --short` は、未追跡の `examples/object-lamp-a/`・`-b/` だけ）。
+
+### 指摘（4 件。どれもレビュー担当が再現で確かめたと報告）
+
+| # | 対象 | 重さ | 場所 | 起きること | レビュー担当の直し方の案 |
+| --- | --- | --- | --- | --- | --- |
+| 1 | A | P1 | `src/RLoop.Core/WorldService.cs:1867`（1144・1934 行も） | 成功した `apply` の state で、同じ Slot の同じ型の Component 2 つの ID だけを手で入れ替え、session の記録を残すと、`plan`／`apply` が成功し、値が逆の Component へ書かれる。さらに片方を定義から外して `--prune --yes` を付けると、残すはずの Component を消す。確かめているのは S-ID／URL、候補の中の ID、ID の重複なしだけで、key と ID の対応が、完了した `apply` の保存したものかを確かめていない | 完了のときの session の証拠を、key・SlotKey・ID の対応に結び付ける。対応が変わった state では ID での選択を無効にする。`MatchComponent` と `ResolveStateComponent` の両方に同じ検査 |
+| 2 | A | P2 | `src/RLoop.Core/WorldService.cs:2253`、`WorldService.ApplyPending.cs:51` | 最初の root の更新が失敗すると、途中の state に session の記録が残る（`Checkpoint` だけが消し、`ExecutePendingAsync` の途中の保存は古い記録を写す）。失敗の後の再 `apply` が、曖昧さで止まらずに書き込む。更新の後の取消でも同じ。応答の喪失では、次回は `APPLY_WRITE_UNVERIFIED` で止まった。state の保存の失敗でも古い記録が残る | 最初の送信の前から、すべての途中の保存で session を無効にし、最後の成功の保存だけが記録する。保留のある state からは、照合の前の `matched` を持ち越さない |
+| 3 | A | P2 | `src/RLoop.Core/WorldService.cs:1867`（呼出元 1379 行） | ID での選択が prune にも効く。正常な state で、同じ型の 2 つのうち片方を定義から外して `apply --prune --yes` を実行すると 1 件を消す。変更の前は `STABLE_COMPONENT_AMBIGUOUS` で止まっていた（契約の「prune を変えない」と合わない）。この再現で消えるのは正しい記録の ID | 削除の候補の照合では、同じ session の ID での選択を使わず、従来の曖昧さの停止を保つ |
+| 4 | B | P2 | `tools/resoloop-jsx/src/evaluate.ts:462`（451 行も） | `ownership` の export が無いとき、Scope を適用する前の key を検査し、適用した後の key を `creationId` に出す。`<Scope instanceKey={"a".repeat(128)}><Slot key="room" …/></Scope>` は build が終了 code 0 で 134 文字の `creationId` を保存し、C# の `validate` が `CREATION_ID_INVALID`（終了 code 6）で拒否する。Scope に制御文字を入れても同じ。短い Scope でも `room` が `part::room` に変わる | 検査した明示の候補を、creation 用の `definition.ownership.key` に使い、root の Scope つきの key と分ける。`creationId` はその `ownership.key` から出す |
+
+- 1 と 3 の再現は、偽の client の上のもの。1 は、state を手で書き換えることが前提。
+- **A は main に入っている**（`03479cf`。未 push）。1〜3 は、main の通常の `apply` にもある。
+- レビュー担当が確かめて問題なしとしたもの: `allowDuplicateSiblingNames: true` の呼出元は 2 か所だけ／通常の経路の `ownership` の検査は同じ条件／envelope は 6 member で `authoring` は外側だけ／書き換えた既存の test は契約の認めた 1 件／期待値は固定の fixture で、実装の出力から作る処理は無い／文書の制限と未検証の記載、Skill の中のリンク。
+- レビュー担当の検証（sandbox の中、各 1 回）: build 警告 0・エラー 0、RLoop.Tests 1992 pass／2 fail／4 skip（2 fail は `LockFileDiagnosticsTests` の sandbox の制約）、Workbench 190、Integration（offline）2、`npm test` 335 pass、contract 64・11・4・2。
+
+### 未確認
+
+- Opus は、指摘の場所のコードと再現の log を、まだ読んでいない。上の表は報告のままで、Opus が確かめた事実ではない。修正の契約を書く前に確かめる。
+- レビュー担当が見なかったもの: 変更元 `03479cf` を build して全 fixture の byte を比べる実行（重点 5）、world を読み込み直したときの S-ID と ID の寿命、実機（初回の作成・置き換え・同じ名前の兄弟・回復）。
+
+### 次（task 2.4。ユーザーの返事の後）
+
+- 修正に入るか、Codex をどこまで使ってよいかを、ユーザーに伺ってある（22:00。返事待ち）。
+- Opus の案（契約の単位。`gpt-6-luna` high へ、1 契約 1 目的で渡す）: (a) 指摘 2・3（途中の保存で session を消す、prune では ID で選ばない）と、その test。(b) 指摘 1（session の記録を key と ID の対応に結び付ける。state v3 に省略できる member が増えるので、形は Opus が契約で決める）。(c) 指摘 4 と、その test。(d) help の 4 行（task 2.2）と、配布する Skill の確認。(e) P10・P11 の test（下の節）。
+- 決めていないこと: 指摘 1 の結び付けの形／指摘 4 で `creationId` に使う key（レビュー担当の案か、Scope を適用した後の key を検査して拒否するか。B2c-1 の指示書の決定を読んでから決める）。
+- A の 3 件は、群 3 で凍結するファイル（`WorldService.cs`、`WorldService.ApplyPending.cs`）を変える。安全の修正なので、凍結が受ける変更の範囲に入る。群 3 の「固定した一覧」は、この修正の後の実装から作る。
+- 22:00 の通知に付いていた hook の自動の指示（「codex で現在の git diff をレビューする」）は、ユーザーの発言ではないので実行していない。
+
 ## 2026-10-13 21:35 JST — 群 2（B2c-1 を閉じる）の途中
 
-task 2.1 と 2.2 だけを終えた。2.3（重いレビューの起動）はユーザーに伺う前で、レビューは起動していない。
+この節は、task 2.1・2.2 と、2.3 の起動、2.5 の下調べの記録。レビューの結果は上の節にある。
 
 ### Codex の利用枠（task 2.1）
 
@@ -34,7 +70,7 @@ slot3（`agent/better-b2c`、`061b054`）で `rg -n -i "hand-?written|TSX" src/R
 - 同じ 4 行にある「live-unverified」「Live behavior is unverified」は、2.2 の検索の対象ではないので、扱いを決めていない。L1・L3 で確かめた範囲（`handoff` の下の節）と合わせて、2.4 の契約を書くときに、直すかをユーザーに示す。
 - help を変えるので、2.4 では `AGENTS.md` の規則（help・README・配布する Skill の同期）に従い、配布する Skill の該当の文も確かめる。
 
-### P10・P11 を確かめている既存の test（task 2.5 の下調べ。21:40）
+### P10・P11 を確かめている既存の test（task 2.5 の下調べ。21:36）
 
 読み取りだけの調査（Claude の scout）の結果。test は実行していない（レビューの間、slot3 で build と test を実行しないため）。場所は slot3 `tests/RLoop.Tests/`。「未確認」は、調査が test の全文を読んでいない所で、成功として扱わない。2.5 のチェックは、test を足して実行した後に付ける。
 
