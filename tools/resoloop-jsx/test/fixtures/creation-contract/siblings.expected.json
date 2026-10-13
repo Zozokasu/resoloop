@@ -1,0 +1,33 @@
+{
+  "schemaVersion": "creation-1",
+  "kind": "resoloop-creation",
+  "creationVersion": "1",
+  "creationId": "room",
+  "definition": {
+    "schemaVersion": "1",
+    "ownership": { "key": "room" },
+    "slot": { "name": "Room", "key": "room" },
+    "components": [
+      { "type": "Probe", "key": "room/probe#0", "fields": { "Value": "root" } }
+    ],
+    "children": [
+      {
+        "slot": { "name": "Lamp", "key": "room/lamp#0" },
+        "components": [
+          { "type": "Probe", "key": "room/lamp#0/probe#0", "fields": { "Value": "first" } }
+        ]
+      },
+      {
+        "slot": { "name": "Lamp", "key": "room/lamp#1" },
+        "components": [
+          { "type": "Probe", "key": "room/lamp#1/probe#0", "fields": { "Value": "second" } }
+        ]
+      }
+    ]
+  },
+  "authoring": {
+    "projectRoot": "<PROJECT_ROOT>",
+    "source": "siblings.tsx",
+    "ownershipSource": "root-key"
+  }
+}
