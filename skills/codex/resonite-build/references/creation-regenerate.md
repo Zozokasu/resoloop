@@ -1,10 +1,16 @@
 # Creation regenerate and recovery workflow (experimental)
 
-Creation regenerate rebuilds one complete owned root from a hand-written JSON envelope. It is experimental and has not been verified in a live Resonite session. Read this workflow before using it. The feature does not take ownership of a root by name or path alone.
+Creation regenerate rebuilds one complete owned root from an envelope. The feature is experimental; neither the TSX creation path nor regenerate with same-name sibling Slots has been verified in a live Resonite session. Read this workflow before using it. The feature does not take ownership of a root by name or path alone.
 
 ## Scope and input
 
-The current input is a JSON file with this envelope and a schema v1 definition:
+Build the envelope from TSX with `resoloop-jsx build content/room.tsx --target creation -o creation.json --project-root .`. The entry's default export must evaluate to one root `<Slot>`. Creation target permits omitted Slot and Component keys and repeated sibling Slot names. Explicit keys still must be unique. Ordinary schema-v1 apply documents keep their existing explicit-key and distinct-sibling-name constraints.
+
+`creationId` is selected from the key in the entry's named `ownership` export when present; otherwise the root Slot must have an explicit key. The chosen key must contain 1–128 characters and no control characters. If neither source supplies it, TSX build fails with `CREATION_ID_INVALID`; generated positional keys are not used as `creationId`. Creation builds cannot combine with `--draft`, `--bundle`, `--catalog`, or `--build-id`; creation bundles are unavailable in this version.
+
+Validate the output offline with `resoloop validate creation.json --json`. The CLI recognizes the envelope automatically, and `validate` does not accept `--mode`. `plan` and `apply` require `--mode regenerate`. They run `CreationRegeneratePreflight` before connecting; unsupported Asset, Flux, Script, and other creation declarations stop at that preflight. Mode-free `validate` performs envelope validation and does not run `CreationRegeneratePreflight`.
+
+The envelope has this shape and contains a schema v1 definition:
 
 ```json
 {
@@ -22,7 +28,7 @@ The current input is a JSON file with this envelope and a schema v1 definition:
 }
 ```
 
-This is a hand-authored JSON entrypoint. There is no TSX creation entrypoint or build-bundle support. Asset, Flux and Script placement are unsupported. The implementation also rejects cameras, tests, migration declarations and nested child Slots with their own parent. Unsupported declarations must be removed or handled by another workflow; they are not silently ignored.
+The envelope may be written by hand as JSON or built from TSX as described above; creation build bundles are not supported. Asset, Flux and Script placement are unsupported. The implementation also rejects cameras, tests, migration declarations and nested child Slots with their own parent. Unsupported declarations must be removed or handled by another workflow; they are not silently ignored.
 
 Creation state schema v4 is separate from ordinary apply state v3. No v3-to-v4 migration is provided. Keep the state file safe and available. Planning and applying require `--url auto --session S-ID`, where `S-ID` is the exact discovered session ID. An explicit URL alone does not prove the session.
 
