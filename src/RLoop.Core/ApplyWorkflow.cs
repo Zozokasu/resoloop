@@ -2,6 +2,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
+using System.Security.Cryptography;
 
 namespace RLoop.Core;
 
@@ -228,7 +229,8 @@ public static class ApplyDocumentValidator
         IResoniteClient? client = null,
         CancellationToken cancellationToken = default,
         IReadOnlyDictionary<string, string>? resolvedTypes = null,
-        ApplyCatalog? catalog = null)
+        ApplyCatalog? catalog = null,
+        bool allowDuplicateSiblingNames = false)
     {
         if (document.Authoring is not null) _ = document.ProjectContext;
         var issues = new List<ApplyValidationIssue>();
@@ -370,8 +372,9 @@ public static class ApplyDocumentValidator
             IReadOnlyList<ApplyNodeSpec>? children, string path, ApplyIssuePath detailPath)
         {
             slots++;
-            foreach (var duplicate in (children ?? []).GroupBy(child => child.Slot.Name, StringComparer.Ordinal).Where(group => group.Count() > 1))
-                Issue("APPLY_SIBLING_NAME_DUPLICATE", $"Sibling name '{duplicate.Key}' is repeated. Stable keys do not disambiguate names after reconnect; choose distinct sibling names before creating the tree.", path + ".children");
+            if (!allowDuplicateSiblingNames)
+                foreach (var duplicate in (children ?? []).GroupBy(child => child.Slot.Name, StringComparer.Ordinal).Where(group => group.Count() > 1))
+                    Issue("APPLY_SIBLING_NAME_DUPLICATE", $"Sibling name '{duplicate.Key}' is repeated. Stable keys do not disambiguate names after reconnect; choose distinct sibling names before creating the tree.", path + ".children");
             if (string.IsNullOrWhiteSpace(slot.Name)) Issue("APPLY_SLOT_NAME_MISSING", "Every slot requires a non-empty name.", path + ".slot.name");
             if (slot.Position is { } position && position.Length != ApplyShape.Property<ApplySlotSpec>(nameof(ApplySlotSpec.Position)).Rules.Length) Issue("APPLY_VECTOR_INVALID", "position requires exactly 3 numbers.", path + ".slot.position");
             if (slot.Rotation is { } rotation && rotation.Length != ApplyShape.Property<ApplySlotSpec>(nameof(ApplySlotSpec.Rotation)).Rules.Length) Issue("APPLY_QUATERNION_INVALID", "rotation requires exactly 4 numbers.", path + ".slot.rotation");
@@ -700,6 +703,7 @@ internal sealed class ApplyState
     public string OwnershipKey { get; set; } = string.Empty;
     public string? SessionId { get; set; }
     public ApplySessionObservation? Session { get; set; }
+    public string? SessionBinding { get; set; }
     public Dictionary<string, ApplyStateSlot> Slots { get; set; } = new(StringComparer.Ordinal);
     public Dictionary<string, ApplyStateComponent> Components { get; set; } = new(StringComparer.Ordinal);
     public Dictionary<string, ApplyStateAsset> Assets { get; set; } = new(StringComparer.Ordinal);
@@ -708,6 +712,20 @@ internal sealed class ApplyState
 
 internal static class ApplyStateStore
 {
+    internal static string ComputeSessionBinding(ApplyState state)
+    {
+        var bindings = state.Components.OrderBy(pair => pair.Key, StringComparer.Ordinal)
+            .Select(pair => new[]
+            {
+                pair.Key,
+                pair.Value.SlotKey,
+                state.Slots.TryGetValue(pair.Value.SlotKey, out var slot) ? slot.Id : "",
+                pair.Value.Id,
+            }).ToArray();
+        var json = JsonSerializer.Serialize(bindings);
+        return "sha256:" + Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(json))).ToLowerInvariant();
+    }
+
     public static string ResolvePath(ApplyDocument document, string? requestedPath)
     {
         var context = document.ProjectContext;

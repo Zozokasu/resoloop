@@ -1620,7 +1620,7 @@ Validates and plans the complete document before mutation. State checkpoints mak
 --discard-pending OPERATION_ID --yes discards only that pending record offline and exits; do not combine with --prune/--adopt.
 Inspect first: an untracked successful creation can be duplicated by the next apply; delete unwanted objects only by exact IDs.
 Regenerate is experimental: it deletes the entire owned root, including manually added content. Inspect its plan and pass --yes; it requires --url auto --session S-ID.
-It accepts hand-written JSON envelopes only (no TSX creation entrypoint), is live-unverified, and uses separate v4 state with no v3 migration. Delete-first creates a gap; failure does not restore the old root. Asset/Flux/Script placement is unsupported.
+Build the envelope with resoloop-jsx build ENTRY.tsx --target creation, or write the JSON by hand. It uses separate v4 state with no v3 migration. Delete-first creates a gap; failure does not restore the old root. Asset/Flux/Script placement is unsupported. The TSX creation path and same-name sibling Slots are unverified live.
 """,
             "plan" or "diff" => """
 resoloop plan|diff FILE [--build-id R] [--state FILE] [--require-state] [--adopt]
@@ -1631,7 +1631,7 @@ Never changes the world. Without --brief, JSON includes a separate changes array
 --brief emits one compact target/reason list (changes by default); --summary --brief emits counts only.
 --report NEW_FILE.json saves the full standard JSON, including all changes. Existing files are never overwritten.
 Review --deletes-only before apply --prune --yes.
-Regenerate planning is experimental and requires --url auto --session S-ID. Creation state v4 is separate from legacy v3; no v3 migration is provided. It accepts hand-written JSON envelopes only (no TSX entrypoint). Asset/Flux/Script placement is unsupported; live behavior is unverified.
+Regenerate planning is experimental and requires --url auto --session S-ID. Creation state v4 is separate from legacy v3; no v3 migration is provided. It accepts envelopes built with resoloop-jsx build --target creation or written by hand. Asset/Flux/Script placement is unsupported; the TSX creation path and same-name sibling Slots are unverified live.
 Apply deletes the entire owned root, including manual additions, and needs --yes after plan review. Delete-first creates a gap and a failed create does not restore the old root.
 Regenerate may add Components automatically in Resonite (for example RectTransform); apply accepts extras and reports engineAddedComponents. Slot counts must match the definition.
 Recover pending work only after inspecting state and exact IDs. An unmarked candidate is never deleted automatically; discard-pending clears only the local pending record (no world cleanup, no exemption from the next apply checks):
@@ -1646,7 +1646,7 @@ resoloop creation recover --state STATE --discard-pending OP --yes --json
 Recovery is experimental and requires inspection of the retained state, operation ID and exact Slot IDs first.
 rollback removes only a fully proven candidate and retains a proven old root when present; it does not recreate an old root that was already deleted.
 finish is available only when the complete staged tree and ownership can be reverified. discard-pending clears the local record only: it does not inspect or clean the world.
-State v4 is separate from legacy v3 with no migration. This workflow accepts hand-written JSON envelopes only; TSX creation, Asset/Flux/Script placement, creation recover --bind-root, creation migrate and creation inspect are unavailable. Live behavior is unverified.
+State v4 is separate from legacy v3 with no migration. Asset/Flux/Script placement, creation recover --bind-root, creation migrate and creation inspect are unavailable. A successful finish, and recovery of TSX-built or same-name sibling creations, are unverified live.
 """,
             "find" => """
 resoloop find (--name TEXT [--exact] | --component TYPE) [--under SLOT] [--direct-children]
@@ -1782,7 +1782,7 @@ Exact Slot path (PowerShell): 'path:["Root","A/B"," Label "]' preserves separato
 Configuration priority: CLI > environment > .resoloop.json > ~/.resoloop/config.json
 Environment: RESONITE_LINK_URL, RESOLOOP_TIMEOUT_SECONDS, RESOLOOP_COMMAND_TIMEOUT_SECONDS, RESOLOOP_FLUX_EXECUTABLE, RESONITE_MANAGED_DATA_PATH, RESONITE_LOG_PATH, RESOLOOP_BLENDER_EXECUTABLE, RESOLOOP_BACKEND, RESOLOOP_WORKBENCH_PIPE
 
-Experimental creation regenerate uses handwritten JSON envelopes and separate v4 state (no legacy v3 migration). It requires a matched --url auto --session S-ID; apply requires --yes and deletes the whole root, including manual additions. Delete-first leaves a gap and failure does not restore the old root. Asset/Flux/Script placement and TSX creation are unavailable; live behavior is unverified. See resoloop help creation for recovery limits.
+Experimental creation regenerate takes an envelope built with resoloop-jsx build --target creation or written by hand, and uses separate v4 state (no legacy v3 migration). It requires a matched --url auto --session S-ID; apply requires --yes and deletes the whole root, including manual additions. Delete-first leaves a gap and failure does not restore the old root. Asset/Flux/Script placement is unavailable; the TSX creation path and same-name sibling Slots are unverified live. See resoloop help creation for recovery limits.
 """);
     }
 }

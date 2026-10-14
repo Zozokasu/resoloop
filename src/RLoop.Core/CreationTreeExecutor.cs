@@ -55,7 +55,8 @@ internal sealed class CreationTreeExecutor(IResoniteClient client)
         }
 
         var strictDefinition = FilterRuntimeFields(plannedDefinition);
-        var validation = await ApplyDocumentValidator.ValidateAsync(strictDefinition, client, ct, runtimeTypes);
+        var validation = await ApplyDocumentValidator.ValidateAsync(strictDefinition, client, ct, runtimeTypes,
+            allowDuplicateSiblingNames: true);
         ApplyDocumentValidator.ThrowIfInvalid(validation);
         var resolvedComponents = components.Select(component => component with
         {

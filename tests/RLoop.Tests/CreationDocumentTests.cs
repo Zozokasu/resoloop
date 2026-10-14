@@ -119,14 +119,31 @@ public sealed class CreationDocumentTests
     }
 
     [Fact]
-    public async Task DuplicateSiblingNamesWithDifferentKeysFailValidationAndCli()
+    public async Task DuplicateSiblingNamesWithDifferentKeysPassValidationAndCli()
     {
         const string duplicateNames = """{"schemaVersion":"1","ownership":{"key":"room"},"slot":{"key":"root","name":"Room","parent":"Root"},"components":[],"children":[{"slot":{"key":"first","name":"Lamp"},"components":[],"children":[]},{"slot":{"key":"second","name":"Lamp"},"components":[],"children":[]}] }""";
         var result = await CreationDocument.Parse(Envelope(duplicateNames)).ValidateAsync();
 
-        AssertInvalidCreationResult(result, "$.children");
-        Assert.Contains(result.Issues, issue => issue.Message.Contains("APPLY_SIBLING_NAME_DUPLICATE", StringComparison.Ordinal));
-        await AssertCliValidationFailedAsync(duplicateNames);
+        Assert.True(result.Valid);
+        Assert.Empty(result.Issues);
+        var root = Path.Combine(Path.GetTempPath(), "resoloop-creation-valid-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var inputPath = Path.Combine(root, "creation.json");
+            var reportPath = Path.Combine(root, "report.json");
+            await File.WriteAllTextAsync(inputPath, Envelope(duplicateNames));
+            var exit = await Program.RunAsync(["validate", inputPath, "--json", "--report", reportPath]);
+            Assert.Equal(ExitCodes.Success, exit);
+            using var parsed = JsonDocument.Parse(await File.ReadAllTextAsync(reportPath));
+            var data = parsed.RootElement.GetProperty("data");
+            Assert.True(data.GetProperty("valid").GetBoolean());
+            Assert.Empty(data.GetProperty("issues").EnumerateArray());
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
     }
 
     [Theory]

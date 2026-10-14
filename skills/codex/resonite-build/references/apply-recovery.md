@@ -29,6 +29,7 @@ prove the same Discover S-ID and normalized URL. A changed or unknown session ke
 `STABLE_COMPONENT_AMBIGUOUS` stop. Explicit `--url ws://…` does not by itself prove session
 identity; `--url auto` can prove it when discovery provides a unique matching announcement.
 Recorded IDs may be reused only after the previous apply completed successfully; a failed apply stops even in the same session.
+Editing the state file by hand also ends this reuse until the next successful apply, and --prune never selects a deletion target by recorded ID.
 Use `identityFields` or separate named Slots when matching must survive session changes.
 
 Explicit server rejection clears its pending operation and stops with the original error.

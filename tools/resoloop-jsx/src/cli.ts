@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// resoloop-jsx build <entry.tsx> -o <out.json> [--draft] [--project-root PATH]
+// resoloop-jsx build <entry.tsx> -o <out.json> [--target creation] [--draft] [--project-root PATH]
 //
 // Type-checks a JSX-authored slot/component tree with the TypeScript
 // compiler API, transpiles and evaluates it in-process, then emits a
@@ -26,6 +26,7 @@ import { catalogDeclaration, catalogRuntimeTables } from "./catalog-declarations
 
 export interface BuildOptions {
   draft?: boolean;
+  target?: "creation";
   output?: string;
   projectRoot?: string;
   bundle?: boolean;
@@ -38,6 +39,16 @@ export interface BuildResult {
   errors: string[];
   warnings: string[];
   document?: ApplyDocument;
+  creation?: CreationEnvelope;
+}
+
+export interface CreationEnvelope {
+  schemaVersion: "creation-1";
+  kind: "resoloop-creation";
+  creationVersion: "1";
+  creationId: string;
+  definition: ApplyDocument;
+  authoring: NonNullable<ApplyDocument["authoring"]>;
 }
 
 function formatDiagnostics(diagnostics: readonly ts.Diagnostic[]): string {
@@ -80,6 +91,14 @@ export async function buildFile(
 ): Promise<BuildResult> {
   const errors: string[] = [];
   const warnings: string[] = [];
+  if (opts.target !== undefined && opts.target !== "creation")
+    return { exitCode: 1, errors: [`unsupported --target value: ${String(opts.target)}`], warnings };
+  if (opts.target === "creation") {
+    const incompatible = opts.draft ? "--draft" : opts.bundle ? "--bundle" :
+      opts.catalog !== undefined ? "--catalog" : opts.buildId !== undefined ? "--build-id" : undefined;
+    if (incompatible !== undefined)
+      return { exitCode: 1, errors: [`--target creation cannot be combined with ${incompatible} in this version`], warnings };
+  }
   if (opts.bundle ? !opts.output || !opts.catalog?.trim() || !opts.buildId?.trim() : opts.catalog !== undefined || opts.buildId !== undefined)
     return { exitCode: 1, errors: ["--bundle requires output, --catalog FILE and --build-id R; catalog/build-id require --bundle"], warnings };
   const entryAbs = path.resolve(entryPath);
@@ -182,14 +201,25 @@ export async function buildFile(
     const { document, warnings: draftWarnings } = evaluate(mod?.default, {
       catalogs,
       draft: opts.draft === true,
+      creation: opts.target === "creation",
       ...(Object.prototype.hasOwnProperty.call(mod, "ownership") ? { ownership: mod.ownership } : {}),
     });
-    document.authoring = {
+    const authoring = {
       projectRoot,
       source: path.relative(projectRoot, entryAbs).split(path.sep).join("/"),
       ownershipSource: Object.prototype.hasOwnProperty.call(mod, "ownership") ? "entry-export" : "root-key",
     };
+    if (opts.target !== "creation") document.authoring = authoring;
     warnings.push(...draftWarnings);
+
+    const creation: CreationEnvelope | undefined = opts.target === "creation" ? {
+      schemaVersion: "creation-1",
+      kind: "resoloop-creation",
+      creationVersion: "1",
+      creationId: document.ownership.key,
+      definition: document,
+      authoring,
+    } : undefined;
 
     if (bundleOutput !== undefined) {
       publishBundle(document, inputs!, catalogText!, opts.buildId!, bundleOutput);
@@ -197,11 +227,11 @@ export async function buildFile(
       const outAbs = path.resolve(opts.output);
       const parent = path.dirname(outAbs);
       if (!fs.existsSync(parent)) fs.mkdirSync(parent, { recursive: true });
-      fs.writeFileSync(outAbs, JSON.stringify(document, null, 2) + "\n", {
+      fs.writeFileSync(outAbs, JSON.stringify(creation ?? document, null, 2) + "\n", {
         encoding: "utf8",
       });
     }
-    return { exitCode: 0, errors, warnings, document };
+    return { exitCode: 0, errors, warnings, document, ...(creation === undefined ? {} : { creation }) };
   } catch (err: any) {
     if (err instanceof BuildError) {
       const located = opts.bundle || sourceLocatedBuildCodes.has(err.code);
@@ -223,10 +253,16 @@ export async function buildFile(
 
 function usage(): string {
   return [
-    "usage: resoloop-jsx build <entry.tsx> -o <out.json> [--draft] [--project-root PATH]",
+    "usage: resoloop-jsx build <entry.tsx> -o <out.json> [--target creation] [--draft] [--project-root PATH]",
     "",
     "  build <entry.tsx>   JSX entry module; must `export default` a single <Slot>",
-    "  -o, --output PATH   schema-v1 ApplyDocument output JSON path (required)",
+    "  -o, --output PATH   output JSON path (required): schema-v1 ApplyDocument by default, creation envelope with --target creation",
+    "  --target creation   emit a creation-1 envelope for plan/apply --mode regenerate",
+    "                      creationId uses entry ownership.key, else the root Slot's explicit key; never a generated key",
+    "                      omitted keys and same-name sibling Slots are allowed only for creation; explicit keys stay unique",
+    "                      cannot combine with --draft, --bundle, --catalog, or --build-id; no creation bundle is available",
+    "                      unsupported content stops in plan/apply preflight before connection",
+    "                      experimental; TSX creation and same-name sibling regeneration are unverified live",
     "  --project-root PATH explicit project base (otherwise nearest source config)",
     "  --draft             allow missing keys; deterministic keys are generated",
     "                      and a warning is printed per generated key",
@@ -240,6 +276,7 @@ export interface ParsedArgs {
   output?: string;
   projectRoot?: string;
   draft: boolean;
+  target?: "creation";
   bundle?: boolean;
   catalog?: string;
   buildId?: string;
@@ -254,6 +291,12 @@ export function parseArgs(argv: string[]): { args?: ParsedArgs; error?: string }
     const arg = rest[i];
     if (arg === "--bundle") {
       parsed.bundle = true;
+    } else if (arg === "--target" || arg.startsWith("--target=")) {
+      const value = arg.includes("=") ? arg.slice(arg.indexOf("=") + 1) : rest[++i];
+      if (value === undefined || value.length === 0 || !arg.includes("=") && value.startsWith("-"))
+        return { error: "--target requires a value" };
+      if (value !== "creation") return { error: `unsupported --target value: ${value}` };
+      parsed.target = "creation";
     } else if (arg === "--catalog" || arg === "--build-id" || arg.startsWith("--catalog=") || arg.startsWith("--build-id=")) {
       const name = arg.split("=")[0];
       const value = arg.includes("=") ? arg.slice(arg.indexOf("=") + 1) : rest[++i];
@@ -288,6 +331,12 @@ export function parseArgs(argv: string[]): { args?: ParsedArgs; error?: string }
     return { error: `missing <entry.tsx>\n${usage()}` };
   if (parsed.output === undefined)
     return { error: `missing -o/--output <out.json>\n${usage()}` };
+  if (parsed.target === "creation") {
+    const incompatible = parsed.draft ? "--draft" : parsed.bundle ? "--bundle" :
+      parsed.catalog !== undefined ? "--catalog" : parsed.buildId !== undefined ? "--build-id" : undefined;
+    if (incompatible !== undefined)
+      return { error: `--target creation cannot be combined with ${incompatible} in this version` };
+  }
   if (parsed.bundle ? !parsed.catalog || !parsed.buildId : parsed.catalog !== undefined || parsed.buildId !== undefined)
     return { error: "--bundle requires --catalog FILE and --build-id R; catalog/build-id require --bundle" };
   return { args: parsed };
@@ -301,6 +350,7 @@ export async function main(argv: string[]): Promise<number> {
   }
   const result = await buildFile(args.entry!, {
     draft: args.draft,
+    target: args.target,
     output: args.output,
     projectRoot: args.projectRoot,
     bundle: args.bundle, catalog: args.catalog, buildId: args.buildId,

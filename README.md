@@ -41,14 +41,19 @@ These checks detect observed conflicts and coordinate this and later cooperating
 
 ## Experimental creation regenerate
 
-Creation regenerate replaces a whole owned root. It is experimental and has not been verified in a live Resonite session. The plan and apply require `--url auto --session S-ID`; apply also requires an explicit `--yes` after reviewing the plan. Replacement uses delete-first: the old root is deleted before the new one is created, so there is a gap and a failed creation does not restore the old root. Every Slot under the owned root is removed, including content added manually. Inspect the exact root and its contents before confirming.
+Creation regenerate replaces a whole owned root. It is experimental. The plan and apply require `--url auto --session S-ID`; apply also requires an explicit `--yes` after reviewing the plan. Replacement uses delete-first: the old root is deleted before the new one is created, so there is a gap and a failed creation does not restore the old root. Every Slot under the owned root is removed, including content added manually. Inspect the exact root and its contents before confirming.
 
-The workflow accepts hand-written JSON envelopes only; there is no TSX creation entrypoint. Asset, Flux and Script placement are unsupported. Creation state v4 is separate from ordinary state v3, and migration is unavailable. To plan and apply, use:
+Create the envelope from TSX with `resoloop-jsx build ENTRY.tsx --target creation -o creation.json --project-root .`. The default export must be one root Slot. Creation builds allow omitted keys and repeated sibling Slot names, while explicit keys must remain unique. The `creationId` uses the entry `ownership` export key first, then the root Slot's explicit key; if neither exists or the value is not 1–128 characters without control characters, build fails with `CREATION_ID_INVALID`. Generated positional keys are not used for it. Ordinary schema-v1 builds retain their explicit-key and distinct-sibling-name rules. Creation builds cannot combine with `--draft`, `--bundle`, `--catalog`, or `--build-id`; creation bundles are not available. Unsupported Asset, Flux, Script, and other creation declarations stop in the `plan`/`apply` regenerate preflight before connection. Creation state v4 is separate from ordinary state v3, and migration is unavailable.
+
+Validate the envelope offline without a mode flag, then plan and apply with `--mode regenerate`:
 
 ~~~powershell
+resoloop validate creation.json --json
 resoloop plan creation.json --mode regenerate --state creation-state.json --url auto --session S-ID --json
 resoloop apply creation.json --mode regenerate --state creation-state.json --replace-order delete-first --url auto --session S-ID --yes --json
 ~~~
+
+`validate` recognizes the creation envelope automatically and does not accept `--mode`. The creation target, including repeated sibling-name regeneration, has not been verified in a live Resonite session.
 
 If an operation remains pending, do not apply again. Read the state, operation ID and exact root IDs, then choose rollback or finish:
 

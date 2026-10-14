@@ -1,6 +1,6 @@
 # resoloop-jsx
 
-Author resoloop schema-v1 apply documents in TSX instead of hand-editing JSON.
+Author resoloop schema-v1 apply documents or experimental creation envelopes in TSX instead of hand-editing JSON.
 A `.tsx` entry file describes a Resonite Slot/Component tree with JSX; the CLI
 type-checks it, evaluates it eagerly (function components, arrays, and
 conditionals are resolved at evaluation time — there is no virtual DOM or
@@ -59,6 +59,36 @@ resoloop-jsx build <entry.tsx> -o <out.json> [--draft] [--project-root PATH]
 # or without installing:
 node dist/src/cli.js build <entry.tsx> -o <out.json> [--draft] [--project-root PATH]
 ```
+
+## Experimental TSX creation input
+
+To create an envelope for the experimental whole-root regenerate workflow, pass `--target creation`:
+
+```tsx
+import { Slot, Component } from "resoloop-jsx/draft";
+
+export const ownership = { key: "room" };
+
+export default <Slot name="Room">
+  <Slot name="Lamp"><Component type="REFLECTION_VERIFIED_FULL_COMPONENT_TYPE" /></Slot>
+  <Slot name="Lamp"><Component type="REFLECTION_VERIFIED_FULL_COMPONENT_TYPE" /></Slot>
+</Slot>;
+```
+
+The entry's default export must evaluate to one root `<Slot>`. Creation target permits omitted keys and repeated sibling Slot names; explicit Slot and Component keys must still be unique. This relaxed rule applies to creation envelopes only. Ordinary builds still emit schema-v1 `ApplyDocument` JSON, where explicit keys and distinct sibling Slot names remain required. Creation builds do not use `--draft`, `--bundle`, `--catalog`, or `--build-id`; this version has no creation bundle.
+
+`creationId` comes from the entry's named `ownership` export key when present, otherwise from the root Slot's explicit key. If neither supplies a valid key, build fails with `CREATION_ID_INVALID`. The value must contain 1–128 characters and no control characters; generated positional keys never become `creationId`.
+
+Build and validate the envelope offline, then use regenerate mode for planning and applying:
+
+```powershell
+resoloop-jsx build content/room.tsx --target creation -o creation.json --project-root .
+resoloop validate creation.json --json
+resoloop plan creation.json --mode regenerate --state creation-state.json --url auto --session S-ID --json
+resoloop apply creation.json --mode regenerate --state creation-state.json --replace-order delete-first --url auto --session S-ID --yes --json
+```
+
+`validate` recognizes creation envelopes by their contents, runs offline without `--mode`, and does not accept a mode option. `plan` and `apply` require `--mode regenerate`; both run the creation regenerate preflight before connecting. Unsupported Asset, Flux, Script, and other creation declarations stop there. Creation TSX and sibling-name regeneration have not been verified in a live Resonite session. See the [creation regenerate and recovery workflow](../../skills/codex/resonite-build/references/creation-regenerate.md) for session matching, exact-root inspection, deletion, pending-state, recovery, and post-change inspection safeguards.
 
 ## Request-bound build bundles (V12)
 

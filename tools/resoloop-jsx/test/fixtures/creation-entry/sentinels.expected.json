@@ -1,0 +1,26 @@
+{
+  "schemaVersion": "1",
+  "ownership": {
+    "key": "room"
+  },
+  "slot": {
+    "name": "$draftKeys-like",
+    "key": "room"
+  },
+  "components": [
+    {
+      "type": "T",
+      "key": "component",
+      "fields": {
+        "marker": "$draftKeys-like",
+        "reference": "$path:Root/Room"
+      }
+    }
+  ],
+  "children": [],
+  "authoring": {
+    "projectRoot": "FIXTURE_ROOT",
+    "source": "creation-entry/sentinels.tsx",
+    "ownershipSource": "root-key"
+  }
+}

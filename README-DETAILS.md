@@ -258,9 +258,11 @@ resoloop apply examples/house-world.json --json
 
 ### Experimental creation regenerate
 
-Creation regenerate rebuilds a complete owned root and is experimental; live behavior is unverified. Its plan and apply require a matched discovery session (`--url auto --session S-ID`), and apply requires `--yes` after plan review. It uses delete-first replacement: all content below the old root, including manual additions, is deleted before creation starts. This leaves a gap, and failure does not restore the deleted root. Inspect the exact root boundary before confirmation.
+Creation regenerate rebuilds a complete owned root and is experimental. Its plan and apply require a matched discovery session (`--url auto --session S-ID`), and apply requires `--yes` after plan review. It uses delete-first replacement: all content below the old root, including manual additions, is deleted before creation starts. This leaves a gap, and failure does not restore the deleted root. Inspect the exact root boundary before confirmation.
 
-Input is a hand-written JSON envelope. TSX creation input is not available. Asset, Flux and Script placement are unsupported. Creation state v4 is separate from ordinary apply state v3; no migration is provided.
+Build a creation envelope from TSX with `resoloop-jsx build content/room.tsx --target creation -o creation.json --project-root .`. Its default export must evaluate to one root Slot. Creation target permits omitted keys and repeated sibling Slot names, but explicit keys must be unique. `creationId` uses the key from the entry's named `ownership` export when present, otherwise the root Slot's explicit key; absent, invalid, over-128-character, or control-character values fail with `CREATION_ID_INVALID`. Generated positional keys are not eligible. Ordinary schema-v1 builds retain their explicit-key and distinct-sibling-name requirements. Creation target cannot be combined with `--draft`, `--bundle`, `--catalog`, or `--build-id`; creation bundles are unavailable.
+
+Validate the envelope offline with `resoloop validate creation.json --json`. The CLI recognizes it automatically; `validate` does not take `--mode`. `plan` and `apply` require `--mode regenerate`, and run `CreationRegeneratePreflight` before connecting. Unsupported Asset, Flux, Script, and other creation declarations stop at that preflight. Creation state v4 is separate from ordinary apply state v3; no migration is provided. The TSX creation path and regenerate with same-name siblings have not been verified in a live Resonite session.
 
 ~~~powershell
 resoloop plan creation.json --mode regenerate --state creation-state.json --url auto --session S-ID --json
@@ -698,7 +700,7 @@ Slot の削除前は各 Slot の直下 children/components を読み、部分木
 
 古い driver が新しい driver の参照を妨げる入替えは、最初の readback 不一致で停止し、一回の apply では完了しません。先に古い driver を宣言から外し、`diff --deletes-only` で正確な対象を確認して `apply --prune --yes` で削除します。不在を inspect で確かめてから新しい driver を宣言に追加して apply してください。この二段階の手順は offline test で確認済みです。
 
-すでに失敗した入替えが、後の apply で保留が確定し `STABLE_COMPONENT_AMBIGUOUS`（pending なし）で止まった場合の出口は、既存コマンドと state の手動編集だけで行います。新しい復旧コマンドや引数はありません。同型Componentの曖昧さは、stateと現在の観測が同じsessionを証明できる場合だけ記録IDで続行できます。session変更後や証明できない場合は止まります。人やagentが同型候補をordinalやIDから推測して選んだり、stateを消して回収したりしないでください。手順は次の順です。
+すでに失敗した入替えが、後の apply で保留が確定し `STABLE_COMPONENT_AMBIGUOUS`（pending なし）で止まった場合の出口は、既存コマンドと state の手動編集だけで行います。新しい復旧コマンドや引数はありません。同型Componentの曖昧さは、stateと現在の観測が同じsessionを証明できる場合だけ記録IDで続行できます。session変更後や証明できない場合は止まります。stateを手で編集した後も、次のapplyが成功するまで記録IDでは続行しません。人やagentが同型候補をordinalやIDから推測して選んだり、stateを消して回収したりしないでください。手順は次の順です。
 
 1. 書込み側（この CLI、同じ endpoint の他 project、人、外部ツール）を止めます。同じ選択 session で現在の ID を読み直します。別 session や過去の ID は使いません。
 2. 所有 Slot を `inspect OWNER_SLOT_ID --members`、各 ID を `component inspect ID` で確認し、旧 driver ID と失敗で作られた ID の型・親 Slot・参照先を照合します。旧 driver が意図した target を参照し、失敗した側が参照を持たない（または別の値）ことを確かめます。確認できない場合はここで止めます。state に残る失敗側の記録は確定済みの記録で、所有の証明ではありません。

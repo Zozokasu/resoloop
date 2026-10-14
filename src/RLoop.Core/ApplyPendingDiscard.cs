@@ -24,6 +24,8 @@ public static class ApplyPendingDiscard
             throw new RLoopException("INVALID_OPTION", $"No pending operation '{operationId}' exists in '{path}'.", ExitCodes.InvalidArguments);
         var discarded = pending ?? legacy!;
         var next = ApplyStateStore.Copy(state);
+        next.Session = null;
+        next.SessionBinding = null;
         if (pending is not null) next.Pending.RemoveAll(p => p.OperationId == operationId);
         else if (legacy!.Kind == "legacyCreateSlot") next.Slots.Remove(legacy.Key);
         else next.Components.Remove(legacy.Key);
