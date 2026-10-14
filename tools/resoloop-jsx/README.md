@@ -60,12 +60,28 @@ resoloop-jsx build <entry.tsx> -o <out.json> [--draft] [--project-root PATH]
 node dist/src/cli.js build <entry.tsx> -o <out.json> [--draft] [--project-root PATH]
 ```
 
+See [Key rules](#key-rules) for how `--draft` handles omitted keys.
+
+## Key rules
+
+| Use | Import | Build | Apply | Key |
+| --- | --- | --- | --- | --- |
+| Regenerate (experimental) | `resoloop-jsx` | `build entry.tsx -o out.json --target creation` | `apply out.json --mode regenerate --replace-order delete-first --yes --url auto --session S-ID` | May be omitted. `Scope` `instanceKey` is required. |
+| Normal | `resoloop-jsx` | `build entry.tsx -o out.json` | `apply out.json` | Required on all nodes. Missing keys fail with `EXPLICIT_KEY_REQUIRED` (exit code 1, with a TSX location). |
+| Draft (inspection only) | `resoloop-jsx` | `build entry.tsx -o out.json --draft` | Not applicable (`APPLY_DRAFT_KEY_UNSTABLE`) | May be omitted. |
+
+With `--draft`, missing keys are generated as `<parentKey>/<slug(name-or-type)>#<sameKindSiblingIndex>` and one warning per generated key is printed to stderr. The output carries the source guard `"$draftKeys":true`; validate/diff/plan/apply reject it with `APPLY_DRAFT_KEY_UNSTABLE`. Copy intended effective keys into explicit props and rebuild before applying. The old generated strings remain unchanged, but inserting a sibling can shift their index, so they are inspection-only. Draft builds with all explicit keys have no guard and remain applicable.
+
+Explicit keys must be unique in every use. Normal builds also require distinct sibling Slot names (`DUPLICATE_SIBLING_NAME`); creation target allows repeated sibling names.
+
+`resoloop-jsx/draft` is a compatibility alias for the main entry point; do not use it for new TSX.
+
 ## Experimental TSX creation input
 
 To create an envelope for the experimental whole-root regenerate workflow, pass `--target creation`:
 
 ```tsx
-import { Slot, Component } from "resoloop-jsx/draft";
+import { Slot, Component } from "resoloop-jsx";
 
 export const ownership = { key: "room" };
 
@@ -75,7 +91,7 @@ export default <Slot name="Room">
 </Slot>;
 ```
 
-The entry's default export must evaluate to one root `<Slot>`. Creation target permits omitted keys and repeated sibling Slot names; explicit Slot and Component keys must still be unique. This relaxed rule applies to creation envelopes only. Ordinary builds still emit schema-v1 `ApplyDocument` JSON, where explicit keys and distinct sibling Slot names remain required. Creation builds do not use `--draft`, `--bundle`, `--catalog`, or `--build-id`; this version has no creation bundle.
+The entry's default export must evaluate to one root `<Slot>`. See [Key rules](#key-rules) for key requirements. Creation builds do not use `--draft`, `--bundle`, `--catalog`, or `--build-id`; this version has no creation bundle.
 
 `creationId` comes from the entry's named `ownership` export key when present, otherwise from the root Slot's explicit key. If neither supplies a valid key, build fails with `CREATION_ID_INVALID`. The value must contain 1–128 characters and no control characters; generated positional keys never become `creationId`.
 
@@ -194,10 +210,7 @@ without draft key generation, then use `resoloop diff OUTPUT.json --state OLD_ST
 diff, preserved IDs, and zero diff after apply. The flag stops on a missing
 checkpoint instead of creating an empty state. See [migration details](../../README-DETAILS.md).
 
-Every `<Slot>` and `<Component>` carries an explicit stable `key` prop. With
-the normal entry point (`import { Slot, Component } from "resoloop-jsx"`)
-`key` is required by the TypeScript types — omitting it fails type-checking
-(exit code 2) before the entry is evaluated.
+See [Key rules](#key-rules) for when `<Slot>` and `<Component>` keys are required; without a creation target, a missing key stops the build with `EXPLICIT_KEY_REQUIRED`.
 
 `ref.slot(key)` / `ref.component(key)` / `ref.member(key, member)` /
 `ref.slotMember(key, member)` produce the `$slot:` / `$component:` /
@@ -245,27 +258,6 @@ components and children; expansion removes it before schema-v1 validation.
 Invalid segments or unresolved scoped references fail the TSX build with
 `APPLY_SCOPE_INVALID`; C# uses `APPLY_SCOPE_INVALID` for invalid segments and
 existing key-conflict/reference error codes for collisions/missing targets.
-
-## Entry points: normal vs draft
-
-- `import { Slot, Component } from "resoloop-jsx"` — `key` is required in the
-  prop types; omitting it fails TypeScript diagnostics (exit code 2).
-- `import { Slot, Component } from "resoloop-jsx/draft"` — the same runtime
-  functions, but `key` is optional in the types. Intended for prototyping a
-  tree. Without `--draft` a build still fails at evaluation with
-  `EXPLICIT_KEY_REQUIRED` (exit code 1); with `--draft`, a deterministic key
-  of the form `<parentKey>/<slug(name-or-type)>#<sameKindSiblingIndex>` is
-  generated per missing key and one warning each is printed to stderr
-  (exit code 0). Such output carries the source guard `"$draftKeys":true`;
-  validate/diff/plan/apply reject it with `APPLY_DRAFT_KEY_UNSTABLE`.
-  Copy intended effective keys into explicit props and rebuild before applying.
-  The old generated strings remain unchanged; inserting a sibling can shift
-  their index, so they are inspection-only. Draft builds with all explicit keys
-  have no guard and remain applicable.
-
-Everything other than `Slot`/`Component` prop typing (`ref`, `Fragment`,
-`Scope`, `BuildError`, `evaluate`, and all shared types) is identical from either
-entry point.
 
 ## Exit codes
 

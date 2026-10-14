@@ -146,7 +146,7 @@ prune は `--prune --yes` が必須です。prune と relocate の移動元削�
 
 creation regenerate は所有root全体を作り直す実験機能です。planとapplyには `--url auto --session S-ID` が必要で、applyにはplan確認後の明示的な `--yes` も必要です。置換はdelete-first方式です。先に旧rootを削除するため、その間は制作物がない状態になり、新rootの作成に失敗しても旧rootは戻りません。root配下は手動で追加した内容も含めてすべて削除されます。実行前に対象rootと配下を正確に確認してください。
 
-TSXからは `resoloop-jsx build content/room.tsx --target creation -o creation.json --project-root .` でenvelopeを作れます。default exportはroot Slot 1つにします。creation targetではkeyを省略でき、兄弟Slotに同じnameを使えます。明示keyは重複できません。`creationId` はentryのnamed `ownership` exportにあるkeyを優先し、なければroot Slotの明示keyを使います。どちらも無い場合や、1〜128文字で制御文字を含まない値でない場合は `CREATION_ID_INVALID` でbuildが失敗します。自動生成keyは `creationId` になりません。通常のschema-v1 buildでは、従来どおり明示keyと異なる兄弟Slot名が必要です。creation buildでは `--draft`、`--bundle`、`--catalog`、`--build-id` を併用できず、この版にcreation bundleはありません。Asset・Flux・Scriptなど未対応のcreation宣言は、plan/applyのregenerate preflightが接続前に停止させます。creation state v4は通常のstate v3とは別形式で、移行機能はありません。
+TSXからは `resoloop-jsx build content/room.tsx --target creation -o creation.json --project-root .` でenvelopeを作れます。default exportはroot Slot 1つにします。keyの省略・必須の規則は[Key rules](tools/resoloop-jsx/README.md#key-rules)を参照してください。creation targetでは兄弟Slotに同じnameを使え、明示keyは重複できません。`creationId` はentryのnamed `ownership` exportにあるkeyを優先し、なければroot Slotの明示keyを使います。どちらも無い場合や、1〜128文字で制御文字を含まない値でない場合は `CREATION_ID_INVALID` でbuildが失敗します。自動生成keyは `creationId` になりません。creation buildでは `--draft`、`--bundle`、`--catalog`、`--build-id` を併用できず、この版にcreation bundleはありません。Asset・Flux・Scriptなど未対応のcreation宣言は、plan/applyのregenerate preflightが接続前に停止させます。creation state v4は通常のstate v3とは別形式で、移行機能はありません。
 
 `validate` はenvelopeを自動認識し、`--mode` なしでoffline検証します。`plan` と `apply` には `--mode regenerate` が必要です。
 
