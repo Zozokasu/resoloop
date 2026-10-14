@@ -2,6 +2,36 @@
 
 群を 1 つ終えるたびに、日付の見出しの節を先頭へ足す。進捗は `tasks.md` のチェックだけに書き、ここには写さない。全体の順序は `openspec/roadmap.md`、未検証の一覧は `openspec/unverified.md` にある。
 
+## 2026-10-14 11:00 JST — task 2.6・2.7 を終えた（実機 L4: U01〜U05 はすべて PASS）
+
+### L4 の結果（実機。session「ぞかホーム」`S-01a13803-91cf-76b4-b635-eb730117be13`、`ws://localhost:25410/`、Resonite `2026.9.18.82`、ResoniteLink `0.13.1.0`。テスト用の親 `ResoLoop_Test_L4` = `Reso_30FA2`。10:35:32〜10:50:01）
+
+実行は Claude の `coding-worker`（実効のモデルは `claude-sonnet-5-5`）、CLI は `live-1012\bin5\resoloop.exe`（slot3 `ba57564`）。報告は `.ccg/tasks/resoloop-slimming/cc-live-l4-report.md`、証拠は `resoloop-worktrees/live-1012/evidence/L4`（77 ファイル。`ledger.md` に ID）。失敗・未実施の項目は無い。
+
+| 項目 | 判定 | 要点 | 証拠 |
+| --- | --- | --- | --- |
+| U02 | PASS | TSX（key はすべて明示）を `--target creation` で build → 作成（`action` `create`）→ `Intensity` を 1.5 から 2.5 に変えて置き換え（`replaced` true）。親の直下の子は 1 つ、古い root は `SLOT_NOT_FOUND` | `032`〜`038` |
+| U03 | PASS | key を省いた TSX。割り当てられた key は `root/l4u03#0`、`…/alpha#0`、`…/beta#1`。作成と置き換えが成功 | `041`〜`046` |
+| U04 | PASS | 同じ名前 `Lamp` 3 つ（key は `room/lamp#0`〜`#2`）。値 1・2・3 → 置き換えの後 1・7・3 で、3 つのまま | `051`〜`056` |
+| U05 | PASS | 先に置いた `L4U05`（`Reso_3194B`）と子 `Marker`（`Reso_31956`）は、作成と置き換えの後も同じ ID で残った。置き換えの `previousRootId` は作り直しの root（`Reso_31969`）で、先客ではない。親の直下の `L4U05` は常に 2 つ | `061`〜`068` |
+| U01 | PASS | 同じ Slot に `Light` 2 つ。同じ session の再 `plan`・`apply` は変更 0 件で、Component の ID も同じ。`--url ws://localhost:25410/` では `plan`・`apply` とも `STABLE_COMPONENT_AMBIGUOUS`（終了 code 6、`sessionProof` `unknown`）で書込みなし。その後の `plan` は変更 0 件 | `071`〜`079` |
+| Z | PASS | `Reso_30FA2` を正確な ID で削除。`find --name ResoLoop_Test` 0 件 | `090`〜`093` |
+
+Opus が確かめたこと（10:50〜10:55、読み取りだけ）: `discover` は同じ 1 件／`find --name ResoLoop_Test` と `find --name L4U` はどちらも 0 件／証拠のファイルの時刻が 10:35〜10:50 に並んでいる／`061`・`062`・`066`・`067`・`074`・`076`・`077`・`091` の出力を読み、上の要点と一致する／`065`・`068` の `inspect` に、先客と `Marker` の ID と、名前 `L4U05` が 2 つある。ほかの証拠は、実行担当の報告のとおりとして受け取った（Opus は開いていない）。
+
+### L4 で分かったこと（不具合ではない。記録だけ）
+
+- TSX の import 元は、5 項目とも `resoloop-jsx/draft`（fixture に合わせた）。主の入口 `resoloop-jsx` からの import は、実機では使っていない。Opus が offline で、U02 の TSX の import 元だけを `resoloop-jsx` に替えて build した: 終了 code 0 で、出力の違いは `source` のファイル名だけ。主の入口で key を省く形は、群 5 の後に L5（task 7.4 (i)）で確かめる。
+- 作業場所に `{"type":"module"}` の `package.json` が無いと、TSX の build が `ROOT_MUST_BE_SINGLE_SLOT` で失敗した（原因と結びつかないメッセージ。実行担当の報告。Opus は再現していない）。
+- 作り直しの `apply` は、成功しても `phase` が `staged` で返る（L3 の `012_M3_apply.txt` と同じ）。`pending` は null、`engineAddedComponents` は 0。
+- 通常の `apply` で作った Slot には、`FrooxEngine.AI_GeneratedContent` の Component が付き、state でも管理される（`074`。`componentsUnchanged` は 3）。
+- U01 の `plan` は、同じ session でも警告 `APPLY_COMPONENT_IDENTITY_RISK` を出す。
+- 残っているもの: `work-l4` の `u01`〜`u05-state.json.lock` 5 つ、`node_modules` の junction、`.resoloop/cache/reflection`。pending を持つ state は無い。
+
+### 次
+
+- task 2.8: `agent/better-b2c` を main へ merge してよいかを伺う。
+
 ## 2026-10-14 10:30 JST — task 2.6 の途中（実機 L4 の許可を得た。対象の session はまだ決まっていない）
 
 ### 伺いと返事
@@ -22,11 +52,11 @@
 
 - 指示書は `.ccg/tasks/resoloop-slimming/cc-live-l4-charter.md`。「事前確認」の表に、Opus が offline で実行したコマンドと終了 code がある（help、fixture `creation-keys/main.tsx` の `--target creation` の build、`validate`）。実機で実行していない書式（`plan`／`apply` の `--mode regenerate`、`slot create`／`delete`、`inspect`、URL の直接指定）は、そう明記した。
 - 下調べは Claude の調査役 2 本（読み取りだけ）。分かったこと: 実機で使える TSX の fixture は無い（fixture の型 `Probe` は test 用）ので、実行担当が実在の型で TSX を書く／同じ名前の兄弟の fixture は 2 つまでで、3 つは実行担当が書く／root の照合は名前ではなく、state の ID・親・印による（`CreationOwnershipVerifier.cs`）／slot3 の未追跡の `examples/object-lamp-a/`・`-b/` には `node_modules/resoloop-jsx` の link しか無い。
-- 2026-10-14 10:46 ごろ、Claude の `coding-worker` を起動した。順序は S → U02 → U03 → U04 → U05 → U01 → Z（片づけ）。証拠は `resoloop-worktrees/live-1012/evidence/L4`、報告は `.ccg/tasks/resoloop-slimming/cc-live-l4-report.md`。
+- 2026-10-14 10:35 ごろ、Claude の `coding-worker` を起動した。順序は S → U02 → U03 → U04 → U05 → U01 → Z（片づけ）。証拠は `resoloop-worktrees/live-1012/evidence/L4`、報告は `.ccg/tasks/resoloop-slimming/cc-live-l4-report.md`。
 
 ### 未検証
 
-- U01〜U05 は「未検証」のまま（L4 は実行中で、結果はまだ無い）。
+- この節を書いた時点では、U01〜U05 は「未検証」だった（結果は上の 11:00 の節）。
 
 ## 2026-10-14 09:55 JST — task 2.4・2.5 を終えた（レビューの指摘 4 件と help を直し、P10・P11 の test を足した）
 
