@@ -2,11 +2,12 @@
 
 群を 1 つ終えるたびに、日付の見出しの節を先頭へ足す。進捗は `tasks.md` のチェックだけに書き、ここには写さない。全体の順序は `openspec/roadmap.md`、未検証の一覧は `openspec/unverified.md` にある。
 
-## 2026-10-14 09:30 JST — task 2.4 の準備（契約 6 本を書いた。Codex は起動していない）
+## 2026-10-14 09:45 JST — task 2.4 を終えた（レビューの指摘 4 件と help を直した。2.5 は未着手）
 
 ### 伺いと返事
 
-- 2026-10-13 22:00 に伺った 2 点（修正に入るか／Codex をどこまで使ってよいか）への、言葉での返事は無い。2026-10-14 08:57 ごろ、ユーザーが `/ccg:spec-impl` を実行した。Opus は、これを「task 2.4 に入ってよい」として受け取った（Opus の解釈で、ユーザーの言葉ではない）。Codex の量の返事は無いので、Codex は起動していない。契約の案と見積もりを示して、起動の前に改めて伺う。
+- 2026-10-13 22:00 に伺った 2 点（修正に入るか／Codex をどこまで使ってよいか）への、言葉での返事は無かった。2026-10-14 08:57 ごろ、ユーザーが `/ccg:spec-impl` を実行した。Opus は、これを「task 2.4 に入ってよい」として受け取った（Opus の解釈で、ユーザーの言葉ではない）。
+- 2026-10-14 09:13 ごろ、契約の一覧・見積もり・Opus の決めた 5 点を示して、Codex をどこまで起動してよいかを伺った（選択肢から選ぶ形）。返事:「5 本まで (Recommended)」= fix2a・b・c・d・f（約 30 万 token）を順に起動する。P10・P11 の test（fix2e、約 12 万）は、残りを見てから改めて伺う。Opus の決めた 5 点への異論は無かった。
 
 ### 確認済みの事実（指摘の裏取り。Claude の調査役 4 本が slot3 `061b054` のコードを読んだ結果と、Opus が読んだ範囲）
 
@@ -27,13 +28,54 @@
 - 指摘 4: レビュー担当の案を採った。`creationId` は、検査した root の明示の key（Scope を適用する前）から出す。
 - help の「実機で未検証」は、TSX の経路と同じ名前の兄弟、回復の `finish` の成功に限る（手書きの JSON の定義での作り直しは L1・L3 で確かめたため）。
 - spec を 2 か所直した: `specs/ordinary-apply/spec.md` の「記録した ID での照合」に条件 (d) と、途中で止まった `apply` の後・prune では使わないこと、scenario 3 つ／`specs/creation-regenerate/spec.md` に、Scope で包んだ root の `creationId` と scenario 1 つ。
-- 事前確認（2026-10-14 09:10〜09:20、slot3、sandbox の外）: `ApplyWorkflowTests`＋`StoredId` 462、`Creation` 308、`CreationRegenerateUsage` 1、`Skill` 16、`npm.cmd test` 335、`codex exec --help` 終了 code 0。log は slot3 `TestResults/BETTER-B2C/opus/fix2-precheck/`。
+- 事前確認（2026-10-14 09:02〜09:06、slot3、sandbox の外）: `ApplyWorkflowTests`＋`StoredId` 462、`Creation` 308、`CreationRegenerateUsage` 1、`Skill` 16、`npm.cmd test` 335、`codex exec --help` 終了 code 0。log は slot3 `TestResults/BETTER-B2C/opus/fix2-precheck/`。
 
 ### Codex の利用枠
 
 - 前の窓は 2026-10-13 21:34:52 に開き、使用済みは約 21.6 万。2026-10-14 02:35 ごろに閉じた見込み。次の起動が新しい窓の開始になる（使用済み 0、残り 50 万）。
 - 見積もり: 6 本で約 42 万 token（a 8、b 8、c 5、d 5、f 4、e 12。同じ形の fix1 が約 5 万だったことからの目安で、実測ではない）。残りには収まるが、修正の出し直しの余裕は約 8 万しかない。
-- 判断: ユーザーの返事の後に起動する。起動の時刻と、1 本ごとの `tokens used` を、ここへ書き足す。
+- 判断: ユーザーの返事（上）で、5 本（見積もり 約 30 万）を起動する。残り 50 万に収まる。fix2a の起動の時刻を、新しい窓の開始とする。起動と終了の時刻は `.ccg/tasks/resoloop-slimming/cc-b2c-fix2<x>-times.txt`、log は同 `-codex.log`。1 本ごとの `tokens used` を、下へ書き足す。担当が動いている間、slot3 では Opus は build と test を実行しない。
+
+### 実行の記録（この窓。開始は 2026-10-14 09:14:01 JST）
+
+| 契約 | 時刻 | token | 担当の報告 | Opus の検証（sandbox の外） |
+| --- | --- | --- | --- | --- |
+| fix2a v1 | 09:14:01〜09:15:40 | 80,100 | `BLOCKED`（restore がネットワークの制限で失敗し、test を実行できなかった） | 製品コードの差分は契約どおり（3 ファイル、17 行の追加・11 行の削除）。build はエラー 1 件: 新しい test の 64 行が `JsonObject.Values`（無い member）を使う（CS1061）。fix2a の test は 1 件も実行できていない |
+| fix2b v2 | 09:19:19〜09:23:13 | 69,945 | `BLOCKED`（build 警告 0・エラー 0。467 pass／1 fail。失敗は fix2a の `RootUpdateFailureClearsSessionAndRetryStopsAmbiguous("cancelled")` で、例外が出なかった。fix2b の 3 件と、fix2a の残り 2 件は成功） | 同じ結果を再現した（build 警告 0・エラー 0、467 pass／1 fail。log は slot3 `TestResults/BETTER-B2C/opus/fix2b-*.log`）。製品コードの差分は契約どおり（4 ファイル） |
+| fix2c v1 | 09:26:03〜09:27:22 | 49,151 | `DONE`（`npm.cmd test` 336 pass） | 受け入れた。`npm.cmd test` は tests 336・pass 336・fail 0（log は slot3 `TestResults/BETTER-B2C/opus/fix2c-npm-test.log`）。レビュー担当の再現 `repro-b-scope.mjs` を写して実行し、Scope が `part`・128 文字・制御文字つきの 3 つとも、`creationId` が `room` になり、`resoloop validate` が終了 code 0（slot3 `TestResults/BETTER-B2C/opus-fix2c/run1.log`）。`agent/better-b2c` へ `baed047` で commit した |
+| fix2d v2 | 09:28:30〜09:31:52 | 47,159 | `DONE`（build 警告 0・エラー 0、`ApplyWorkflowTests`＋`StoredId` 468 pass、`CreationRegenerateUsage` 1、`Skill` 16） | 受け入れた（fix2a・fix2b も、ここで受け入れた）。build 警告 0・エラー 0、`ApplyWorkflowTests`＋`StoredId` 468 pass・失敗 0、`CreationRegenerateUsage`＋`Skill` 17 pass（log は slot3 `TestResults/BETTER-B2C/opus/fix2d-*.log`）。`agent/better-b2c` へ commit した: `403c100`（fix2a・fix2b。製品 4 ファイルと test 2 ファイル）、`9ecc1c2`（help と、その test） |
+| fix2f v1 | 09:34:24〜09:35:53 | 34,564 | `DONE`（5 ファイル、6 行の追加・5 行の削除。`Skill` 16 pass） | 差分は契約の 6 文だけ（`git diff --check` は終了 code 0）。受け入れは、下の全体の検証で行う |
+
+- この窓の使用済み: 280,919 token（a 80,100、b 69,945、c 49,151、d 47,159、f 34,564）。承認の範囲（5 本、約 30 万）に収まった（見積もりの合計は 8+8+5+5+4 = 30 万）。出し直しの起動は無い（fix2a の 2 つの直しは、fix2b と fix2d の契約に入れた）。この窓の残りは約 21.9 万。
+- 取消の場合（`"cancelled"`）は、準備を直した後に通った: 取消の後の state に `session` が無く、再 `apply` は `STABLE_COMPONENT_AMBIGUOUS`・`sessionProof` は `notRecorded`・書込み 0。
+- fix2c の再現で見えたこと（直していない。この修正の前からの挙動で、`ownership` を export した場合と同じ）: root の Slot の key は Scope つきのままなので、134 文字の key や制御文字を含む key（`part\u0001::room`）が定義に入り、`validate` はそれを通す。
+- **`"cancelled"` の失敗は、test の準備の不足**（Opus の契約が書き落とした）。偽の client の `CancelAfterWrites = 1` は書込みの数を初回の `apply` から数えるので、初回の後に `client.ResetWriteCounts()` を呼ばないと取消が起きない（レビュー担当の再現 `repro-a.cs:54` は呼んでいる）。製品コードの不具合を示すものではないが、この場合の修正の後の挙動は、まだ確かめられていない。直し（1 行）は fix2d v2 の手順 0 に入れた。
+- **fix2a の `BLOCKED` は Opus の契約の誤り**。検証のコマンドに `--no-restore` を付けなかった。事前確認を sandbox の外でしか行わなかったので、気付けなかった。以前の契約（`apply-same-session-id-contract.md:51`）は `dotnet build ResoLoop.slnx --no-restore --no-incremental --disable-build-servers -nr:false -p:UseSharedCompilation=false` と `dotnet test … --no-build` を使っていた。fix2b（v2）・d・e・f の検証を、この形へ直した（build のコマンドの形は、sandbox の外で使い方の誤りが無いことを確かめた。sandbox の中で動くことは、fix2b の結果で分かる）。
+- compile エラーの直し（1 行）は、fix2b v2 の手順 0 に入れた。fix2a と fix2b は、fix2b の後にまとめて検証する。
+
+### task 2.4 の受け入れ（Opus、slot3、sandbox の外、実機に触れない。2026-10-14 09:36:19〜09:40:01）
+
+`agent/better-b2c` の `2a22483` と同じ内容の作業ツリーで実行した（実行の時点の HEAD は `9ecc1c2` で、fix2f の文書 5 ファイルが未 commit。直後に `2a22483` で commit した）。log は slot3 `TestResults/BETTER-B2C/opus/accept-fix2-*.log`。
+
+| 検証 | 結果 |
+| --- | --- |
+| `dotnet build ResoLoop.slnx --no-incremental` | 警告 0、エラー 0 |
+| RLoop.Tests | 失敗 0、成功 2000、skip 4（変更の前は 1994。足したのは 6 件） |
+| RLoop.Workbench.Tests | 失敗 0、成功 190 |
+| RLoop.IntegrationTests（環境変数なし） | 失敗 0、「成功」23。このうち実機の要る test は、実行せずに return して成功と数えられている（群 6 で skip に直す対象）。実機では 1 件も実行していない |
+| `npm.cmd run typecheck` | 終了 code 0 |
+| `npm.cmd test` | tests 336、pass 336、fail 0（変更の前は 335） |
+| `npm.cmd run contract` | 64／11／4／2、失敗 0 |
+
+- commit（`agent/better-b2c`、変更元 `061b054`）: `baed047`（指摘 4）、`403c100`（指摘 1〜3）、`9ecc1c2`（help と、その test）、`2a22483`（文書と Skill）。main への merge と push はしていない。
+- 修正の回数は 1 回（上限 4）。出し直しの起動は無い。
+- 実行しなかったもの: 修正の後の重いレビュー（1 つの段階につき 1 回の決まりで、群 7 のまとめのレビューで見る）／実機（L4 は task 2.6）／新しい clone での検証（群 7 の 7.1）。ccg の変更の検査 `verify-change` は実行したが、作業ツリーの未追跡の `examples/` 2 つだけを見て「通過」と返した。commit の範囲は見ていないので、検査の根拠にならない。
+
+### 次
+
+- task 2.5（P10・P11 の test）: 契約 `cc-b2c-fix2e-contract.md` は書いてある（見積もり 約 12 万 token。この窓の残り 約 21.9 万に収まる）。起動は、ユーザーに改めて伺う（2026-10-14 09:13 の返事は「5 本まで」）。
+- その後は task 2.6（実機 L4 の許可と対象の session を伺う）。
+- `.ccg/tasks/resoloop-slimming/task.json` の案内は 2026-10-13 22:00 のままで、「2.4 は未着手・返事待ち」と書いてある（古い）。ccg の hook がこれを毎回読み、進んでいないと誤って判定する。直すかはユーザーに伺う。
 
 ### 後回しにした項目
 
@@ -42,7 +84,7 @@
 
 ### 未検証
 
-- 契約は、まだ 1 本も実行していない。件数の期待値（465・468・336・318）は見込みである。
+- fix2e（P10・P11 の test）は、まだ実行していない。件数の期待値 318 は見込みである。
 - 対応と hash の両方を書き換えた state は、`sessionBinding` では見分けられない。
 - root を `defineObject` の中に置いた場合に Scope で包まれるか／`CreationApplyExecution.cs`・`CreationApplyService.cs` が root の key と `creationId` を照合していないこと（grep では出ていない）。
 - 偽の client で、2 回目の作り直しを `SeedOwnedRoot` なしで通せるか／同じ名前の兄弟の定義を `CreationApplyService.ApplyAsync` が通すか。
