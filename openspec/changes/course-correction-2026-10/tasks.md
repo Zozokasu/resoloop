@@ -28,8 +28,8 @@
 - [x] 2.5 `design.md` の PBT の P10・P11 を、既存の test が確かめていることを確認する（`CreationApplyReplacementTests.cs`、`CreationOwnership*Tests.cs` など）。性質ごとに test の名前を `handoff.md` に書く。確かめている test が無い性質は、2.4 と同じ手順で test を足す。確かめ方: P10・P11 のそれぞれに test の名前があり、`dotnet test tests/RLoop.Tests --filter "FullyQualifiedName~Creation"` が失敗 0
 - [x] 2.6 【伺う】実機テスト L4 の許可と、対象の session を伺う（`discover` で 2 件以上なら必ず聞く）。許可されたら、指示書 `cc-live-l4-charter.md` を `live-1013-l2b-charter.md` を雛形に書き、Claude の `coding-worker` が slot3 の build で実行する。書込みは `ResoLoop_Test_L4` の下だけ。項目: U02（TSX を `--target creation` で build した定義の初回の作成と、値を変えた置き換え）、U03（key を省いた定義）、U04（同じ名前の兄弟 3 つ）、U05（親の下に root と同じ名前の Slot を先に置いた状態での作成と置き換え。先に置いた Slot が消えないこと）、U01（同じ Slot に同じ型の Component 2 つを通常の `apply` で作成 → 同じ session で再 `apply` が変更 0 件 → `--url ws://…` の直接指定では `STABLE_COMPONENT_AMBIGUOUS`）。終わりに片づけ、Opus が `find --name ResoLoop_Test` 0 件を確かめる。確かめ方: 報告 `cc-live-l4-report.md` に、session の名前・S-ID・版、項目ごとの成功・失敗、証拠の場所（`resoloop-worktrees/live-1012/evidence/L4`）がある
 - [x] 2.7 `openspec/unverified.md` の U01〜U05 を、L4 の結果で直す。不具合が出た項目は 2.4 の手順で直し、その項目だけ実機でもう一度確かめる（許可は改めて伺う）。確かめ方: U01〜U05 が「確認済み」で証拠の場所を持つか、「未検証」のまま理由を持つ
-- [ ] 2.8 【伺う】`agent/better-b2c` を main へ `--no-ff` で merge してよいか伺う。レビューの結果、修正、実機の結果、残った未検証を示す。承認されたら merge し、main で build と test を実行して件数を `handoff.md` に書き、main に手元の tag `pre-workbench-removal` を付ける。確かめ方: `git log --oneline -1 main` が merge の commit で、`git tag -l pre-workbench-removal` が 1 件
-- [ ] 2.9 `openspec/roadmap.md` の R10・R11 の状態を直し、`handoff.md` に節を足し、Notion の「現在地と引き継ぎ」を直す。確かめ方: R11 が「完了」で、根拠に merge の commit がある
+- [x] 2.8 【伺う】`agent/better-b2c` を main へ `--no-ff` で merge してよいか伺う。レビューの結果、修正、実機の結果、残った未検証を示す。承認されたら merge し、main で build と test を実行して件数を `handoff.md` に書き、main に手元の tag `pre-workbench-removal` を付ける。確かめ方: `git log --oneline -1 main` が merge の commit で、`git tag -l pre-workbench-removal` が 1 件
+- [x] 2.9 `openspec/roadmap.md` の R10・R11 の状態を直し、`handoff.md` に節を足し、Notion の「現在地と引き継ぎ」を直す。確かめ方: R11 が「完了」で、根拠に merge の commit がある
 
 ## 3. 通常の apply を凍結する（slot3、`agent/course-correction`）
 

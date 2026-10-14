@@ -2,6 +2,48 @@
 
 群を 1 つ終えるたびに、日付の見出しの節を先頭へ足す。進捗は `tasks.md` のチェックだけに書き、ここには写さない。全体の順序は `openspec/roadmap.md`、未検証の一覧は `openspec/unverified.md` にある。
 
+## 2026-10-14 11:15 JST — 群 2 を終えた（task 2.8・2.9。`agent/better-b2c` を main へ merge した）
+
+### 伺いと返事
+
+- 2026-10-14 10:55 ごろ、L4 の結果、レビューと修正、offline の検証、残る未検証を示して、「`agent/better-b2c`（`ba57564`、9 commit）を main へ `--no-ff` で merge してよいか。merge の後、main で build と test を実行し、手元の tag `pre-workbench-removal` を付ける。push はしない」と伺った（選択肢から選ぶ形）。返事:「merge する」。
+
+### 確認済みの事実
+
+- merge: `b88ed8a`（`Merge branch 'agent/better-b2c': close B2c-1 (review fixes, P10 and P11 tests)`）。変更元は `03479cf`、49 ファイル、+1509／−66、競合なし。手元の tag `pre-workbench-removal` は `b88ed8a` を指す。push はしていない。
+- main での検証（Opus、sandbox の外、`RESOLOOP_RUN_INTEGRATION` なし、Resonite は起動中。10:56〜11:09）。log は `.ccg/tasks/resoloop-slimming/cc-main-merge-*.log`。
+
+| 検証 | 結果 |
+| --- | --- |
+| `dotnet build ResoLoop.slnx --no-incremental` | 警告 0、エラー 0 |
+| RLoop.Tests（全体、1 回目） | **失敗 1**、成功 2009、skip 4。失敗は `FluxDeployEntryTests.WatchHoldsTheLockOnlyDuringADeploymentAndStopsWhenTheNextOneFindsItBusy`（`main.pg` が使用中の `IOException`） |
+| RLoop.Tests（全体、2 回目） | **失敗 1**、成功 2009、skip 4。失敗は `SessionWriteLockTests.S3RealProcessKillReleasesHandleButPreviousPendingStillBlocks`（U13 の再発） |
+| RLoop.Tests（全体、3 回目） | 失敗 0、成功 2010、skip 4 |
+| `FluxDeployEntryTests` だけ（3 回） | 3 回とも失敗 0、成功 32 |
+| RLoop.Workbench.Tests | 失敗 0、成功 190 |
+| RLoop.IntegrationTests | 失敗 0、「成功」23（実機の要る test は、実行せずに return して成功と数えられている。実機では実行していない） |
+| `npm.cmd run typecheck` | 終了 code 0 |
+| `npm.cmd test` | tests 336、pass 336、fail 0 |
+| `npm.cmd run contract` | 終了 code 0（variables-contract は passed 4・failed 0、creation-contract は passed 2・failed 0。先頭の 2 つの検査の件数は読んでいない） |
+
+- 失敗した 2 つの test と、その対象のコード（`SessionWriteLock.cs`、`src/RLoop.Flux`、2 つの test のファイル）は、この merge で変わっていない（`git diff --name-only 03479cf b88ed8a` で 0 件）。どちらも、一時 directory のファイルを別の process・thread がまだ開いている瞬間に当たった形。原因は調べていない。`openspec/unverified.md` の U13 に再発を、U23 に新しい 1 件を「観察中」で書いた。**3 回のうち 2 回で失敗が出たので、「main の RLoop.Tests は失敗 0」とは言えない。** 群 3 の基準の件数は、成功 2010・skip 4（合計 2014）とする。
+- `openspec/roadmap.md` の R10・R11 を「完了」にし、根拠に `b88ed8a` を書いた。Notion の「現在地と引き継ぎ」を直した（現在地の callout、あらすじに 1 行、未検証の一覧の範囲）。`.ccg/tasks/resoloop-slimming/task.json` の案内を直した。
+
+### 後回しにした項目
+
+- 不安定な test 2 件（U13・U23）の原因の調査。slot1 の `agent/lock-flake-diag`（`d9367f2`）は未 merge のまま。
+- TSX の build が、`{"type":"module"}` の `package.json` の無い場所で `ROOT_MUST_BE_SINGLE_SLOT` を出す件（L4 の実行担当の報告。再現していない）。
+
+### 未検証
+
+- 修正の後の差分の重いレビューは実行していない。群 7 の 7.2 の対象は `main..agent/course-correction` なので、そのままでは修正の分（`061b054..ba57564`）が入らない。7.2 の指示書の対象に足すかを、そのときに決める。
+- 新しい clone での検証（群 7 の 7.1）。
+- 主の入口 `resoloop-jsx` から import した TSX の実機での作り直し（L5、task 7.4 (i)）。
+
+### 次
+
+- task 3.1: slot3 で `git switch -c agent/course-correction main`。群 3 の実装は Codex `gpt-6-luna` high へ渡す。起動の前に、Codex の窓の残りをこの文書に書く（前の窓は 2026-10-14 09:14 開始、使用済み 404,605 token、14:14 ごろに閉じる見込み）。
+
 ## 2026-10-14 11:00 JST — task 2.6・2.7 を終えた（実機 L4: U01〜U05 はすべて PASS）
 
 ### L4 の結果（実機。session「ぞかホーム」`S-01a13803-91cf-76b4-b635-eb730117be13`、`ws://localhost:25410/`、Resonite `2026.9.18.82`、ResoniteLink `0.13.1.0`。テスト用の親 `ResoLoop_Test_L4` = `Reso_30FA2`。10:35:32〜10:50:01）

@@ -26,7 +26,7 @@ change を archive する前に、その change が生んだ項目は、すべ�
 | U08 | 無効な Slot の下の ProtoFlux | `live-1013-l2b-report.md` | 実機: 無効な親の下へ Flux を配置し、有効にした後に動くこと | 実機の許可、`RESONITE_MANAGED_DATA_PATH` の設定 | 未検証 |
 | U09 | root を別の親へ移す形 | 同上 | CLI に手段が無い。R15 の change で扱うかを決める | — | 保留 |
 | U10 | world の再読込み・Resonite の再起動の後の ID と結びつき（P8） | `spike-dv-p2-report.md` | 実機: 作成 → world の保存 → 再起動 → 作り直し | 実機の許可、ユーザーによる保存と再起動 | 未検証 |
-| U13 | 不安定 test `S3RealProcessKillReleasesHandleButPreviousPendingStillBlocks` | 2026-10-05、10-08 | 再発したら、失敗時の記録（`LockFileDiagnostics`）を読む。自動の retry で隠さない | 再発 | 観察中 |
+| U13 | 不安定 test `S3RealProcessKillReleasesHandleButPreviousPendingStillBlocks` | 2026-10-05、10-08、10-14 | 再発したら、失敗時の記録（`LockFileDiagnostics`）を読む。自動の retry で隠さない | 再発 | 観察中 2026-10-14 11:01 に再発（main `b88ed8a`、全体の実行の 2 回目。Resonite は起動中）。記録: holder は 02:01:49.666Z に終了、同じ時刻に取得を試みて `IOException` 0x80070020、`holders: none`、`busyForMs: 0`。log は `.ccg/tasks/resoloop-slimming/cc-main-merge-RLoop.Tests-run2.log` |
 | U14 | S3: 応答だけが失われた場合 | `94c12ed` | 実機では作れない。offline の偽 client の test を根拠にする | ユーザーの免除 | 未検証 |
 | U15 | S3: 実行中の取消 | `94c12ed` | 実機: 大きい定義の apply の途中で CLI を止め、次の apply が保留で止まること | 実機の許可 | 未検証 |
 | U16 | S3: 切断 | `94c12ed` | 実機: apply の途中で Resonite 側の接続を切り、次の apply が保留で止まること | 実機の許可、ユーザーの操作 | 未検証 |
@@ -35,5 +35,6 @@ change を archive する前に、その change が生んだ項目は、すべ�
 | U20 | 単位 21（正式な例）と、Toggle を含む実機の確認 | `roadmap-5-exit-handoff.md` | R13 の change で扱う | — | 保留 |
 | U21 | 値つきの DynamicImpulse の受信、ボタンを実際に押す操作、複数の人がいる session | `spike-dv-p2-report.md` | R13・R16 の change で扱う | — | 保留 |
 | U22 | 採用の観測が null の偽 client での `NullReferenceException`、`recover` の取消の分類の test が無い、初回に何も送る前に止まった場合の `rollback` | `better-handoff-2026-10-13.md` §7 | 小さい修正。R14 の change で扱う | — | 保留 |
+| U23 | 不安定 test `FluxDeployEntryTests.WatchHoldsTheLockOnlyDuringADeploymentAndStopsWhenTheNextOneFindsItBusy` | 2026-10-14 10:57（main `b88ed8a`、全体の実行の 1 回目。Resonite は起動中） | `RLoopException` を期待する所で `IOException`（`main.pg` が使用中。`FluxManifestOrchestrator.Fingerprint` の `File.ReadAllBytes`、`FluxManifestOrchestrator.cs:624`）。その class だけの実行は 3 回とも成功 32。再発したら log を残す。自動の retry で隠さない。log は `.ccg/tasks/resoloop-slimming/cc-main-merge-RLoop.Tests.log` | 再発 | 観察中 |
 
 `b6c3193` 以降の新しい clone での確認と、JSX の contract の検査の再実行は、`061b054` と `03479cf` で済んでいる（`slot3 TestResults/BETTER-B2C/opus/`）ので、一覧に入れない。
