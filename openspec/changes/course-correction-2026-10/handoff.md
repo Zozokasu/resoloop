@@ -73,6 +73,20 @@
 
 - task 7.4（【伺う】実機 L5 の許可と対象の session）。slot3 の HEAD は `bc8e9fd`。Codex の窓（15:23:30 開始）は 20:23 ごろ閉じる。
 
+### task 7.4: 伺いと返事（2026-10-14 16:52 ごろ）
+
+- 伺い（Opus）: L5 の許可（(i) は利用者の操作なし。(ii) は項目ごとに操作が要る: U07 = root の複製、U08 = `RESONITE_MANAGED_DATA_PATH` の設定、U10 = world の保存と Resonite の再起動、U16 = 接続の切断。U15 は操作なし）と、対象の session。
+- 返事（ユーザー、選択肢で回答）: 「Allow (i) and chosen (ii)」／(ii) は「U07 duplicate root」「U08 managed data path」「U10 save + restart」「U15 / U16 disconnect」の 4 つすべて／session は「Run discover, then ask」。
+- `discover --json`（Opus、slot3 の build、読み取りだけ、16:52）: 1 件。「ぞかホーム」`S-01a13803-91cf-76b4-b635-eb730117be13`、`ws://localhost:25410/`（L4 と同じ）。1 件なので、返事に従いこれを対象にする。
+
+### task 7.4: L5 の準備（Opus、16:52〜17:05）
+
+- CLI: `live-1012\bin6`（slot3 の 16:32 の build。内容は `bc8e9fd` と同じ。170 ファイル）。作業場所 `live-1012\work-l5`（junction と `run.sh` は Opus が作った）、証拠 `live-1012\evidence\L5`。
+- 事前確認（実機への書込みなし）: `status` connected・Resonite `2026.9.18.82`・ResoniteLink `0.13.1.0`／`find --name ResoLoop_Test` 0 件／`--backend workbench status` が `BACKEND_REMOVED`（2）／主の入口から import して key を省いた TSX の `--target creation` の build と `validate` が成功、target なしの build は `EXPLICIT_KEY_REQUIRED`（1）でファイルを作らない。
+- 下調べ（Claude の調査役 1 本、読み取りだけ）で決めた期待: U07 = `CREATION_OWNER_AMBIGUOUS`（6）で送信 0 回／U15・U16 = 通常の `apply` の S3 で、次の `apply` が `APPLY_WRITE_UNVERIFIED`（7）／U10 = 再起動で S-ID が変わる見込みで、`CREATION_SESSION_UNPROVEN`（6）か `CREATION_PREVIOUS_ROOT_ABSENT` の警告つき作成。U08 は、SPIKE-DV P5 の読む側の graph を手本にし、作れなければ「未実施」とする（25 分の上限）。`RESONITE_MANAGED_DATA_PATH` は、`FrooxEngine.dll` がある `D:\SteamLibrary\steamapps\common\Resonite` を Opus が指示書に書いた（ユーザーの設定の操作は要らなくなった）。
+- 指示書 `cc-live-l5-charter.md`。ユーザーの操作が要る 3 点（WAIT-U07・WAIT-U16・WAIT-U10）で担当が止まり、Opus がユーザーに伝えて再開させる。17:05 ごろ Claude の `coding-worker` を起動した。
+- 気付いた点（直していない）: `resoloop help apply` の末尾が「The TSX creation path and same-name sibling Slots are unverified live.」のままで、L4（U02〜U05 の PASS）と食い違う。L5 の後に、直すかを決める。
+
 
 ## 2026-10-14 15:40 JST — 群 6 を終えた（実行しなかった実機の test を skip にする）
 
