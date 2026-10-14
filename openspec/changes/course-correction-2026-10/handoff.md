@@ -2,6 +2,75 @@
 
 群を 1 つ終えるたびに、日付の見出しの節を先頭へ足す。進捗は `tasks.md` のチェックだけに書き、ここには写さない。全体の順序は `openspec/roadmap.md`、未検証の一覧は `openspec/unverified.md` にある。
 
+## 2026-10-14 12:30 JST — 群 4 の途中（task 4.1 の基準を取り、4.2〜4.5 の契約を起動する）
+
+### 伺いと返事
+
+- 2026-10-14 12:17 ごろ、ユーザーが `/ccg:spec-impl` を実行した（言葉の添えは無い）。Opus は、群 4 に入ってよいとして受け取った。Codex の枠は、11:18 のユーザーの言葉（「codexの枠にかなり余裕があるので気にしないでください。」）が今日も有効と解釈した（Opus の解釈）。
+
+### task 4.1: 除く前の基準（slot3 `fdf1f74`、Opus、sandbox の外、`RESOLOOP_RUN_INTEGRATION` なし、12:18〜12:24）
+
+- `rg -l -i workbench src tests tools skills scripts docs README.md README_JA.md README-DETAILS.md AGENTS.md CLAUDE.md` は 62 ファイル。結果は `.ccg/tasks/resoloop-slimming/cc-workbench-inventory.txt`。`AGENTS.md` は一致しない。
+- log は slot3 `TestResults/CC-G4/opus/baseline-*.log`。
+
+| 検証 | 結果 |
+| --- | --- |
+| `dotnet build ResoLoop.slnx --no-incremental` | 警告 0、エラー 0 |
+| RLoop.Tests | 失敗 0、成功 2013、skip 4（3.7・3.9 の値と同じ） |
+| RLoop.Workbench.Tests | 失敗 0、成功 190 |
+| RLoop.IntegrationTests | 失敗 0、「成功」23（実機の要る test は実行せずに return して成功と数えられている） |
+| `npm.cmd run typecheck` | 終了 code 0 |
+| `npm.cmd test` | tests 336、pass 336、fail 0 |
+| `npm.cmd run contract` | 64／11／4／2、失敗 0 |
+
+### 仕組み（群 4 の分け方。Opus の決定）
+
+- 契約は 2 本を順に `gpt-6-luna` high へ渡す: `cc-g4-remove-contract.md`（task 4.2〜4.5: 仕分け、先に書く test、コードと script の除去）と、その後の `cc-g4-docs-contract.md`（task 4.6: 文書と配布する Skill）。
+- 下調べは Claude の調査役 2 本（読み取りだけ、slot3 `fdf1f74`）。計画の行番号は `Program.cs` で約 +2 ずれていた（例: `RunWorkbench` は 546〜592、help は 1694・1781・1789）。`README-DETAILS.md` の節外の 4 か所も +2。
+- 仕分けの下調べ: (a) で消える test の件数は 47（`BackendSupport` の class を消すので、`LinkBackendAndUnlistedCommandsPassThrough` も (a) に数えた）、(b) で消える InlineData は 1。ファイルごと消えるものは無い。確定の数は担当の仕分け（`cc-workbench-test-triage.md`）で取る。
+- **Opus が決めた点**: (1) option の `--backend workbench`・`--workbench-pipe`・`wb` は、引数を読んだ直後、`help`・`version` を含むすべての分岐の前で止める。(2) 環境変数と設定の `backend` は、設定を読む所（`ConfigResolver.Resolve`、`Program.cs:176`）で止める。設定を読まずに return する offline のコマンド（`help`、`version`、`init`、`skills`、`uix recipe`、`schema`・`manifest`、`catalog types`）は、環境変数・設定の `workbench` では止まらない（backend の値をそもそも読まない）。spec の「どれから来ても」を、「backend の値を読むすべてのコマンドで」と読んだ。P06 の表は、tasks.md のとおり接続の後の `switch` の名前にする。(3) 環境変数とカレント directory を変える test は、`DisableParallelization` の collection に入れる（既存の 3 つの collection と同じ形）。
+- 事前確認（12:24〜12:25）は契約の「事前確認」の表にある。
+- remove v1 の起動: 12:24 ごろに 1 度起動したが、Opus の起動のしかた（背景の command の 10 分の時間切れ）で途中で切れるおそれがあったため、1 分ほどで止めた（slot3 の変更なし、`git status` で確かめた）。12:25:52 に、切り離した process（`.ccg/tasks/resoloop-slimming/cc-g4-run.cmd`）で同じ契約を起動し直した。止めた 1 本の token は数えていない。
+
+### Codex の利用枠（起動の前の記録）
+
+- 窓の開始は 2026-10-14 09:14:01（14:14 ごろに閉じる見込み）、使用済みは 571,819 token。見積もりは remove 25 万、docs 8 万。目安の 50 万はすでに超えているが、上のユーザーの言葉により起動する。容量切れや利用上限の拒否が出たら、契約を書き換えずに止め、ユーザーに伝える。
+
+### 実行の記録（task 4.2〜4.5）
+
+| 契約 | 時刻 | token | 担当の報告 | Opus の扱い |
+| --- | --- | --- | --- | --- |
+| cc-g4-remove v1 | 12:25:52〜12:31 ごろ | 123,606 | `BLOCKED`: `ApplySessionObservationTests.cs:18` が、消した引数 `workbenchClientFactory` の位置に `null` を渡していて、test の build が CS1501。変えてよい test の外なので止まった | 正しい止め方。**契約の書き落としは Opus の誤り**（調査役に見せたのが 8 ファイルだけで、`ResoniteClientFactory.ConnectAsync` の呼び出し元を全部は探させなかった）。v1 の変更は戻さずに v2 で続けた |
+| cc-g4-remove v2 | 12:57:13〜13:05:10 | 197,068 | `BLOCKED`: build 警告 1（削除した `RLoop.Workbench.csproj` への参照。restore できないため古い `project.assets.json` が残る）、RLoop.Tests 失敗 2（`LockFileDiagnosticsTests` の 2 件、`RmStartSession` が 29）。ほかは契約どおり: 仕分け (a) 47・(b) 1、`BackendRemoved` 61 成功 | 2 つとも sandbox の中だけの現象と判断し、sandbox の外で受け入れた（下の表）。外では build 警告 0、2 件の test も成功 |
+
+- v1 の時刻ファイルに終わりの行が無いのは、起動の `.cmd` が `codex.cmd` を `call` なしで呼び、codex の終了で `.cmd` も終わったため（v2 から `call` を付けた）。
+- この窓の使用済み: 892,493 token（571,819 + 123,606 + 197,068。止めた 1 本は数えていない）。
+
+### task 4.3 の赤（Opus、別の作業ツリー）
+
+- v1 の担当は、test を build する前にコードの変更を始めたため、赤を取れなかった。v2 の契約で、赤は Opus が確かめることにした。
+- 手順: 一時の作業ツリー `resoloop-worktrees/tmp-g4-red`（`fdf1f74`、detached）に、v2 の最後の `BackendRemovedTests.cs` だけを置いて build し、`--filter "FullyQualifiedName~BackendRemoved"` を実行した（13:06 ごろ）。結果は **失敗 57・成功 4**。失敗は `EveryConnectedCommandRejectsRemovedBackend`（54）、`BackendWorkbenchFromCliEnvironmentAndProjectFailsBeforeConnect`、`ApplyWithProjectWorkbenchSettingFailsBeforeConnect`、`HelpOmitsRemovedBackendAndCommandOptions`。成功の 4 つ（`UnknownBackendRemainsInvalidBeforeConnect`、`LegacyWorkbenchPipeEnvironmentIsIgnored`、`LegacyWorkbenchPipeProjectKeyIsIgnored`、`ExplicitAndDefaultLinkHaveSameJsonOutputAndExitCode`）は、除く前から同じはずの link の挙動を確かめる test なので、除く前に成功するのが正しい。
+- 証拠は slot3 `TestResults/CC-G4/opus-red/`（`red2-*.log`、`red2.trx`、test の写し `BackendRemovedTests.v2.cs`）。一時の作業ツリーは確かめた後に `git worktree remove --force` で消した（中身は、Opus が置いた test の写しと build の出力だけ）。
+- v1 の時点の test（`BackendRemovedTests.v1.cs`）を同じ形で実行したときは、link の 3 つも失敗した（`--url` を渡さず、URL の解決が環境に依存していた）。v2 の担当が `--url ws://localhost:1` を足して直していた。
+
+### task 4.2〜4.5 の受け入れ（Opus、slot3、sandbox の外、`RESOLOOP_RUN_INTEGRATION` なし、13:06〜13:10）
+
+log は slot3 `TestResults/CC-G4/opus/accept-*.log`。仕分けは `.ccg/tasks/resoloop-slimming/cc-workbench-test-triage.md`（slot3 `TestResults/CC-G4/` からの写し）。
+
+| 検証 | 結果 |
+| --- | --- |
+| `dotnet build ResoLoop.slnx --no-incremental` | 警告 0、エラー 0 |
+| RLoop.Tests | 失敗 0、成功 2026、skip 4。**式: 2013 − 48（消した件数。(a) 47 + (b) の InlineData 1）+ 61（`BackendRemovedTests`）= 2026** |
+| `BackendRemoved`（担当の実行） | 成功 61（P06 は接続の後の `switch` の 18 の名前 × 3 通り = 54。P07 は `data.latencyMs` を除いて比べた） |
+| RLoop.IntegrationTests | 失敗 0、「成功」23（除く前と同じ。実機の要る test は実行していない） |
+| `npm.cmd run typecheck`／`npm.cmd test`／`npm.cmd run contract` | 終了 code 0／336 pass・fail 0／64・11・4・2、失敗 0（除く前と同じ） |
+| `rg -n -i workbench src` | `Program.cs:27-31`・`Configuration.cs:74-75` の `BACKEND_REMOVED` の処理と、コメント 4 か所（`FluxDeployGuard.Checks.cs:4,495,539`、`ResoniteLinkClientAdapter.cs:558`）だけ |
+| `rg -n -i workbench scripts`／`node --check scripts/agents/ccg-go-roles.mjs` | 0 件／終了 code 0 |
+| 凍結した 9 ファイルと `fixtures/` の差分 | なし。`src/RLoop.Core` の変更は `Configuration.cs` だけ |
+
+- Opus が足した片づけ: 消した 2 つの project の directory に残った、git の無視する `bin/`・`obj/` と空の `Protocol/` を消した（受け入れの script の Workbench の段が、その directory を見て実行し、`MSB1003` で終了 code 1 になったため。test の結果ではない）。
+- commit: `agent/course-correction` の `c48f33f`（`feat(cli)!: remove the Workbench backend`。47 ファイル、+237／−9808）。
+
 ## 2026-10-14 12:17 JST — 群 3 を終えた（task 3.2〜3.9。通常の apply の表面を test で固定し、error code の範囲を 14 ファイルへ広げた）
 
 ### 伺いと返事
