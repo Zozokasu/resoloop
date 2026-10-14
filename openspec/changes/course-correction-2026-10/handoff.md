@@ -24,7 +24,7 @@
 | RLoop.IntegrationTests | 失敗 0、「成功」23（実機の要る test は、実行せずに return して成功と数えられている。実機では実行していない） |
 | `npm.cmd run typecheck` | 終了 code 0 |
 | `npm.cmd test` | tests 336、pass 336、fail 0 |
-| `npm.cmd run contract` | 終了 code 0（variables-contract は passed 4・failed 0、creation-contract は passed 2・failed 0。先頭の 2 つの検査の件数は読んでいない） |
+| `npm.cmd run contract` | 終了 code 0。64／11／4／2、失敗 0 |
 
 - 失敗した 2 つの test と、その対象のコード（`SessionWriteLock.cs`、`src/RLoop.Flux`、2 つの test のファイル）は、この merge で変わっていない（`git diff --name-only 03479cf b88ed8a` で 0 件）。どちらも、一時 directory のファイルを別の process・thread がまだ開いている瞬間に当たった形。原因は調べていない。`openspec/unverified.md` の U13 に再発を、U23 に新しい 1 件を「観察中」で書いた。**3 回のうち 2 回で失敗が出たので、「main の RLoop.Tests は失敗 0」とは言えない。** 群 3 の基準の件数は、成功 2010・skip 4（合計 2014）とする。
 - `openspec/roadmap.md` の R10・R11 を「完了」にし、根拠に `b88ed8a` を書いた。Notion の「現在地と引き継ぎ」を直した（現在地の callout、あらすじに 1 行、未検証の一覧の範囲）。`.ccg/tasks/resoloop-slimming/task.json` の案内を直した。
@@ -42,7 +42,8 @@
 
 ### 次
 
-- task 3.1: slot3 で `git switch -c agent/course-correction main`。群 3 の実装は Codex `gpt-6-luna` high へ渡す。起動の前に、Codex の窓の残りをこの文書に書く（前の窓は 2026-10-14 09:14 開始、使用済み 404,605 token、14:14 ごろに閉じる見込み）。
+- task 3.1 は済み（11:12）: slot3 で `git switch -c agent/course-correction main` を実行した。branch は `85f8ad5`（main の、この記録の 1 つ前の commit）から出ている。未追跡の `examples/object-lamp-a/`・`-b/` は残っている。
+- task 3.2〜3.6: 群 3 の実装は Codex `gpt-6-luna` high へ渡す。前の窓は 2026-10-14 09:14 開始、使用済み 404,605 token で、残りは約 9.5 万。実装の 1 段階の目安は 25 万なので、**この窓では起動しない**。窓は 14:14 ごろに閉じる見込み。起動の前に、新しい窓の開始時刻・使用済み・見積もりをこの文書に書く。
 
 ## 2026-10-14 11:00 JST — task 2.6・2.7 を終えた（実機 L4: U01〜U05 はすべて PASS）
 
