@@ -24,9 +24,9 @@ public sealed class CreationRegenerateUsageTests
         Assert.Contains("experimental", apply);
         Assert.Contains("including manually added content", apply);
         Assert.Contains("--url auto --session S-ID", plan);
-        Assert.Contains("live behavior is unverified", plan);
+        Assert.Contains("same-name sibling Slots are unverified live", plan);
         Assert.Contains("Asset/Flux/Script placement is unsupported", diff);
-        Assert.Contains("hand-written JSON envelopes only", diff);
+        Assert.Contains("resoloop-jsx build --target creation", diff);
         Assert.Contains("no v3 migration", diff);
         Assert.Contains("does not restore the old root", diff);
 
@@ -39,6 +39,8 @@ public sealed class CreationRegenerateUsageTests
         Assert.Contains("migrate", creation);
         Assert.Contains("inspect", creation);
         Assert.Contains("world", creation);
+        Assert.DoesNotContain("hand-written", all + apply + plan + diff + creation);
+        Assert.DoesNotContain("handwritten", all + apply + plan + diff + creation);
     }
 
     private static async Task<string> Help(params string[] args)
