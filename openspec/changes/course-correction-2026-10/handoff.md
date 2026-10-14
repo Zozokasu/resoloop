@@ -29,6 +29,20 @@
 - Codex の利用枠: 窓の開始 15:23:30（群 6 の契約）、使用済み 89,304 token、重いレビューの見積もり 22 万 token。合計約 31 万で 50 万に収まるので起動する。窓が閉じるのは 20:23 ごろ。
 - 指示書は `.ccg/tasks/resoloop-slimming/cc-review-charter.md`。事前確認（slot3 `dd4048d`、16:05 ごろ、log は slot3 `TestResults/CC-G7/opus/precheck-review/`）: 指示書に書いた build・`git show`・`git archive`・`rg`・`help` が終了 code 0、`--backend workbench status` が `BACKEND_REMOVED` で終了 code 2。
 
+### task 7.2: 重いレビューの結果
+
+| 起動 | 時刻 | token | 結果 |
+| --- | --- | --- | --- |
+| 1 回目 | 16:05:22〜16:05:31 | — | 終了 code 126。`429 Too Many Requests` で 5 回の再試行を使い切った（log `cc-review-codex-try1.log`）。指示書は変えず、90 秒待って起動し直した |
+| 2 回目 | 16:07:30〜16:25:17 | 242,248 | **`PASS_WITH_P2`、P1=0・P2=2・P3=1**（`cc-review-report.md`、再現は slot3 `TestResults/CC-REVIEW/run-20261014/`）。レビューの後の slot3 に追跡ファイルの変更は無い |
+
+- この窓（15:23:30 に開始）の使用済み: 89,304 + 242,248 = 331,552 token。残り約 16.8 万。
+- 指摘（どれもレビュー担当が再現で確かめたと報告）:
+  - **P2-1（重点 3）**: Workbench の指定が環境変数 `RESOLOOP_BACKEND` か設定の `backend` から来た場合、接続しない command（`help`・`version`・`init`・`manifest scaffold`・`skills sync --update`・offline の `validate`、`apply … --discard-pending … --yes`）が `BACKEND_REMOVED` で止まらず終了 code 0 になる。`--discard-pending` は lock を取って pending を消す。CLI の option・`wb`・`--workbench-pipe` は早く止まっている。spec に接続しない command の除外は無い。
+  - **P2-2（重点 2）**: 群 4 の仕分けで消した `BackendSupportTests.BackendUsesCliEnvironmentProjectUserPrecedence` に、直結の設定の優先順（環境変数の `link` が project の `workbench` に勝つ、user の `link` が選ばれる、`Sources["backend"]`）の assert が含まれていた。仕分け (a) で半分を失った。製品の優先順が壊れたという指摘ではない。
+  - **P3（重点 6）**: `tools/resoloop-jsx/README.md:213` の「creation target が無ければ key の欠けは `EXPLICIT_KEY_REQUIRED` で止まる」が、`--draft` の例外を落としていて、同じ README の表と食い違う。
+- 確認済みとされた点: 凍結した 9 ファイルと `Program.cs` の 3 区間のコードは分岐点と同じ／分岐点から同じ規則で集めた error code 100・option 27 は固定ファイルと一致／Workbench のプロジェクトへの参照は残っていない／`resoloop-jsx/draft` の保存した出力 3 件は、分岐点・HEAD・fixture で一致／Integration の skip 21 件はすべて理由つき。
+
 ## 2026-10-14 15:40 JST — 群 6 を終えた（実行しなかった実機の test を skip にする）
 
 ### 伺いと返事
