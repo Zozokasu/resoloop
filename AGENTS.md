@@ -39,8 +39,9 @@ dotnet test tests/RLoop.IntegrationTests/RLoop.IntegrationTests.csproj --filter 
 ## Frozen path (凍結した経路)
 
 - `apply`, `plan`, and `diff` without `--mode regenerate` (the ordinary apply) are frozen. They accept bug fixes and safety fixes only; add new authoring features to the regenerate path.
-- Frozen files in `src/RLoop.Core/`: `WorldService.cs`, `WorldService.ApplyPending.cs`, `WorldService.ApplySafety.cs`, `WorldService.ApplyDeletion.cs`, `ApplyPendingDiscard.cs`, `ApplyWorkflow.cs`.
-- A change that alters the pinned option or error-code lists, or adds a feature to any of the six files, is a freeze exception (凍結の例外): say so in the task contract and get the user's approval before implementing it.
+- Frozen files in `src/RLoop.Core/`: `WorldService.cs`, `WorldService.ApplyPending.cs`, `WorldService.ApplySafety.cs`, `WorldService.ApplyDeletion.cs`, `ApplyPendingDiscard.cs`, `ApplyWorkflow.cs`, `ApplyCatalogValidator.cs`, `ApplyBuildBundle.cs`, `ComponentIdentityDiagnostics.cs`.
+- Shared with the regenerate path and not frozen, but their `APPLY_` and `STABLE_` error codes are pinned: `ApplyDocumentCompiler.cs`, `ApplyProjectContext.cs`, `SessionWriteLock.cs`, `StableReferences.cs`, `CheckpointFiles.cs`.
+- A change that alters the pinned option or error-code lists, or adds a feature to any frozen file, is a freeze exception (凍結の例外): say so in the task contract and get the user's approval before implementing it.
 - `OrdinaryApplySurfaceTests` pins both lists against `tests/RLoop.Tests/fixtures/ordinary-apply-surface/`. Do not rewrite the pinned files to make it pass without that approval.
 - Do not share ownership checks, pending records, recovery, or state between the ordinary apply and the regenerate path.
 

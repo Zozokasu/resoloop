@@ -15,7 +15,13 @@ public sealed class OrdinaryApplySurfaceTests
     public void ErrorCodesMatchPinnedList()
     {
         var root = RepoRoot();
-        var files = new[] { "WorldService.cs", "WorldService.ApplyPending.cs", "WorldService.ApplySafety.cs", "WorldService.ApplyDeletion.cs", "ApplyPendingDiscard.cs", "ApplyWorkflow.cs" };
+        var files = new[]
+        {
+            "WorldService.cs", "WorldService.ApplyPending.cs", "WorldService.ApplySafety.cs", "WorldService.ApplyDeletion.cs",
+            "ApplyPendingDiscard.cs", "ApplyWorkflow.cs", "ApplyCatalogValidator.cs", "ApplyBuildBundle.cs",
+            "ComponentIdentityDiagnostics.cs", "ApplyDocumentCompiler.cs", "ApplyProjectContext.cs", "SessionWriteLock.cs",
+            "StableReferences.cs", "CheckpointFiles.cs"
+        };
         var actual = files.SelectMany(file => Regex.Matches(File.ReadAllText(Path.Combine(root, "src", "RLoop.Core", file)), "\"((?:APPLY|STABLE)_[A-Z0-9_]+)\"")
             .Select(match => match.Groups[1].Value)).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal);
         AssertList("error-codes.txt", actual);
