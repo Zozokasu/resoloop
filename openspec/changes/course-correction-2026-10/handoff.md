@@ -2,6 +2,67 @@
 
 群を 1 つ終えるたびに、日付の見出しの節を先頭へ足す。進捗は `tasks.md` のチェックだけに書き、ここには写さない。全体の順序は `openspec/roadmap.md`、未検証の一覧は `openspec/unverified.md` にある。
 
+## 2026-10-14 15:40 JST — 群 6 を終えた（実行しなかった実機の test を skip にする）
+
+### 伺いと返事
+
+- 2026-10-14 15:15 ごろ、ユーザーが `/ccg:spec-impl` を実行した（言葉の添えは無い）。Opus は、群 6 に入ってよいとして受け取った。Codex の枠は、11:18 のユーザーの言葉が今日も有効と解釈した（Opus の解釈）。
+
+### 下調べ（Claude の調査役 2 本、読み取りだけ、slot3 `5ff0c18`）
+
+- `RESOLOOP_RUN_INTEGRATION` の一致は 14 ファイル・21 行で、計画と同じ。すべて `[Fact]`、`[Theory]` は 0。別の条件を持つのは 3 か所: Blender（`RESOLOOP_RUN_BLENDER_TESTS`）、Capture（`RESOLOOP_RUN_CAPTURE_INTEGRATION`）、TextureVariant（`RESOLOOP_TEXTURE_SAMPLES` が空でないこと）。
+- xunit は 2.9.3（v2）。手本は `InstalledFluxLibrariesFactAttribute`（`tests/RLoop.Tests/FluxSdkElementIdTests.cs:173-181`）。
+
+### 仕組み（Opus の決定）
+
+- 契約は 1 本（`cc-g6-skip-contract.md`、task 6.1〜6.4 の文書の 1 文まで）。別の条件は、`LiveIntegrationGate.SkipReason(value, unmetCondition, conditionMet)` の純粋な関数で決め、P12 と spec の「追加の条件を満たさない」を、環境変数を変えない test で確かめる。理由の順は、`RESOLOOP_RUN_INTEGRATION` が先、別の条件が後。
+- TextureVariant は、本体が `samples` を使うので、早期 return を `Assert.NotNull(samples);` に替える（本体の変更はこの 1 行だけ）。
+- **task 6.4 の `verify.ps1` は変えない。** 理由: `verify.ps1` は `Category!=Integration` の filter で実機の test を最初から外しており、Integration の結果を「成功の件数だけ」で出してはいない（skip は `summary.json` の `counts.skipped` に別に入る）。
+- **気付いた点（群 6 の前からの問題。この change では直さない）**: (1) xunit v2 の skip は、TRX の `Counters` で `notExecuted` に入らず、`total − executed` に現れる（例: slot3 `TestResults/CC-G4/opus/accept2-rloop.trx` は `total=2030 executed=2026 notExecuted=0`）。`verify.ps1:113` は `total == executed + notExecuted` を求めるので、skip が 4 件ある RLoop.Tests の段で失敗するはずである（`verify.ps1:114` の skip の数も 0 になる）。(2) `verify.ps1` は `#requires -Version 7.2` で、このマシンには `pwsh` が無い。どちらも実行して確かめてはいない。
+
+### 事前確認（Opus、slot3 `5ff0c18`、sandbox の外、`RESOLOOP_RUN_INTEGRATION` なし、15:20 ごろ）
+
+- log は slot3 `TestResults/CC-G6/opus/precheck-*`。`dotnet build ResoLoop.slnx --no-restore` は警告 0・エラー 0／`dotnet test tests/RLoop.IntegrationTests --no-build` は合格 23・スキップ 0・合計 23（群 6 の前の基準。21 件は本体を実行せずに合格と数えられている）。
+
+### Codex の利用枠（起動の前の記録）
+
+- 前の窓（09:14:01 に開始）は 14:14 ごろに閉じた。14:19 以降は起動していないので、この契約の起動で新しい窓が始まる（使用済み 0）。見積もりは 15 万 token で、50 万に収まる。
+
+### 実行の記録
+
+| 契約 | 時刻 | token | 担当の報告 | Opus の扱い |
+| --- | --- | --- | --- | --- |
+| cc-g6-skip v1（task 6.1〜6.4） | 15:23:30〜15:27:15 | 89,304 | `DONE`（slot3 `TestResults/CC-G6/skip-report.md`）。build 警告 0・エラー 0／gate の test 合格 8／Integration 合格 10・スキップ 21・合計 31／`rg` の 2 つの確認どおり／契約と違えた点なし | 差分を読んで受け入れた |
+
+- この窓（15:23:30 に開始）の使用済み: 89,304 token。
+- Opus が直した点（commit の前）: `docs/dev/deterministic-verification.md` の足した文で、変数名と理由をバッククォートで囲んだ。同じ文書の 22 行の「three named test projects」を「two」に直した（群 4 で `RLoop.Workbench.Tests` を消した後の消し残し。`-TestProject` の選択肢は `All`・`RLoop.Tests`・`RLoop.IntegrationTests`）。
+
+### task 6.5 の受け入れ（Opus、slot3、sandbox の外、15:30〜15:38）
+
+log は slot3 `TestResults/CC-G6/opus/accept-*`。対象は上の直しを入れた作業ツリー（直後に commit）。
+
+| 検証 | 群 6 の前 | 群 6 の後 |
+| --- | --- | --- |
+| `dotnet build ResoLoop.slnx --no-restore --no-incremental` | 警告 0、エラー 0 | 警告 0、エラー 0 |
+| RLoop.IntegrationTests（`RESOLOOP_RUN_INTEGRATION` なし） | 合格 23、スキップ 0、合計 23 | 失敗 0、合格 10、**スキップ 21**、合計 31 |
+| 同じ（値 `0`・`true`・空） | — | 3 通りとも、失敗 0・合格 10・スキップ 21・合計 31（PowerShell で空を入れると変数が消えるので、空は「なし」と同じ実行） |
+| skip の理由（trx） | — | 21 件すべてが `RESOLOOP_RUN_INTEGRATION is not 1` |
+| trx の `Counters` | — | `total=31 executed=10 passed=10 notExecuted=0`（skip は `total − executed`） |
+| RLoop.Tests（全体、1 回） | 合格 2027、スキップ 4（群 5） | 失敗 0、合格 2027、スキップ 4、合計 2031 |
+
+- 合格 10 の内訳: `SessionLockIsolationTests` 2 と `LiveIntegrationGateTests` 8（P12: 値 `1` だけが実行、`null`・空・`0`・`true` は理由つきで止まる。別の条件は、`RESOLOOP_RUN_INTEGRATION` が先、満たさない別の条件が後）。
+- commit（`agent/course-correction`）: `dd4048d`（`test(integration): report unexecuted live tests as skipped`）。main への merge と push はしていない。
+
+### 未検証・実行しなかったこと（群 6）
+
+- `RESOLOOP_RUN_INTEGRATION=1` での実行（実機に触れるので実行しない）。そのため、Blender・Capture・TextureVariant の属性が、別の条件を満たさないときに理由つきで skip になることは、属性そのものを実行して確かめてはいない。確かめたのは、属性が呼ぶ純粋な関数 `SkipReason(value, unmetCondition, conditionMet)` の 3 通りの test だけ。
+- 21 の実機の test の本体は、この群では 1 度も実行していない（変えたのは属性と早期 return の行、TextureVariant の 1 行だけ）。
+- `verify.ps1` の skip の数え方（上の「気付いた点」）は、`pwsh` が無いため実行して確かめていない。直すかは、群 7 の後に別の change として決める。
+
+### 次
+
+- 群 7（まとめのレビュー・実機・merge・片づけ）: task 7.1 から。slot3 の HEAD は `dd4048d`。7.4（実機 L5）・7.5（免除）・7.7（merge）・7.9（push）は【伺う】。
+
 ## 2026-10-14 14:40 JST — 群 5 を終えた（主の入口で key を省けるようにし、key の規則を 1 つの表にした）
 
 ### 伺いと返事
