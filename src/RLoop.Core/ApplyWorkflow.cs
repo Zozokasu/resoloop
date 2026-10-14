@@ -2,6 +2,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
+using System.Security.Cryptography;
 
 namespace RLoop.Core;
 
@@ -702,6 +703,7 @@ internal sealed class ApplyState
     public string OwnershipKey { get; set; } = string.Empty;
     public string? SessionId { get; set; }
     public ApplySessionObservation? Session { get; set; }
+    public string? SessionBinding { get; set; }
     public Dictionary<string, ApplyStateSlot> Slots { get; set; } = new(StringComparer.Ordinal);
     public Dictionary<string, ApplyStateComponent> Components { get; set; } = new(StringComparer.Ordinal);
     public Dictionary<string, ApplyStateAsset> Assets { get; set; } = new(StringComparer.Ordinal);
@@ -710,6 +712,20 @@ internal sealed class ApplyState
 
 internal static class ApplyStateStore
 {
+    internal static string ComputeSessionBinding(ApplyState state)
+    {
+        var bindings = state.Components.OrderBy(pair => pair.Key, StringComparer.Ordinal)
+            .Select(pair => new[]
+            {
+                pair.Key,
+                pair.Value.SlotKey,
+                state.Slots.TryGetValue(pair.Value.SlotKey, out var slot) ? slot.Id : "",
+                pair.Value.Id,
+            }).ToArray();
+        var json = JsonSerializer.Serialize(bindings);
+        return "sha256:" + Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(json))).ToLowerInvariant();
+    }
+
     public static string ResolvePath(ApplyDocument document, string? requestedPath)
     {
         var context = document.ProjectContext;

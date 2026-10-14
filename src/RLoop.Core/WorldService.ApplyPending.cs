@@ -49,6 +49,8 @@ public sealed partial class WorldService
     {
         prepared.SessionWriter?.RecordState(prepared.StatePath);
         var intent = ApplyStateStore.Copy(prepared.State);
+        intent.Session = null;
+        intent.SessionBinding = null;
         intent.Pending.Add(pending);
         try { ApplyStateStore.Save(prepared.StatePath, intent); }
         catch (RLoopException error)

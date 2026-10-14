@@ -761,6 +761,7 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
 
         var completedState = ApplyStateStore.Copy(prepared.State);
         completedState.Session = SessionForVerifiedState(prepared, completedState);
+        completedState.SessionBinding = completedState.Session is null ? null : ApplyStateStore.ComputeSessionBinding(completedState);
         ApplyStateStore.Save(prepared.StatePath, completedState);
         prepared.State = completedState;
 
@@ -1052,7 +1053,9 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
         var sessionObservation = (client as IApplySessionObservation)?.ObserveApplySession() ??
             ApplySessionObservation.Observe(session.Url);
         var sessionProof = StateSessionProof(state.Session, sessionObservation);
-        if (sessionProof != "matched") state.Session = null;
+        if (sessionProof == "matched" && state.Pending.Count > 0) sessionProof = "notRecorded";
+        if (sessionProof == "matched" && state.SessionBinding != ApplyStateStore.ComputeSessionBinding(state)) sessionProof = "notRecorded";
+        if (sessionProof != "matched") { state.Session = null; state.SessionBinding = null; }
         document.BuildBundle?.VerifySession(session);
         if (state.Pending.Count > 0 || state.Slots.Values.Any(s => string.IsNullOrWhiteSpace(s.Id)) ||
             state.Components.Values.Any(c => string.IsNullOrWhiteSpace(c.Id)))
@@ -1375,9 +1378,9 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
             if (!prepared.State.Slots.TryGetValue(stateComponent.Value.SlotKey, out var stateSlot)) continue;
             var slot = ResolveOwned(stateSlot);
             if (slot is null || !IsWithin(slot.Id, rootId)) continue;
-            var topology = ResolveStateTopologyTargets(prepared, stateComponent.Value, new HashSet<string>(StringComparer.Ordinal));
+            var topology = ResolveStateTopologyTargets(prepared, stateComponent.Value, new HashSet<string>(StringComparer.Ordinal), allowRecordedId: false);
             var component = MatchComponent(prepared, slot.Components, stateComponent.Value.Type,
-                stateComponent.Value.TypeOrdinal, stateComponent.Value, topology);
+                stateComponent.Value.TypeOrdinal, stateComponent.Value, topology, allowRecordedId: false);
             if (component is null) continue;
             var deletion = new DeletionRuntime("component", stateComponent.Key, component.Id,
                 slot.Path + "/@" + stateComponent.Key, "stable key is no longer declared inside the owned boundary");
@@ -1847,7 +1850,8 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
         prepared.State.Slots.TryGetValue(slotKey, out var stateSlot) ? FindManagedSlot(prepared, stateSlot) : null;
 
     private static ComponentSummary? MatchComponent(PreparedApply prepared, IReadOnlyList<ComponentSummary> components, string type, int ordinal,
-        ApplyStateComponent? state, IReadOnlyDictionary<string, string>? referenceTargets = null, string? stateKey = null)
+        ApplyStateComponent? state, IReadOnlyDictionary<string, string>? referenceTargets = null, string? stateKey = null,
+        bool allowRecordedId = true)
     {
         if (state is not null)
         {
@@ -1864,7 +1868,7 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
             {
                 var among = resolution.Candidates.FirstOrDefault(candidate => candidate.Id == state.Id);
                 var duplicateId = prepared.State.Components.Count(pair => pair.Value.SlotKey == state.SlotKey && pair.Value.Id == state.Id) > 1;
-                if (prepared.SessionProof == "matched" && among is not null && !duplicateId)
+                if (allowRecordedId && prepared.SessionProof == "matched" && among is not null && !duplicateId)
                 {
                     if (stateKey is not null) prepared.VerifiedComponentIds[stateKey] = among.Id;
                     return among;
@@ -1881,7 +1885,7 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
     }
 
     private static IReadOnlyDictionary<string, string>? ResolveStateTopologyTargets(PreparedApply prepared,
-        ApplyStateComponent state, HashSet<string> resolving)
+        ApplyStateComponent state, HashSet<string> resolving, bool allowRecordedId = true)
     {
         if (state.ReferenceSelectors is not { Count: > 0 } || !resolving.Add(state.SlotKey + "\n" + state.Id)) return null;
         try
@@ -1889,7 +1893,7 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
             var result = new Dictionary<string, string>(StringComparer.Ordinal);
             foreach (var reference in state.ReferenceSelectors)
             {
-                var target = ResolveStateReferenceId(prepared, reference.Value, resolving);
+                var target = ResolveStateReferenceId(prepared, reference.Value, resolving, allowRecordedId);
                 if (target is not null) result[reference.Key] = target;
             }
             return result.Count == 0 ? null : result;
@@ -1900,7 +1904,8 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
         }
     }
 
-    private static string? ResolveStateReferenceId(PreparedApply prepared, string selector, HashSet<string> resolving)
+    private static string? ResolveStateReferenceId(PreparedApply prepared, string selector, HashSet<string> resolving,
+        bool allowRecordedId = true)
     {
         if (!StableSelectorSyntax.TryParse(selector, out var syntax)) return null;
         if (syntax!.Kind == "slot")
@@ -1911,8 +1916,8 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
         if (!prepared.State.Components.TryGetValue(syntax.Key, out var componentState)) return null;
         var slot = FindStateSlot(prepared, componentState.SlotKey);
         if (slot is null) return null;
-        var referenceTargets = ResolveStateTopologyTargets(prepared, componentState, resolving);
-        var match = ResolveStateComponent(prepared, slot.Components, componentState, referenceTargets, syntax.Key);
+        var referenceTargets = ResolveStateTopologyTargets(prepared, componentState, resolving, allowRecordedId);
+        var match = ResolveStateComponent(prepared, slot.Components, componentState, referenceTargets, syntax.Key, allowRecordedId);
         if (match is null) return null;
         if (syntax.Kind == "component") return match.Id;
         return match.Members?.FirstOrDefault(member =>
@@ -1920,7 +1925,8 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
     }
 
     private static ComponentSummary? ResolveStateComponent(PreparedApply prepared, IReadOnlyList<ComponentSummary> live,
-        ApplyStateComponent state, IReadOnlyDictionary<string, string>? referenceTargets, string stateKey)
+        ApplyStateComponent state, IReadOnlyDictionary<string, string>? referenceTargets, string stateKey,
+        bool allowRecordedId = true)
     {
         var resolution = ResolveComponentOnSlot(live, state.Type, state.Id, state.MemberNames, state.IdentityValues, referenceTargets);
         if (resolution.Match is not null)
@@ -1931,7 +1937,7 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
         if (resolution.Candidates.Count <= 1) return null;
         var stored = resolution.Candidates.FirstOrDefault(candidate => candidate.Id == state.Id);
         var duplicateId = prepared.State.Components.Count(pair => pair.Value.SlotKey == state.SlotKey && pair.Value.Id == state.Id) > 1;
-        if (prepared.SessionProof == "matched" && stored is not null && !duplicateId)
+        if (allowRecordedId && prepared.SessionProof == "matched" && stored is not null && !duplicateId)
         {
             prepared.VerifiedComponentIds[stateKey] = stored.Id;
             return stored;
@@ -2252,6 +2258,7 @@ public sealed partial class WorldService(IResoniteClient client, string? generat
     {
         next.SessionId = prepared.Session.UniqueSessionId;
         next.Session = null;
+        next.SessionBinding = null;
         ApplyStateStore.Save(prepared.StatePath, next);
         prepared.State = next;
     }
