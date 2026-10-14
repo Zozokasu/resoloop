@@ -2,7 +2,7 @@
 
 群を 1 つ終えるたびに、日付の見出しの節を先頭へ足す。進捗は `tasks.md` のチェックだけに書き、ここには写さない。全体の順序は `openspec/roadmap.md`、未検証の一覧は `openspec/unverified.md` にある。
 
-## 2026-10-14 09:45 JST — task 2.4 を終えた（レビューの指摘 4 件と help を直した。2.5 は未着手）
+## 2026-10-14 09:55 JST — task 2.4・2.5 を終えた（レビューの指摘 4 件と help を直し、P10・P11 の test を足した）
 
 ### 伺いと返事
 
@@ -73,9 +73,40 @@
 
 ### 次
 
-- task 2.5（P10・P11 の test）: 契約 `cc-b2c-fix2e-contract.md` は書いてある（見積もり 約 12 万 token。この窓の残り 約 21.9 万に収まる）。起動は、ユーザーに改めて伺う（2026-10-14 09:13 の返事は「5 本まで」）。
-- その後は task 2.6（実機 L4 の許可と対象の session を伺う）。
-- `.ccg/tasks/resoloop-slimming/task.json` の案内は 2026-10-13 22:00 のままで、「2.4 は未着手・返事待ち」と書いてある（古い）。ccg の hook がこれを毎回読み、進んでいないと誤って判定する。直すかはユーザーに伺う。
+- 2026-10-14 09:41 ごろ、2 点を伺った: (1) task 2.5 の契約 `cc-b2c-fix2e-contract.md`（見積もり 約 12 万 token）を起動してよいか、(2) `.ccg/tasks/resoloop-slimming/task.json` の古い案内を直してよいか。返事（原文）:「1.2は進めてください。」Opus は、1 と 2 の両方の承認として受け取った。
+- (1) fix2e を 2026-10-14 09:42 に起動した。起動の前の記録: 窓の開始 09:14:01、使用済み 280,919、見積もり 約 12 万、残り 約 21.9 万に収まる。結果は「実行の記録」の表へ書き足す。
+- (2) `task.json` の `currentPhase` と `nextAction` を、2026-10-14 09:45 の案内に置き換えた（262 字と 231 字。ほかの member は変えていない）。
+- 次は task 2.6（実機 L4 の許可と対象の session を伺う）。
+
+### task 2.5 の結果（P10・P11 の test。2026-10-14 09:55）
+
+- fix2e v1: 09:42:54〜09:48:56、123,686 token、担当の報告は `DONE`（build 警告 0・エラー 0、`Creation` 318 pass）。
+- Opus の検証（slot3、sandbox の外）: build 警告 0・エラー 0、`dotnet test tests/RLoop.Tests --no-build --filter "FullyQualifiedName~Creation"` は失敗 0・成功 318（変更の前は 308）、RLoop.Tests の全部は失敗 0・成功 2010・skip 4。log は slot3 `TestResults/BETTER-B2C/opus/fix2e-*.log`。`agent/better-b2c` へ `ba57564` で commit した（新しい test 2 ファイルだけ。製品コードと既存の test は変えていない）。
+- この窓の使用済み: 404,605 token（280,919 + 123,686）。残りは約 9.5 万。窓は 2026-10-14 14:14 ごろに閉じる見込み。
+
+**P10 を確かめている test**（`apply` を通し、例外が出て、`SendLog` と `RequestHistory` が空）
+
+| 崩し方 | test | error code |
+| --- | --- | --- |
+| 印が違う／親が違う／印の複製（兄弟・子孫）／root の `Children` が欠ける／session が `unknown` | 既存 `CreationApplyOwnershipTests.OwnershipAndEvidenceFailuresStopBeforeAnyMutation`（6 通り） | 下の 21:35 の節の表 |
+| 接続の世代が変わる | 既存 `CreationApplyOwnershipTests.GenerationChangeAtReplacementDeleteGuardPreventsDeleteAndCreate` | — |
+| 記録の `GenerationId` だけが違う | 新 `CreationApplyOwnershipGapTests.RecordedGenerationMismatchSendsNothing` | `CREATION_OWNER_UNPROVEN` |
+| 同じ root に印の Component が 2 つ | 新 `…DuplicateStampComponentOnRootSendsNothing` | `CREATION_OWNER_UNPROVEN` |
+| root の `Components` が欠ける／子の `Children` が欠ける | 新 `…MissingListsSendNothing`（2 通り） | `CREATION_OBSERVATION_INCOMPLETE` |
+| 接続先の S-ID が別／URL が別 | 新 `…DifferentSessionSendsNothing`（2 通り） | `CREATION_SESSION_UNPROVEN` |
+
+**P11 を確かめている test**（state の無い状態から `Apply` を 2 回。間に偽の client の `SeedOwnedRoot` を挟まない）
+
+| 崩し方 | test | 確かめること |
+| --- | --- | --- |
+| 同じ定義で 2 回 | 新 `CreationApplyTwiceTests.SameDefinitionTwiceLeavesOneOwnedRootWithDefinedValues` | 印を持つ root が 1 つで、state の `ActiveRoot` と同じ ID。Field の値が定義と一致 |
+| 値を変えた定義で 2 回目 | 新 `…ChangedDefinitionSecondTimeLeavesOneOwnedRootWithNewValues` | 上に加えて、値が 2 回目の定義の値。1 回目の root の ID が無い |
+| root と同じ名前の、印の無い Slot が親の下にある | 新 `…UnownedSameNamedSiblingSurvivesTwoApplies` | その Slot が残り、印を持つ root は 1 つ |
+| 同じ名前の子 3 つ | 新 `…SameNamedSiblingsTwiceLeaveOneOwnedRoot` | 印を持つ root が 1 つで、子が 3 つ |
+| 作成の応答の重複 | **test なし**（上の「後回しにした項目」） | — |
+
+- 残る穴（Opus の見立て）: `DifferentSessionSendsNothing` は、要求の S-ID（`RequestedSessionId`）を記録の session のままにしている。止まった理由が「要求と接続先の不一致」か「記録と接続先の不一致」かを分けていない。要求の S-ID も新しい session に合わせた場合（記録だけが古い）を `apply` で通す test は無い。所有の確認だけの層では、既存の `CreationOwnershipObservationTests.SessionMustBeProvenAtStartAndEndAndConnectionGenerationMustHold` が確かめている。足すかはユーザーに伺う。
+- 事前に未確認だった 2 点は、test が通ったことで確かめられた: 2 回目の `Apply` は `SeedOwnedRoot` なしで通る／同じ名前の兄弟の定義を `CreationApplyService.ApplyAsync` が通す（どちらも偽の client の上）。
 
 ### 後回しにした項目
 
@@ -84,10 +115,9 @@
 
 ### 未検証
 
-- fix2e（P10・P11 の test）は、まだ実行していない。件数の期待値 318 は見込みである。
+- 記録の session だけが古く、要求の S-ID は接続先と合っている場合に、作り直しが削除を送らないこと（`apply` を通す test が無い。上の「残る穴」）。
 - 対応と hash の両方を書き換えた state は、`sessionBinding` では見分けられない。
 - root を `defineObject` の中に置いた場合に Scope で包まれるか／`CreationApplyExecution.cs`・`CreationApplyService.cs` が root の key と `creationId` を照合していないこと（grep では出ていない）。
-- 偽の client で、2 回目の作り直しを `SeedOwnedRoot` なしで通せるか／同じ名前の兄弟の定義を `CreationApplyService.ApplyAsync` が通すか。
 - `gpt-6-luna` を `codex exec` で起動するコマンドの実例は残っていない。管理役のコマンドの model だけを替えた形で起動する（option の名前は `--help` で確かめた）。
 
 ## 2026-10-13 22:00 JST — 重いレビューの結果は FAIL（task 2.3 済み、2.4 は未着手）
