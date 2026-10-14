@@ -210,7 +210,7 @@ without draft key generation, then use `resoloop diff OUTPUT.json --state OLD_ST
 diff, preserved IDs, and zero diff after apply. The flag stops on a missing
 checkpoint instead of creating an empty state. See [migration details](../../README-DETAILS.md).
 
-See [Key rules](#key-rules) for when `<Slot>` and `<Component>` keys are required; without a creation target, a missing key stops the build with `EXPLICIT_KEY_REQUIRED`.
+See [Key rules](#key-rules) for when `<Slot>` and `<Component>` keys are required.
 
 `ref.slot(key)` / `ref.component(key)` / `ref.member(key, member)` /
 `ref.slotMember(key, member)` produce the `$slot:` / `$component:` /
