@@ -12,8 +12,7 @@ public sealed record RLoopConfig(
     string? ResoniteLogPath = null,
     string? ScreenshotsDirectory = null,
     string? BlenderExecutable = null,
-    string? Backend = null,
-    string? WorkbenchPipe = null);
+    string? Backend = null);
 
 public sealed record ConfigResolution(RLoopConfig Config, IReadOnlyDictionary<string, string> Sources);
 
@@ -72,10 +71,11 @@ public static class ConfigResolver
         var screenshots = Pick("screenshots-dir", "RESOLOOP_SCREENSHOTS_DIR", x => x.ScreenshotsDirectory, "screenshotsDirectory");
         var blender = Pick("blender-executable", "RESOLOOP_BLENDER_EXECUTABLE", x => x.BlenderExecutable, "blenderExecutable");
         var backend = Pick("backend", "RESOLOOP_BACKEND", x => x.Backend, "backend") ?? "link";
-        if (!backend.Equals("link", StringComparison.OrdinalIgnoreCase) && !backend.Equals("workbench", StringComparison.OrdinalIgnoreCase))
-            throw new RLoopException("INVALID_BACKEND", $"Backend must be 'link' or 'workbench', got '{backend}'.", ExitCodes.InvalidArguments);
+        if (backend.Equals("workbench", StringComparison.OrdinalIgnoreCase))
+            throw new RLoopException("BACKEND_REMOVED", "The Workbench backend was removed. Remove the backend setting or set it to link.", ExitCodes.InvalidArguments);
+        if (!backend.Equals("link", StringComparison.OrdinalIgnoreCase))
+            throw new RLoopException("INVALID_BACKEND", $"Backend must be 'link', got '{backend}'.", ExitCodes.InvalidArguments);
         backend = backend.ToLowerInvariant();
-        var workbenchPipe = Pick("workbench-pipe", "RESOLOOP_WORKBENCH_PIPE", x => x.WorkbenchPipe, "workbenchPipe") ?? "ResoniteWorkbench.Rpc.v1";
 
         var timeout = project.TimeoutSeconds > 0 ? project.TimeoutSeconds : user.TimeoutSeconds > 0 ? user.TimeoutSeconds : 30;
         if (cli.TryGetValue("timeout", out var timeoutText) && !string.IsNullOrWhiteSpace(timeoutText))
@@ -104,7 +104,7 @@ public static class ConfigResolver
             sources["commandTimeoutSeconds"] = "environment:RESOLOOP_COMMAND_TIMEOUT_SECONDS";
         }
 
-        return new ConfigResolution(new RLoopConfig(url, timeout, commandTimeout, flux, helper, managed, logs, screenshots, blender, backend, workbenchPipe), sources);
+        return new ConfigResolution(new RLoopConfig(url, timeout, commandTimeout, flux, helper, managed, logs, screenshots, blender, backend), sources);
     }
 
     public static Uri RequireUrl(RLoopConfig config)

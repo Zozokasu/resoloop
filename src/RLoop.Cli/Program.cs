@@ -4,7 +4,6 @@ using RLoop.Core;
 using RLoop.Flux;
 using RLoop.Flux.Deployer;
 using RLoop.ResoniteLink;
-using RLoop.Workbench;
 
 namespace RLoop.Cli;
 
@@ -24,6 +23,12 @@ public static class Program
         Console.CancelKeyPress += (_, e) => { e.Cancel = true; userCancellation.Cancel(); };
         try
         {
+            if (parsed.Positionals.Count > 0 && parsed.Positionals[0].Equals("wb", StringComparison.OrdinalIgnoreCase))
+                throw new RLoopException("BACKEND_REMOVED", "The Workbench backend was removed. The wb command is no longer available.", ExitCodes.InvalidArguments);
+            if (parsed.Has("workbench-pipe"))
+                throw new RLoopException("BACKEND_REMOVED", "The Workbench backend was removed. Remove --workbench-pipe.", ExitCodes.InvalidArguments);
+            if (parsed.Option("backend") is { } selectedBackend && selectedBackend.Equals("workbench", StringComparison.OrdinalIgnoreCase))
+                throw new RLoopException("BACKEND_REMOVED", "The Workbench backend was removed. Remove the backend setting or set it to link.", ExitCodes.InvalidArguments);
             if (parsed.Option("report") is { } reportPath) output.OpenReport(reportPath);
             if (parsed.Has("version") || parsed.Positionals.Count == 1 &&
                 parsed.Positionals[0].Equals("version", StringComparison.OrdinalIgnoreCase))
@@ -171,12 +176,9 @@ public static class Program
                 ["library-path"] = parsed.Option("library-path"), ["log-path"] = parsed.Option("log-path"),
                 ["screenshots-dir"] = parsed.Option("screenshots-dir"),
                 ["blender-executable"] = parsed.Option("blender-executable"),
-                ["backend"] = parsed.Option("backend"), ["workbench-pipe"] = parsed.Option("workbench-pipe")
+                ["backend"] = parsed.Option("backend")
             };
             var resolution = ConfigResolver.Resolve(Environment.CurrentDirectory, cliConfig);
-            if (!CreationCommands.IsRecovery(parsed))
-                BackendSupport.RequireSupported(parsed.Positionals[0], resolution.Config.Backend,
-                    parsed.Positionals.Count > 1 ? parsed.Positionals[1] : null);
             commandCancellation = CancellationTokenSource.CreateLinkedTokenSource(userCancellation.Token);
             commandCancellation.CancelAfter(TimeSpan.FromSeconds(resolution.Config.CommandTimeoutSeconds));
             var commandToken = commandCancellation.Token;
@@ -184,8 +186,6 @@ public static class Program
 
             if (CreationCommands.IsRecovery(parsed))
             {
-                if (resolution.Config.Backend == "workbench")
-                    throw new RLoopException("BACKEND_UNSUPPORTED", "Creation recovery requires the ResoniteLink backend.", ExitCodes.OperationFailed);
                 IResoniteClient recoveryClient;
                 if (connect is not null)
                     recoveryClient = await connect(commandToken);
@@ -209,8 +209,6 @@ public static class Program
                 var isCreationApply = CreationCommands.IsRegenerateApply(parsed);
                 if (parsed.Has("build-id"))
                     throw new RLoopException("INVALID_OPTION", "--build-id is unavailable for creation envelopes in this version.", ExitCodes.InvalidArguments);
-                if (resolution.Config.Backend == "workbench")
-                    throw new RLoopException("BACKEND_UNSUPPORTED", "Creation regenerate planning requires the ResoniteLink backend.", ExitCodes.OperationFailed);
                 if (parsed.Option("replace-order") is { } order && order != "delete-first")
                     throw new RLoopException("CREATION_MODE_MISMATCH", $"--replace-order {order} is not available in this version; use delete-first.", ExitCodes.InvalidArguments);
 
@@ -299,9 +297,6 @@ public static class Program
 
             if (parsed.Positionals[0].Equals("blender", StringComparison.OrdinalIgnoreCase))
                 return await RunBlender(parsed, output, resolution.Config, commandToken);
-            if (parsed.Positionals[0].Equals("wb", StringComparison.OrdinalIgnoreCase))
-                return await RunWorkbench(parsed, output, resolution.Config, commandToken);
-
             var deployer = fluxOverride?.Deployer ?? new FluxSdkDeployer();
             var flux = fluxOverride?.Tool ?? new FluxProcessTool(resolution.Config.FluxExecutable ?? "flux-sdk");
             if (parsed.Positionals[0].Equals("doctor", StringComparison.OrdinalIgnoreCase))
@@ -320,8 +315,6 @@ public static class Program
                 if (applyInput is not null) output.ProtectDiagnosticsState(applyInput, parsed.Option("state"));
                 if (applyInput?.GetBundleCatalog() is { } catalog)
                 {
-                    if (resolution.Config.Backend == "workbench")
-                        throw new RLoopException("BACKEND_UNSUPPORTED", "Build bundles are not supported on the workbench backend.", ExitCodes.OperationFailed);
                     if (parsed.Has("catalog"))
                         throw new RLoopException("INVALID_OPTION", "Bundle input uses only its embedded catalog; omit --catalog.", ExitCodes.InvalidArguments);
                     if ((parsed.Has("strict") || !parsed.Positionals[0].Equals("validate", StringComparison.OrdinalIgnoreCase)) && catalog.Synthetic)
@@ -429,16 +422,14 @@ public static class Program
                 return ExitCodes.Success;
             }
 
-            Uri? linkUri = string.Equals(resolution.Config.Backend, "workbench", StringComparison.Ordinal)
-                ? null
-                : await ResoniteClientFactory.ResolveConnectionUrlAsync(parsed, resolution.Config, commandToken);
+            var linkUri = await ResoniteClientFactory.ResolveConnectionUrlAsync(parsed, resolution.Config, commandToken);
             await using var client = connect is null
                 ? await ResoniteClientFactory.ConnectAsync(parsed, resolution.Config, ReflectionCacheFrom(parsed), commandToken, linkUri)
                 : await connect(commandToken);
             if (applyInput?.GetBundleCatalog() is not null)
                 applyInput.VerifyBundleSession(await client.GetSessionInfoAsync(commandToken), CatalogMapper.ClientPackageVersion);
             var world = new WorldService(client, GeneratedContentMetadata.SourceForVersion(ProductVersion()));
-            using var sessionWriter = IsDirectWrite(parsed) && !string.Equals(resolution.Config.Backend, "workbench", StringComparison.Ordinal)
+            using var sessionWriter = IsDirectWrite(parsed)
                 ? await SessionWriteLock.AcquireAsync(client, null, commandToken) : null;
             await RunResonite(parsed, output, client, world, commandToken, applyInput, validationCatalog);
             return ExitCodes.Success;
@@ -540,54 +531,6 @@ public static class Program
                 args.Option("name") ?? Path.GetFileNameWithoutExtension(source), args.RequireOption("parent"), args.Option("collection"), token,
                 args.Has("preserve-hierarchy"), args.Has("pack-pbr"), args.Has("legacy-root-providers")));
         }
-        return ExitCodes.Success;
-    }
-
-    private static async Task<int> RunWorkbench(ParsedArguments args, OutputWriter output, RLoopConfig config, CancellationToken token)
-    {
-        if (args.Positionals.Count != 2 || !args.Positionals[1].Equals("status", StringComparison.OrdinalIgnoreCase))
-            throw UnknownCommand(string.Join(' ', args.Positionals));
-        var pipe = config.WorkbenchPipe ?? "ResoniteWorkbench.Rpc.v1";
-        // wb always inspects the Workbench transport itself, regardless of --backend.
-        await using var client = new WorkbenchResoniteClient();
-        await client.ConnectAsync(new Uri($"{WorkbenchResoniteClient.UriScheme}:///{pipe}"),
-            TimeSpan.FromSeconds(config.TimeoutSeconds), token);
-        var handshake = client.Handshake!;
-        SessionInfo? session = null;
-        try
-        {
-            session = await client.GetSessionInfoAsync(token);
-        }
-        catch (RLoopException ex) when (ex.Code == "WORKBENCH_NOT_CONNECTED")
-        {
-            // The Workbench is reachable but not attached to a Resonite session; report it.
-        }
-        var data = new
-        {
-            pipe,
-            handshake = new
-            {
-                serverVersion = handshake.ServerVersion,
-                selectedProtocol = handshake.SelectedProtocol,
-                availableCapabilities = handshake.AvailableCapabilities,
-                grantedCapabilities = handshake.GrantedCapabilities
-            },
-            session = new
-            {
-                connected = session?.Connected ?? false,
-                resoniteVersion = session?.ResoniteVersion,
-                resoniteLinkVersion = session?.ResoniteLinkVersion,
-                uniqueSessionId = session?.UniqueSessionId
-            }
-        };
-        output.Success(data, writer =>
-        {
-            writer.WriteLine($"pipe {pipe} | workbench {handshake.ServerVersion} | protocol {handshake.SelectedProtocol}");
-            writer.WriteLine($"capabilities: {string.Join(", ", handshake.AvailableCapabilities)} (granted: {string.Join(", ", handshake.GrantedCapabilities)})");
-            writer.WriteLine(session?.Connected == true
-                ? $"session connected | Resonite {session.ResoniteVersion ?? "unknown"} | Link {session.ResoniteLinkVersion ?? "unknown"} | {session.UniqueSessionId ?? "unknown"}"
-                : "session not connected");
-        });
         return ExitCodes.Success;
     }
 
@@ -1691,7 +1634,6 @@ Project setup:
 Connection and observation:
   resoloop discover [--discovery-seconds 12] [--json]
   resoloop status|ping [--url ws://localhost:PORT] [--json]
-  resoloop wb status [--workbench-pipe NAME] [--json]
   resoloop hierarchy [--under ID_OR_PATH_OR_STABLE --state FILE] [--depth 2] [--include-components] [--summary] [--json]
   resoloop hierarchy profile [--under SLOT --state FILE] [--max-depth 64] [--max-slots 10000]
     [--group-by depth|component-type|name] [--exclude-user-roots] [--json]
@@ -1778,7 +1720,7 @@ Diagnostics:
   resoloop doctor
   resoloop logs [--path FILE_OR_DIRECTORY] [--tail 200]
 
-Global options: --url, --timeout SECONDS, --command-timeout SECONDS, --json, --verbose, --backend link|workbench
+Global options: --url, --timeout SECONDS, --command-timeout SECONDS, --json, --verbose, --backend link
   --brief: compact diff/plan, validate, test and UIX audit; apply progress is suppressed unless --ndjson-progress.
   --report NEW_FILE.json: save full success/error JSON before projection; never overwrite existing files.
   Brief/report output is JSON even without --json. Unprojected commands retain their normal result data.
@@ -1786,7 +1728,7 @@ Discovery: --url auto [--session EXACT_SESSION_ID_OR_NAME] [--discovery-seconds 
 List announcements with discover; auto requires exactly one match. Explicit URLs keep their existing precedence.
 Exact Slot path (PowerShell): 'path:["Root","A/B"," Label "]' preserves separators and spaces in names.
 Configuration priority: CLI > environment > .resoloop.json > ~/.resoloop/config.json
-Environment: RESONITE_LINK_URL, RESOLOOP_TIMEOUT_SECONDS, RESOLOOP_COMMAND_TIMEOUT_SECONDS, RESOLOOP_FLUX_EXECUTABLE, RESONITE_MANAGED_DATA_PATH, RESONITE_LOG_PATH, RESOLOOP_BLENDER_EXECUTABLE, RESOLOOP_BACKEND, RESOLOOP_WORKBENCH_PIPE
+Environment: RESONITE_LINK_URL, RESOLOOP_TIMEOUT_SECONDS, RESOLOOP_COMMAND_TIMEOUT_SECONDS, RESOLOOP_FLUX_EXECUTABLE, RESONITE_MANAGED_DATA_PATH, RESONITE_LOG_PATH, RESOLOOP_BLENDER_EXECUTABLE, RESOLOOP_BACKEND
 
 Experimental creation regenerate takes an envelope built with resoloop-jsx build --target creation or written by hand, and uses separate v4 state (no legacy v3 migration). It requires a matched --url auto --session S-ID; apply requires --yes and deletes the whole root, including manual additions. Delete-first leaves a gap and failure does not restore the old root. Asset/Flux/Script placement is unavailable; the TSX creation path and same-name sibling Slots are unverified live. See resoloop help creation for recovery limits.
 """);

@@ -15,7 +15,7 @@ public sealed class ApplySessionObservationTests
         var link = new ScriptedMetadataLink { Connected = false };
         await using var adapter = new ResoniteLinkClientAdapter(link, TimeSpan.FromSeconds(2), new ReflectionCacheOptions("off"));
         var connected = await ResoniteClientFactory.ConnectAsync(ParsedArguments.Parse(["status"]), new RLoopConfig(uri.AbsoluteUri),
-            new ReflectionCacheOptions("off"), CancellationToken.None, uri, null, () => adapter);
+            new ReflectionCacheOptions("off"), CancellationToken.None, uri, () => adapter);
         Assert.Same(adapter, connected);
         Assert.Equal("S-after", adapter.ObserveApplySession().DiscoverSessionId);
     }

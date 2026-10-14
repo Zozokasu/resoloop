@@ -16,31 +16,6 @@ public sealed class ResoniteClientFactoryDisposalTests
 {
     private static readonly TimeSpan GuardTimeout = TimeSpan.FromSeconds(30);
 
-    private static string NewMissingPipe() => "resoloop-test-missing-" + Guid.NewGuid().ToString("N");
-
-    [Fact]
-    public async Task WorkbenchBranch_ConnectFailure_ThrowsUnavailableTwiceWithoutHanging()
-    {
-        var config = new RLoopConfig(TimeoutSeconds: 1, Backend: "workbench", WorkbenchPipe: NewMissingPipe());
-        var args = ParsedArguments.Parse(["status"]);
-        using var guard = new CancellationTokenSource(GuardTimeout);
-
-        var watch = Stopwatch.StartNew();
-        var first = await Assert.ThrowsAsync<RLoopException>(() =>
-            ResoniteClientFactory.ConnectAsync(args, config, new ReflectionCacheOptions("off"), guard.Token));
-        // A second attempt on identical inputs must fail identically; a leaked half-open
-        // connection would surface as a hang or a different failure mode here.
-        var second = await Assert.ThrowsAsync<RLoopException>(() =>
-            ResoniteClientFactory.ConnectAsync(args, config, new ReflectionCacheOptions("off"), guard.Token));
-        watch.Stop();
-
-        Assert.Equal("WORKBENCH_UNAVAILABLE", first.Code);
-        Assert.Equal(ExitCodes.ConnectionFailed, first.ExitCode);
-        Assert.Equal(first.Code, second.Code);
-        Assert.Equal(first.ExitCode, second.ExitCode);
-        Assert.True(watch.Elapsed < TimeSpan.FromSeconds(15), $"two failed workbench connects took {watch.Elapsed}");
-    }
-
     [Fact]
     public async Task LinkBranch_ConnectFailure_ThrowsConnectionFailedWithoutHanging()
     {
@@ -62,23 +37,6 @@ public sealed class ResoniteClientFactoryDisposalTests
     }
 
     [Fact]
-    public async Task WorkbenchBranch_ConnectFailure_DisposesCreatedClientExactlyOnce()
-    {
-        var config = new RLoopConfig(TimeoutSeconds: 1, Backend: "workbench", WorkbenchPipe: NewMissingPipe());
-        var args = ParsedArguments.Parse(["status"]);
-        using var guard = new CancellationTokenSource(GuardTimeout);
-        var thrown = new InvalidOperationException("probe-" + Guid.NewGuid());
-        var fake = new DisposeTrackingClient(thrown);
-
-        var caught = await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            ResoniteClientFactory.ConnectAsync(args, config, new ReflectionCacheOptions("off"), guard.Token,
-                linkUri: null, workbenchClientFactory: () => fake, linkClientFactory: null));
-
-        Assert.Same(thrown, caught);
-        Assert.Equal(1, fake.DisposeCount);
-    }
-
-    [Fact]
     public async Task LinkBranch_ConnectFailure_DisposesCreatedClientExactlyOnce()
     {
         var config = new RLoopConfig(ResoniteLinkUrl: "ws://127.0.0.1:1/", TimeoutSeconds: 5, Backend: "link");
@@ -89,24 +47,7 @@ public sealed class ResoniteClientFactoryDisposalTests
 
         var caught = await Assert.ThrowsAsync<InvalidOperationException>(() =>
             ResoniteClientFactory.ConnectAsync(args, config, new ReflectionCacheOptions("off"), guard.Token,
-                linkUri: new Uri("ws://127.0.0.1:1/"), workbenchClientFactory: null, linkClientFactory: () => fake));
-
-        Assert.Same(thrown, caught);
-        Assert.Equal(1, fake.DisposeCount);
-    }
-
-    [Fact]
-    public async Task WorkbenchBranch_DisposeFailure_OriginalConnectExceptionWins()
-    {
-        var config = new RLoopConfig(TimeoutSeconds: 1, Backend: "workbench", WorkbenchPipe: NewMissingPipe());
-        var args = ParsedArguments.Parse(["status"]);
-        using var guard = new CancellationTokenSource(GuardTimeout);
-        var thrown = new InvalidOperationException("probe-" + Guid.NewGuid());
-        var fake = new DisposeTrackingClient(thrown, new ApplicationException("dispose-" + Guid.NewGuid()));
-
-        var caught = await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            ResoniteClientFactory.ConnectAsync(args, config, new ReflectionCacheOptions("off"), guard.Token,
-                linkUri: null, workbenchClientFactory: () => fake, linkClientFactory: null));
+                linkUri: new Uri("ws://127.0.0.1:1/"), linkClientFactory: () => fake));
 
         Assert.Same(thrown, caught);
         Assert.Equal(1, fake.DisposeCount);
@@ -123,24 +64,9 @@ public sealed class ResoniteClientFactoryDisposalTests
 
         var caught = await Assert.ThrowsAsync<InvalidOperationException>(() =>
             ResoniteClientFactory.ConnectAsync(args, config, new ReflectionCacheOptions("off"), guard.Token,
-                linkUri: new Uri("ws://127.0.0.1:1/"), workbenchClientFactory: null, linkClientFactory: () => fake));
+                linkUri: new Uri("ws://127.0.0.1:1/"), linkClientFactory: () => fake));
 
         Assert.Same(thrown, caught);
-        Assert.Equal(1, fake.DisposeCount);
-    }
-
-    [Fact]
-    public async Task WorkbenchBranch_DisposeFailure_OriginalCancellationWins()
-    {
-        var config = new RLoopConfig(TimeoutSeconds: 1, Backend: "workbench", WorkbenchPipe: NewMissingPipe());
-        var args = ParsedArguments.Parse(["status"]);
-        using var guard = new CancellationTokenSource(GuardTimeout);
-        var fake = new DisposeTrackingClient(new OperationCanceledException(), new ApplicationException("dispose-" + Guid.NewGuid()));
-
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
-            ResoniteClientFactory.ConnectAsync(args, config, new ReflectionCacheOptions("off"), guard.Token,
-                linkUri: null, workbenchClientFactory: () => fake, linkClientFactory: null));
-
         Assert.Equal(1, fake.DisposeCount);
     }
 
@@ -154,7 +80,7 @@ public sealed class ResoniteClientFactoryDisposalTests
 
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
             ResoniteClientFactory.ConnectAsync(args, config, new ReflectionCacheOptions("off"), guard.Token,
-                linkUri: new Uri("ws://127.0.0.1:1/"), workbenchClientFactory: null, linkClientFactory: () => fake));
+                linkUri: new Uri("ws://127.0.0.1:1/"), linkClientFactory: () => fake));
 
         Assert.Equal(1, fake.DisposeCount);
     }

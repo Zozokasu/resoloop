@@ -175,7 +175,7 @@ public sealed class CatalogTypesTests : IDisposable
         var input = Path.Combine(directory, "catalog.json"); Catalog().Save(input);
         var destination = Path.Combine(directory, "nested", "catalog.d.ts");
         var report = Path.Combine(directory, "report.json");
-        var exit = await Program.RunAsync(["catalog", "types", input, "--output", destination, "--backend", "workbench", "--url", "bad", "--report", report],
+        var exit = await Program.RunAsync(["catalog", "types", input, "--output", destination, "--url", "bad", "--report", report],
             _ => throw new InvalidOperationException("offline types must not connect"));
         Assert.Equal(ExitCodes.Success, exit);
         var expectedDeclaration = HandwrittenDeclaration().Replace("\"runtimeFile\":\"catalog-fields.ts\"",
@@ -268,13 +268,10 @@ public sealed class CatalogTypesTests : IDisposable
     }
 
     [Fact]
-    public async Task CaptureBoundAndWorkbenchRefusalOccurBeforeAcquisition()
+    public void CaptureBoundOccursBeforeAcquisition()
     {
         var names = Path.Combine(directory, "names.json"); File.WriteAllText(names, JsonSerializer.Serialize(Enumerable.Repeat("Fixture.Light", 513)));
         Assert.Equal("INVALID_ARGUMENT", Assert.Throws<RLoopException>(() => CatalogCommands.LoadNames(names)).Code);
-        var exit = await Program.RunAsync(["catalog", "capture", "--types", names, "--output", Path.Combine(directory, "catalog.json"), "--backend", "workbench"],
-            captureCatalog: (_, _, _) => throw new InvalidOperationException("workbench must refuse"));
-        Assert.Equal(ExitCodes.OperationFailed, exit);
     }
 
     public void Dispose() => Directory.Delete(directory, true);

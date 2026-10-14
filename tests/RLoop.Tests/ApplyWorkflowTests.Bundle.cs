@@ -308,15 +308,6 @@ public sealed partial class ApplyWorkflowTests
     }
 
     [Fact]
-    public async Task Bundle_WorkbenchIsUnsupportedWithoutConnection()
-    {
-        var bundle = NewBundle(); var connects = 0; var report = Path.Combine(_root, "report.ndjson");
-        Assert.Equal(ExitCodes.OperationFailed, await Program.RunAsync(["validate", bundle.Save(), "--build-id", "R1", "--backend", "workbench", "--json", "--report", report],
-            _ => { connects++; return Task.FromResult<IResoniteClient>(new FakeResoniteClient()); }));
-        Assert.Equal(0, connects); Assert.Contains("BACKEND_UNSUPPORTED", File.ReadAllText(report));
-    }
-
-    [Fact]
     public void Bundle_UnverifiedCatalogRetainsExistingUnavailableCode()
     {
         var bundle = NewBundle(); var catalog = JsonNode.Parse(File.ReadAllText(bundle.Catalog))!;

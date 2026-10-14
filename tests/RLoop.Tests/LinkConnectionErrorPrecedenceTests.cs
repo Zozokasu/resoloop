@@ -5,8 +5,6 @@ namespace RLoop.Tests;
 
 public sealed class LinkConnectionErrorPrecedenceTests
 {
-    private static readonly string MissingPipe = "resoloop-test-missing-" + Guid.NewGuid().ToString("N");
-
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
@@ -38,20 +36,6 @@ public sealed class LinkConnectionErrorPrecedenceTests
             Assert.Equal(ExitCodes.ConfigurationError, exit);
             Assert.Contains("RESONITE_LINK_URL_MISSING", report);
         }
-    }
-
-    [Fact]
-    public async Task WorkbenchBackendIgnoresInvalidUrlAndConnectsPipe()
-    {
-        // The workbench backend never resolves the link URL: an invalid --url is ignored and the
-        // pipe connect is attempted instead. "bogus" is unlisted in BackendSupport.WorkbenchSupport,
-        // so it reaches the shared connect path, where the missing pipe fails WORKBENCH_UNAVAILABLE.
-        var (exit, report) = await RunAsync("bogus", "--backend", "workbench",
-            "--url", "not a url", "--workbench-pipe", MissingPipe, "--timeout", "1");
-        Assert.Equal(ExitCodes.ConnectionFailed, exit);
-        Assert.Contains("WORKBENCH_UNAVAILABLE", report);
-        Assert.DoesNotContain("INVALID_RESONITE_LINK_URL", report);
-        Assert.DoesNotContain("UNKNOWN_COMMAND", report);
     }
 
     // --report records each outcome to a per-invocation file, so assertions stay deterministic
