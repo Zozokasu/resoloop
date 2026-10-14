@@ -2,11 +2,14 @@
 
 群を 1 つ終えるたびに、日付の見出しの節を先頭へ足す。進捗は `tasks.md` のチェックだけに書き、ここには写さない。全体の順序は `openspec/roadmap.md`、未検証の一覧は `openspec/unverified.md` にある。
 
-## 2026-10-14 11:45 JST — 群 3 を終えた（task 3.2〜3.7。通常の apply の表面を test で固定した）
+## 2026-10-14 12:25 JST — 群 3 を終えた（task 3.2〜3.9。通常の apply の表面を test で固定し、error code の範囲を 14 ファイルへ広げた）
 
 ### 伺いと返事
 
 - 2026-10-14 11:18 ごろ、ユーザーが `/ccg:spec-impl` を実行し、次の言葉を添えた（原文）:「codexの枠にかなり余裕があるので気にしないでください。」Opus は、これを「下の 11:15 の節の『この窓では起動しない』を取り消し、窓の残りを待たずに群 3 の契約を起動してよい」として受け取った（範囲の解釈は Opus のもの）。
+
+- 2026-10-14 11:50 ごろ、群 3 の報告で「固定した error code の一覧は 6 ファイルの分だけで、通常の `apply` が返しうる code の全部ではない。このままでよいか、増やすか」を伺った。返事（原文）:「凍結コードを増やします」。Opus は「固定する error code の範囲を、通常の経路が返しうる code へ広げる」として受け取り、対象のファイルを調べてから task を足す（どのファイルを足すかは、調査の結果を示して決める）。
+- 2026-10-14 12:00 ごろ、調査の結果（下の「固定の範囲を広げた」）を示して、範囲を伺った（選択肢から選ぶ形）。返事:「code は A+B、凍結は A (Recommended)」= error code は 14 ファイルから集めて固定する／機能の追加を禁じる「凍結したファイル」は 6 + A の 9 つ／共用の B の 5 つは凍結しないが、`APPLY_`・`STABLE_` の code の増減は「凍結の例外」。`tasks.md` に task 3.8・3.9 を足した。
 
 ### Codex の利用枠（起動の前の記録）
 
@@ -82,9 +85,28 @@
 
 ### 次
 
-- 群 4（Workbench を除く）: task 4.1 で、除く前の基準（`rg -l -i workbench …` の結果と、RLoop.Tests の件数 = 成功 2013・skip 4）を取る。
+- 群 4（Workbench を除く）: task 4.1 で、除く前の基準（`rg -l -i workbench …` の結果と、RLoop.Tests の件数 = 成功 2013・skip 4）を取る。slot3 の HEAD は `fdf1f74`。
 
-### 気付いた点（直していない。ユーザーに示す）
+### 固定の範囲を広げた（task 3.8・3.9。2026-10-14 11:50〜12:25）
+
+調査（Claude の調査役 1 本、読み取りだけ、slot3 `91e88b8`）: 6 ファイルのほかに `"APPLY_`・`"STABLE_` を持つ `src/RLoop.Core/` の 18 ファイルを、呼び出し元で仕分けた。
+
+| 分類 | ファイル | 扱い（ユーザーの決定） |
+| --- | --- | --- |
+| A: 通常の経路だけが使う | `ApplyCatalogValidator.cs`、`ApplyBuildBundle.cs`、`ComponentIdentityDiagnostics.cs` | 凍結する。code も固定する |
+| B: 作り直しの経路と共用 | `ApplyDocumentCompiler.cs`（`CreationDocument.cs:123` が `CompileBundleIr` を呼ぶ）、`ApplyProjectContext.cs`、`SessionWriteLock.cs`、`StableReferences.cs`、`CheckpointFiles.cs` | 凍結しない。`APPLY_`・`STABLE_` の code だけ固定する |
+| C: 作り直しの経路だけ | `Creation*.cs` の 7 つ | 対象外 |
+| D: そのほか | `CatalogTypesGenerator.cs`（`catalog` コマンド）、`ApplyDiagnostics.cs`（code の比較だけ） | 対象外 |
+
+- 固定した error code は 68 → 100 件（`APPLY_` 92、`STABLE_` 8）。前の 68 件は 1 つも変わっていない。増えた 32 件の大半は `ApplyDocumentCompiler.cs` の定義の検査の code。
+- 契約 `cc-g3-codes-contract.md`（`gpt-6-luna` high、12:07:40〜12:09:41、46,353 token、報告は `DONE`）。変えたのは `OrdinaryApplySurfaceTests.cs` の一覧と `error-codes.txt` だけ。`AGENTS.md` の「Frozen path」は Opus が直した（凍結 9 つと、共用 5 つを分けて書いた）。
+- Opus の検証（slot3、sandbox の外、12:10〜12:20。log は slot3 `TestResults/CC-G3/opus/accept2-*.log`）: build 警告 0・エラー 0／固定したファイルは、Opus が別に `grep` で数えた集合と一致／`ApplyDocumentCompiler.cs` の末尾に `// "APPLY_PIN_PROBE"` を足すと `ErrorCodesMatchPinnedList` が失敗し、戻すと `git diff --stat -- src` が空。
+- **RLoop.Tests の全体は、1 回目が失敗 1・成功 2012・skip 4、2 回目が失敗 0・成功 2013・skip 4。** 1 回目の失敗は `SessionWriteLockTests.S3RealProcessKillReleasesHandleButPreviousPendingStillBlocks`（U13 の再発。`SessionWriteLock.cs:41` の `IOException`）。この変更は test の一覧と固定したファイルだけで、lock のコードにも、その test にも触れていない。`openspec/unverified.md` の U13 に書き足した。「slot3 の RLoop.Tests は失敗 0」とは言えない。
+- commit: `agent/course-correction` の `fdf1f74`（`test(apply): pin the error codes of the files shared with regenerate`）。
+- この窓の使用済み: 571,819 token（525,466 + 46,353）。
+- 残る範囲の外: `src/RLoop.Cli/Program.cs` が直接投げる `APPLY_CATALOG_UNAVAILABLE`・`APPLY_WRITE_UNVERIFIED`（どちらも一覧にある code）と、`test` コマンドの `APPLY_TEST_FAILED`（一覧に無い。`apply`・`plan`・`diff` の code ではない）。`src/RLoop.ResoniteLink/` の `CatalogCapture.cs`・`CatalogMapper.cs`・`ResoniteLinkClientAdapter.cs` の code も一覧にあるが、これらのファイルは test の集める対象ではない。調査役は、`RLoopException` 以外の投げ方（`FailAlias`・`Error(`・`Fail(` の helper 経由）を 1 行ずつは確かめていない。
+
+### 気付いた点（群 3 の報告の時点。1 つ目は、上の「固定の範囲を広げた」で扱った）
 
 - **固定する error code の一覧は、通常の `apply` が返しうる code の全部ではない。** 計画どおり 6 ファイルから集める（68 件）。`src/RLoop.Core/` には、ほかに `"APPLY_`・`"STABLE_` を含むファイルが 18 ある（調査役の数え。`ApplyDocumentCompiler.cs` 30 行、`StableReferences.cs` 8 行、`ApplyCatalogValidator.cs` 6 行、`SessionWriteLock.cs` 5 行 ほか。`Creation*` は作り直しの側）。定義の検査や参照の解決が返す code に足し引きがあっても、`OrdinaryApplySurfaceTests` は気付かない。spec の文（「返しうる error code の一覧は、固定 SHALL」）より狭い。凍結するファイルを増やすかは、計画の決定なので変えていない。
 - 固定する option の一覧（27 件）には、option でない文字列（コマンドの名前 `apply`・`plan`・`diff`・`validate`・`flux`、操作の種類 `create`・`delete`、辞書の key `filters`）が混ざる。目印の中の文字列を正規表現で集める、という計画の形のとおり。
