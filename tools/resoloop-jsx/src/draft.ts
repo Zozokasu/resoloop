@@ -7,8 +7,7 @@
 // legacy index-derived key is generated with a warning and a source guard
 // that blocks validate/apply. Scope always requires explicit local keys.
 
-import { Slot as SlotImpl, Component as ComponentImpl } from "./elements.js";
-import type { SlotProps, ComponentProps, JsxNode } from "./elements.js";
+import type { SlotProps, ComponentProps } from "./elements.js";
 
 export { Fragment } from "./jsx-runtime.js";
 export { Scope, Field } from "./elements.js";
@@ -22,18 +21,13 @@ export { defineObject } from "./object-definition.js";
  */
 export { componentFields } from "./bound-field.js";
 
-/** SlotProps under the draft entry: identical except `key` is optional. */
-export type DraftSlotProps = Omit<SlotProps, "key"> & { key?: string };
+/** Slot props under the draft entry are the main entry's slot props. */
+export type DraftSlotProps = SlotProps;
 
-/** ComponentProps under the draft entry: identical except `key` is optional. */
-export type DraftComponentProps<T extends string = string> = Omit<ComponentProps<T>, "key"> & { key?: string };
+/** Component props under the draft entry are the main entry's component props. */
+export type DraftComponentProps<T extends string = string> = ComponentProps<T>;
 
-// Type-only casts. The exported values ARE the same function objects as the
-// main entry point — jsx-runtime.ts recognizes markers by reference equality
-// (type === Slot), so wrapping them in new functions would break detection.
-export const Slot = SlotImpl as unknown as (props: DraftSlotProps) => JsxNode;
-export const Component =
-  ComponentImpl as unknown as <const T extends string>(props: DraftComponentProps<T>) => JsxNode;
+export { Slot, Component } from "./elements.js";
 
 export type {
   JsonValue,

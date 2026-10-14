@@ -1,0 +1,25 @@
+{
+  "schemaVersion": "1",
+  "ownership": {
+    "key": "root"
+  },
+  "slot": {
+    "name": "Root",
+    "key": "root"
+  },
+  "components": [],
+  "children": [
+    {
+      "slot": {
+        "name": "NoKey",
+        "key": "root/nokey#0"
+      }
+    }
+  ],
+  "$draftKeys": true,
+  "authoring": {
+    "projectRoot": "__FIXTURES_DIR__",
+    "source": "missing-key-draft.tsx",
+    "ownershipSource": "root-key"
+  }
+}

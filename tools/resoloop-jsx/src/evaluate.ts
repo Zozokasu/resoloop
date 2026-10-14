@@ -283,7 +283,13 @@ export function evaluate(
         "COMPONENT_TYPE_MISSING",
         `Component at ${path} requires a non-empty 'type' prop`
       );
-    const key = resolveKey("component", props, type, parentKey, siblingIndex, path, el.scope ?? "");
+    let key: string;
+    try { key = resolveKey("component", props, type, parentKey, siblingIndex, path, el.scope ?? ""); }
+    catch (error) {
+      if (error instanceof BuildError && error.code === "EXPLICIT_KEY_REQUIRED")
+        markBuildErrorOrigin(error, { source: originOfElement(el)?.source ?? unknown });
+      throw error;
+    }
     registerKey(componentKeys, key, "component", path);
     const spec = copyComponent(props, key, path, el.scope ?? "", false, { assertFiniteNumbers, scopeValue });
     if (objectPassRan && props.migrateFrom !== undefined)
@@ -376,7 +382,13 @@ export function evaluate(
         "SLOT_NAME_MISSING",
         `Slot at ${path} requires a non-empty 'name' prop`
       );
-    const key = resolveKey("slot", props, name, parentKey, siblingIndex, path, el.scope ?? "");
+    let key: string;
+    try { key = resolveKey("slot", props, name, parentKey, siblingIndex, path, el.scope ?? ""); }
+    catch (error) {
+      if (error instanceof BuildError && error.code === "EXPLICIT_KEY_REQUIRED")
+        markBuildErrorOrigin(error, { source: originOfElement(el)?.source ?? unknown });
+      throw error;
+    }
     registerKey(slotKeys, key, "slot", path);
 
     const flat: RawElement[] = [];
