@@ -22,9 +22,15 @@
 - U26（`help apply` の「The TSX creation path and same-name sibling Slots are unverified live.」）、U25（再起動の後に作り直しを続ける道）、`verify.ps1` の skip の数え方（群 6 の気付いた点）、`phase: "staged"` と `replaced: true` の組。どれも後続の change で決める。
 - 新しい clone `resoloop-worktrees/cc-fresh` と、slot3 の `agent/course-correction` の後始末（消す前に伺う）。
 
+### task 7.9: 伺いと返事（2026-10-14 19:55 ごろ）
+
+- 伺い（Opus）: main（`4ba7dc6`、origin より 80 commit 先）を origin へ push するか。「まだ push しない」という以前の決定は、ユーザーが変えるまで有効としていた。
+- 返事（ユーザー、選択肢で回答）: 「push する」。以前の「まだ push しない」の決定は、この返事で解けた。
+- この記録の commit を含めて `git push origin main` を実行し、`git rev-list --count origin/main..main` が 0 であることを確かめる（結果は、この後の archive の commit の本文に書く）。
+
 ### 次
 
-- task 7.9（【伺う】main を origin へ push するか）。その後、change を archive する。
+- change を archive する（spec の差分を `openspec/specs/` へ移し、change を archive へ動かす）。
 
 ## 2026-10-14 16:10 JST — 群 7 の途中（task 7.1 の検証を終え、7.2 の重いレビューを起動する）
 

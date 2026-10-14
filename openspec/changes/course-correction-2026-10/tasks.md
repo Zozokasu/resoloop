@@ -81,7 +81,7 @@
 - [x] 7.6 `openspec/unverified.md` を L5 の結果で直す。この change が生んだ項目（U01〜U05 と、7.4 (i)）がすべて「確認済み」か「免除」であることを確かめる。残っていれば、残りと要る条件をユーザーに示し、7.7 へ進まない。確かめ方: U01〜U05 に「未検証」が無い
 - [x] 7.7 【伺う】`agent/course-correction` を main へ `--no-ff` で merge してよいか伺う。レビューの結果、修正、実機の結果、残った未検証、利用者への影響（`--backend workbench`・`wb`・`--workbench-pipe` が止まる）を示す。承認されたら merge し、main で build と test を実行する。確かめ方: main の件数が 7.1 と一致する
 - [x] 7.8 記録を直す。`openspec/roadmap.md` の R10・R11・R12 を「完了」にして根拠の commit を書く。`handoff.md` に最後の節を足す。Notion の「現在地と引き継ぎ」と「ロードマップ（実装計画）」を直す。`task.json` の案内を直す。確かめ方: `openspec validate course-correction-2026-10 --strict` が通り、`tasks.md` の 7.9 より前がすべてチェック済み
-- [ ] 7.9 【伺う】main を origin へ push するか伺う（「まだ push しない」という決定は、ユーザーが変えるまで有効）。確かめ方: 返事が `handoff.md` にあり、push した場合は `git rev-list --count origin/main..main` が 0
+- [x] 7.9 【伺う】main を origin へ push するか伺う（「まだ push しない」という決定は、ユーザーが変えるまで有効）。確かめ方: 返事が `handoff.md` にあり、push した場合は `git rev-list --count origin/main..main` が 0
 
 ## Workflow follow-up
 
