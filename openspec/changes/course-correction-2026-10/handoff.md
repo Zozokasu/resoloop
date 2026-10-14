@@ -2,7 +2,7 @@
 
 群を 1 つ終えるたびに、日付の見出しの節を先頭へ足す。進捗は `tasks.md` のチェックだけに書き、ここには写さない。全体の順序は `openspec/roadmap.md`、未検証の一覧は `openspec/unverified.md` にある。
 
-## 2026-10-14 12:25 JST — 群 3 を終えた（task 3.2〜3.9。通常の apply の表面を test で固定し、error code の範囲を 14 ファイルへ広げた）
+## 2026-10-14 12:17 JST — 群 3 を終えた（task 3.2〜3.9。通常の apply の表面を test で固定し、error code の範囲を 14 ファイルへ広げた）
 
 ### 伺いと返事
 
@@ -87,7 +87,7 @@
 
 - 群 4（Workbench を除く）: task 4.1 で、除く前の基準（`rg -l -i workbench …` の結果と、RLoop.Tests の件数 = 成功 2013・skip 4）を取る。slot3 の HEAD は `fdf1f74`。
 
-### 固定の範囲を広げた（task 3.8・3.9。2026-10-14 11:50〜12:25）
+### 固定の範囲を広げた（task 3.8・3.9。2026-10-14 11:50〜12:17）
 
 調査（Claude の調査役 1 本、読み取りだけ、slot3 `91e88b8`）: 6 ファイルのほかに `"APPLY_`・`"STABLE_` を持つ `src/RLoop.Core/` の 18 ファイルを、呼び出し元で仕分けた。
 
@@ -100,7 +100,7 @@
 
 - 固定した error code は 68 → 100 件（`APPLY_` 92、`STABLE_` 8）。前の 68 件は 1 つも変わっていない。増えた 32 件の大半は `ApplyDocumentCompiler.cs` の定義の検査の code。
 - 契約 `cc-g3-codes-contract.md`（`gpt-6-luna` high、12:07:40〜12:09:41、46,353 token、報告は `DONE`）。変えたのは `OrdinaryApplySurfaceTests.cs` の一覧と `error-codes.txt` だけ。`AGENTS.md` の「Frozen path」は Opus が直した（凍結 9 つと、共用 5 つを分けて書いた）。
-- Opus の検証（slot3、sandbox の外、12:10〜12:20。log は slot3 `TestResults/CC-G3/opus/accept2-*.log`）: build 警告 0・エラー 0／固定したファイルは、Opus が別に `grep` で数えた集合と一致／`ApplyDocumentCompiler.cs` の末尾に `// "APPLY_PIN_PROBE"` を足すと `ErrorCodesMatchPinnedList` が失敗し、戻すと `git diff --stat -- src` が空。
+- Opus の検証（slot3、sandbox の外、12:10〜12:16。log は slot3 `TestResults/CC-G3/opus/accept2-*.log`）: build 警告 0・エラー 0／固定したファイルは、Opus が別に `grep` で数えた集合と一致／`ApplyDocumentCompiler.cs` の末尾に `// "APPLY_PIN_PROBE"` を足すと `ErrorCodesMatchPinnedList` が失敗し、戻すと `git diff --stat -- src` が空。
 - **RLoop.Tests の全体は、1 回目が失敗 1・成功 2012・skip 4、2 回目が失敗 0・成功 2013・skip 4。** 1 回目の失敗は `SessionWriteLockTests.S3RealProcessKillReleasesHandleButPreviousPendingStillBlocks`（U13 の再発。`SessionWriteLock.cs:41` の `IOException`）。この変更は test の一覧と固定したファイルだけで、lock のコードにも、その test にも触れていない。`openspec/unverified.md` の U13 に書き足した。「slot3 の RLoop.Tests は失敗 0」とは言えない。
 - commit: `agent/course-correction` の `fdf1f74`（`test(apply): pin the error codes of the files shared with regenerate`）。
 - この窓の使用済み: 571,819 token（525,466 + 46,353）。
