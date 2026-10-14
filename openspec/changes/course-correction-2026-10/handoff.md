@@ -94,6 +94,30 @@
 - 記録した事実（不具合かは未判断）: (1) 1 つの state の pending が、同じ URL への他の書込みも止める。(2) 作り直しの `apply` が `phase: "staged"` と `replaced: true` を同時に返した（証拠 `127`）。
 - いま world に残っている物: `Reso_31B23` の下の全部（I2 の root `Reso_31B7F`、I3 の root `Reso_31C2E`、U15 の `Reso_31C88`（子 200）と `Reso_330E7`（子 216）、空の親 4 つ）。world の保存はまだ頼んでいない。
 
+### task 7.4: L5 の結果（2026-10-14 17:05〜18:35。報告 `cc-live-l5-report.md`、証拠 `live-1012\evidence\L5`、実効のモデル Sonnet 5.5）
+
+- 対象: session「ぞかホーム」。再起動の前は `S-01a13803-91cf-76b4-b635-eb730117be13`（`ws://localhost:25410/`）、再起動の後は `S-01a139bb-bd01-7f0b-8ea1-5c8c5581d35f`（`ws://localhost:21212/`）。Resonite `2026.9.18.82`、ResoniteLink `0.13.1.0`。CLI は `bin6`。
+
+| 項目 | 判定 | 要点 |
+| --- | --- | --- |
+| I1 status | PASS | connected、版は上の値 |
+| I2 通常の apply の初回と再 apply | PASS | 初回は終了 code 0、`plan` は変更 0 件、再 `apply` も変更 0 件、ID は同じ |
+| I3 主の入口・key を省いた TSX の作り直し | PASS | `create` の後、値を変えて `replace`（`replaced` true）、古い root は無い |
+| I4 除いた backend の指定 | PASS | `--backend workbench`・環境変数・`help` の 3 通りとも `BACKEND_REMOVED`（2）、121〜152 ms |
+| U15 実行中の取消 | PASS | 上の「途中経過」のとおり |
+| U08 無効な Slot の下の ProtoFlux | PASS | 無効な間は追従せず、有効にした後に追従 |
+| U07 root の複製 | PASS | `CREATION_OWNER_AMBIGUOUS`（6）、2 つとも残る |
+| U16 実行中の切断 | PASS（制限つき） | Resonite の終了で切断。再起動の後の再 `apply` は `APPLY_WRITE_UNVERIFIED`（7、`identityUnproven`）。開き直しで途中の書込みが消えたため、pending による停止と session の変化による停止を分けられていない |
+| U10 再起動の後の ID と結びつき | 確認済み（Opus の判定） | ID はすべて変わり、印は同じ値。作り直しの `plan` は `CREATION_SESSION_UNPROVEN`（6）で止まり、2 つ目の root は作られない |
+| Z 片づけ | 済み | 再起動の後の ID `Reso_30F7B` を例外の規則（`find` が 1 件・子の名前が一致）で消した。Opus の `find --name ResoLoop_Test`（18:36、新しい S-ID）も 0 件 |
+
+- 指示書の変更（どれもユーザーの返事に基づく）: (1) U15・U16 の pending を、記録の後に offline で捨てる（17:20 ごろ「Allow both discards」）。自動の許可の判定が担当と Opus の実行を拒んだので、2 回ともユーザーが自分の端末で実行した（証拠 `220_discard_u15b_by_user.txt`、`530_discard_u16_by_user.txt`）。(2) ResoniteLink を途中で切る手段が無いので、U16 の切断は Resonite の終了で作り、U10 の再起動とまとめた（「U10 とまとめる」）。U16 の子は 200 から 600 にした（200 では約 30 秒で終わり、間に合わない）。
+- Opus の誤り（記録）: 指示書が U15 の pending を残したまま後の項目を続ける順にしていた（pending は同じ URL の書込みを全部止める）。ResoniteLink を後から切れるかを確かめずに U16 の手順を書いた。
+- 記録した事実（不具合とは判断していない）: (1) 1 つの state の pending が、同じ URL への `slot create`・`slot delete` も `previousStatePending`（7）で止める（S3 の安全の設計どおりと Opus は見る）。(2) 作り直しの `apply` が `phase: "staged"` と `replaced: true` を同時に返した（`127`）。(3) 同じ Slot に同じ型の Component 2 つの定義で、`validate` が `APPLY_COMPONENT_IDENTITY_RISK` の警告を出す（U07 の準備）。
+- `openspec/unverified.md`: U07・U08・U10・U15・U16 を「確認済み」にし、新しく U25（再起動の後に作り直しを続ける道。保留）と U26（`help apply` の「未検証」の文。未検証）を足した。
+- 残したファイル（消していない）: `work-l5` の `*-state.json.lock` 8 つと `fx\deploy-state.json.lock`、`AppData\Local\ResoLoop\write-locks` の 7 つ。pending を持つ state は無い。
+- ユーザーへの依頼: 片づけの後に world をもう一度保存する（U10 で保存した world に、テスト用の Slot が入っていたため）。
+
 ### task 7.5: 伺いと返事（2026-10-14 17:07 ごろ）
 
 - 伺い（Opus）: U06（回復の `finish` の成功）と U14（応答だけが失われた場合）を、offline の test（名前を示した）を根拠に免除してよいか。
