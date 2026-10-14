@@ -43,6 +43,37 @@
   - **P3（重点 6）**: `tools/resoloop-jsx/README.md:213` の「creation target が無ければ key の欠けは `EXPLICIT_KEY_REQUIRED` で止まる」が、`--draft` の例外を落としていて、同じ README の表と食い違う。
 - 確認済みとされた点: 凍結した 9 ファイルと `Program.cs` の 3 区間のコードは分岐点と同じ／分岐点から同じ規則で集めた error code 100・option 27 は固定ファイルと一致／Workbench のプロジェクトへの参照は残っていない／`resoloop-jsx/draft` の保存した出力 3 件は、分岐点・HEAD・fixture で一致／Integration の skip 21 件はすべて理由つき。
 
+### task 7.3: 指摘の修正（修正 1 回目）
+
+- 仕組み（Opus の決定）: `ConfigResolver.RejectRemovedBackend(startDirectory, cliBackend, …)` を足し、`Resolve` と同じ順（cli → `RESOLOOP_BACKEND` → project → user）で実効の値を決め、`workbench` のときだけ `BACKEND_REMOVED` を投げる。`Program.cs` の CLI の `--backend` だけを見ていた検査（30〜31 行）をこの呼び出しに替えた。位置は report を開く前で、凍結した 3 区間の外。調べる途中の config を読めないときは投げずに `Resolve` の `CONFIG_INVALID` に任せる（接続しない command が、関係のない設定の誤りで止まるようにはしない）。結果として、`help`・`version` も、環境変数・設定の `workbench` で止まる（CLI の `--backend workbench help` と同じ扱い。spec に接続しない command の除外が無いため）。
+- P3 は、README の文の後半を消して表を指すだけにした。
+- 下調べは Claude の調査役 1 本（読み取りだけ、slot3 `dd4048d`）。
+
+| 契約 | 時刻 | token | 担当の報告 | Opus の扱い |
+| --- | --- | --- | --- | --- |
+| cc-g7-fix1 v1（P2-1・P2-2・P3） | 16:29:11〜16:31:52 | 72,115 | `DONE`（slot3 `TestResults/CC-G7/fix1-report.md`）。足した test 21 件（offline の command 7 × 環境変数・project の 14、`EnvironmentLinkOverridesProjectWorkbench` 1、`BackendUsesCliEnvironmentProjectUserPrecedence` 1、`RejectRemovedBackend` 5）、filter の 87 成功、変えたのは契約の 5 ファイルだけ | 差分を読んで受け入れた |
+
+- 見積もり: 13 万 token とした（標準の 19 万は残り約 16.8 万を超えるため、同じ大きさの契約の実績 9〜13 万を根拠にし、sandbox の中の test を filter に絞った）。この窓の使用済み: 331,552 + 72,115 = 403,667 token。
+- offline の test は、一時 directory のファイルの一覧と内容が実行の前後で同じであることも確かめる（`init`・`manifest scaffold` が書かない、`--discard-pending` が state を変えない）。
+- `cc-workbench-test-triage.md` は直していない（群 4 の記録として残す）。消しすぎた assert は、この修正で `BackendSupportTests` に戻った。
+- commit（`agent/course-correction`）: `03dae4b`（`fix(cli): stop on a Workbench backend from the environment or config before any command`）、`bc8e9fd`（`docs(jsx): point the key sentence at the key rules table only`）。
+
+検証（Opus、sandbox の外、`RESOLOOP_RUN_INTEGRATION` なし。log は slot3 `TestResults/CC-G7/opus/fix1-slot3/`・`fix1-fresh/`）:
+
+| 検証 | slot3（commit の前の作業ツリー、16:32〜16:40） | 新しい clone（`bc8e9fd`、16:41〜16:49） |
+| --- | --- | --- |
+| build | 警告 0、エラー 0 | 警告 0、エラー 0 |
+| RLoop.Tests | 失敗 0、成功 2048、skip 4、合計 2052（2027 + 21） | 失敗 0、成功 2048、skip 4、合計 2052 |
+| IntegrationTests | 失敗 0、成功 10、skip 21 | 失敗 0、成功 10、skip 21 |
+| typecheck／`npm test`／contract | 0／341 pass・fail 0／64・11・4・2 | 0／341 pass・fail 0／64・11・4・2 |
+
+- 2 か所の件数は一致し、失敗 0。7.3 の確かめ方（7.1 の検証をもう一度実行して失敗 0）を満たす。修正は 1 回で済んだ（4 回の上限のうち 1）。
+
+### 次
+
+- task 7.4（【伺う】実機 L5 の許可と対象の session）。slot3 の HEAD は `bc8e9fd`。Codex の窓（15:23:30 開始）は 20:23 ごろ閉じる。
+
+
 ## 2026-10-14 15:40 JST — 群 6 を終えた（実行しなかった実機の test を skip にする）
 
 ### 伺いと返事
