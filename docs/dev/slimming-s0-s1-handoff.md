@@ -1,5 +1,7 @@
 # スリム化 S0〜S1 引き継ぎ（2026-10-01、S1出口の修正後に更新）
 
+> 履歴の文書。Workbench backend は course-correction-2026-10 で除いた。
+
 計画の正本は`plan/resoloop-slimming-plan.md`（git管理外）、受け入れケースは`plan/verification-and-handoff.md`にある。
 作業状態の正本は`.ccg/tasks/resoloop-slimming/`（`task.json`、`assignments.md`、`plan.md`）にある。
 この文書は、その時点の要約と次の作業をまとめたものである。進捗表をここに複製しない。

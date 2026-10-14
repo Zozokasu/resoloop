@@ -1,11 +1,11 @@
-# fork開発方針（直結統一・Workbench凍結）
+# fork開発方針（直結統一・Workbench除去）
 
 このリポジトリ（Zozokasu/resoloop）は orange3134/resoloop のforkである。
 
 ## 現在の方針（2026-09-30改定）
 
 - **通常制作の主経路は直結に統一する。** TSX / 手書きJSON / ProtoGraph → ResoLoop（展開・型検証・参照解決・差分・局所観測・実行・診断）→ RLoop.ResoniteLink（直結、選択した単一セッション）/ RLoop.Flux → IFluxDeployer → F# deployer → Flux-SDK。
-- **Workbench backend（`src/RLoop.Workbench`、`--backend workbench`、`wb`コマンド）は凍結して保持する。** 新機能・書込みadapter・64-op batch・RPC export・backend同等化へ投資せず、接続失敗時の自動backend切替もしない。S5で通常依存から除去する予定。旧W4（Workbench書込みRPC）は再開しない。旧W4〜W7はS1〜S5工程（`plan/resoloop-slimming-plan.md`）へ置換済み。
+- **Workbench backend（`src/RLoop.Workbench`、`--backend workbench`、`wb`コマンド）はcourse-correction-2026-10で除いた。** 新機能・書込みadapter・64-op batch・RPC export・backend同等化への投資や、接続失敗時の自動backend切替は行わなかった。旧W4（Workbench書込みRPC）は再開しない。旧W4〜W7はS1〜S5工程（`plan/resoloop-slimming-plan.md`）へ置換済み。
 - 歴史: 2026-09-26に「Workbench対応（JSX + ProtoGraph → WorkbenchObject → Workbench RPC）を優先する」と決めたが、上記へ改定した。
 - upstreamの継続的な取り込み、マージ手順、長期の開発方針は、内部形式が固まってから検討する。それまでupstreamの同期は行わない。
 - 分岐点: upstream `7d73071`（Handle transient checkpoint disappearance after Windows sharing contention）。以後のforkの変更は、この点からの差分として後で評価する。
@@ -24,7 +24,7 @@
 - 変更が多い: 2026-08-25〜09-25で約40コミット。変更の集中するファイルは`README.md`、`skills/codex/resonite-build/SKILL.md`、`src/RLoop.Cli/Program.cs`、`docs/DECLARATIVE.md`、`WorldService.cs`、`ApplyWorkflow.cs`。
 - ライセンスはAGPL-3.0-or-later。fork改変版も同ライセンスで、改変ソースを公開し続ける。
 
-### JSXとWorkbench対応の意味（2026-09-26時点の調査。Workbenchは現在凍結）
+### JSXとWorkbench対応の意味（2026-09-26時点の調査。Workbenchを除く前）
 
 - JSX（TSX/JSX）はUI記述ではなく、WorkbenchObjectとResoniteオブジェクトの宣言的な定義言語。ProtoGraph（ProtoFluxのソース）と対で使う（workbench `plan.md:11,49`、`feedback/2026-09-25-direction-change.md:7`）。
 - TSX/JSXの評価・型検査、共通IR、desired state、diff/plan/apply、静的診断はclient（ResoLoop）側の責務。Workbenchはこれらを解釈しない（workbench `plan.md:49,71,372`）。
@@ -43,7 +43,7 @@
 ### 設計の候補（歴史。2026-09-30改定前の調査）
 
 - JSX: TSXをschema-v1 JSONへ変換する前段ツールにすれば.NET側を変えずに済む。条件分岐やprops合成は変換時に解決し、実行時の振る舞いはProtoGraphに置く。
-- Workbench: 書き込みはmutation plan単位でprimitiveと1対1に対応しない、という調査結果が残る。Workbench書込み経路は今後投資しない（凍結）。
+- Workbench: 書き込みはmutation plan単位でprimitiveと1対1に対応しない、という調査結果が残る。Workbench書込み経路には投資しない方針だった。
 
 ## 未確認事項
 

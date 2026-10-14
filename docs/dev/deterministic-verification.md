@@ -14,7 +14,7 @@ pwsh -NoProfile -File scripts/agents/verify.tests.ps1
 | Profile | Selected work |
 | --- | --- |
 | All (default) | Fresh .NET Debug build, offline tests, one TypeScript compile, Node tests, cross-language contract |
-| Dotnet | `dotnet build ResoLoop.slnx --no-restore --no-incremental`, then tests of RLoop.Tests, RLoop.Workbench.Tests and RLoop.IntegrationTests with `--no-build --no-restore` |
+| Dotnet | `dotnet build ResoLoop.slnx --no-restore --no-incremental`, then tests of RLoop.Tests and RLoop.IntegrationTests with `--no-build --no-restore` |
 | Jsx | `node node_modules/typescript/bin/tsc -p tsconfig.json`, then `node --test --test-reporter=tap "dist/test/**/*.test.js"`; no dotnet dependency |
 | JsxContract | Jsx plus `node dist/scripts/contract.js`; requires a prebuilt CLI and dotnet |
 | Inspect | Source snapshot and tool observation only; optional ref resolution, merge base and overlapping changed paths |

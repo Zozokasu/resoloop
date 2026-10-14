@@ -109,7 +109,7 @@ Devinを使う場合はsandbox外で、信頼済みの担当slot、自己完結�
 
 ## 開発方針の前提
 
-通常制作は直結: TSX/JSON/ProtoGraph → ResoLoop → RLoop.ResoniteLink（選択した単一セッション）、またはRLoop.Flux → IFluxDeployer → F# deployer → Flux-SDK。Workbench backend（`src/RLoop.Workbench`、`--backend workbench`、`wb`）は凍結し、新機能・書込みadapter・backend同等化・自動fallbackへ投資しない。既存planのS1〜S5に従い、old W4を再開しない。
+通常制作は直結: TSX/JSON/ProtoGraph → ResoLoop → RLoop.ResoniteLink（選択した単一セッション）、またはRLoop.Flux → IFluxDeployer → F# deployer → Flux-SDK。Workbench backend（`src/RLoop.Workbench`、`--backend workbench`、`wb`）はcourse-correction-2026-10で除いた。old W4は再開しない。
 
 `.ccg/`のmanaged領域と信頼設定を無断変更しない。計画の正本は`openspec/`にあり、計画の変更は新しいchangeとしてユーザーの承認を得る。`plan/`は履歴で、変更しない。既存ユーザー変更と未追跡ファイルを保持する。製品の`skills/codex/*`を開発担当の指示へ転用しない。
 

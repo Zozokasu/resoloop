@@ -1,5 +1,7 @@
 # Workbench対応 W2 引き継ぎ（読み取り経路）
 
+> 履歴の文書。Workbench backend は course-correction-2026-10 で除いた。
+
 作成: 2026-09-30
 対象: main `e85a015`（未push）
 - W2-B の merge は `6449678`。
