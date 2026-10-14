@@ -4,7 +4,7 @@ Creation regenerate rebuilds one complete owned root from an envelope. The featu
 
 ## Scope and input
 
-Build the envelope from TSX with `resoloop-jsx build content/room.tsx --target creation -o creation.json --project-root .`. The entry's default export must evaluate to one root `<Slot>`. Creation target permits omitted Slot and Component keys and repeated sibling Slot names. Explicit keys still must be unique. Ordinary schema-v1 apply documents keep their existing explicit-key and distinct-sibling-name constraints.
+Build the envelope from TSX with `resoloop-jsx build content/room.tsx --target creation -o creation.json --project-root .`. The entry's default export must evaluate to one root `<Slot>`. See the `resoloop-jsx` package README, section “Key rules”, for key requirements. Creation target permits repeated sibling Slot names, and explicit keys still must be unique.
 
 `creationId` is selected from the key in the entry's named `ownership` export when present; otherwise the root Slot must have an explicit key. The chosen key must contain 1–128 characters and no control characters. If neither source supplies it, TSX build fails with `CREATION_ID_INVALID`; generated positional keys are not used as `creationId`. Creation builds cannot combine with `--draft`, `--bundle`, `--catalog`, or `--build-id`; creation bundles are unavailable in this version.
 

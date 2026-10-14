@@ -1,0 +1,6 @@
+{
+  "schemaVersion": "1",
+  "ownership": { "key": "ordinary-apply-frozen" },
+  "slot": { "key": "root", "name": "Managed", "parent": "Root", "position": [0, 1, 2] },
+  "components": [{ "key": "source", "type": "Test.Source", "fields": { "Target": "fixture-value" } }]
+}

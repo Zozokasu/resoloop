@@ -14,9 +14,7 @@ import type { InstanceHandle, PublicRefs } from "./object-refs.js";
 export type { JsonValue, ManagedField, RelocationTransform } from "./generated/apply-types.js";
 
 /** Generated scalar props plus JSX children, which are classified by the evaluator. */
-export interface SlotProps extends SlotScalarProps {
-  children?: JsxChild;
-}
+export type SlotProps = Omit<SlotScalarProps, "key"> & { key?: string; children?: JsxChild };
 /** Catalog declarations supply value types; C# remains the semantic validator. */
 export type ComponentFields<T extends string> = T extends keyof CatalogComponentRegistry
   ? CatalogComponentRegistry[T] extends { members: infer M; membersComplete: infer Complete }
@@ -27,7 +25,8 @@ export type ComponentFields<T extends string> = T extends keyof CatalogComponent
   : Record<string, JsonValue>;
 
 export type ComponentProps<T extends string = string> =
-  Omit<ComponentScalarProps, "type" | "fields" | "initialFields"> & {
+  Omit<ComponentScalarProps, "key" | "type" | "fields" | "initialFields"> & {
+    key?: string;
     type: T;
     // Infer from `type` alone: invalid fields must not widen a known literal.
     fields?: ComponentFields<NoInfer<T>>;

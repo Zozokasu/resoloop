@@ -79,13 +79,13 @@ describe("failure fixtures", () => {
     deepEqual(result.document, expectedJson("missing-key-draft.expected.json"));
   });
 
-  test("missing-key-normal-entry.tsx exits 2 with TypeScript diagnostics", async () => {
+  test("missing-key-normal-entry.tsx exits 1 with located EXPLICIT_KEY_REQUIRED", async () => {
     const result = await buildFile(fixture("missing-key-normal-entry.tsx"));
-    equal(result.exitCode, 2);
-    ok(result.errors.length > 0);
+    equal(result.exitCode, 1);
     const text = result.errors.join("\n");
-    match(text, /error TS\d+/);
-    match(text, /'key'/);
+    match(text, /EXPLICIT_KEY_REQUIRED/);
+    match(text, /missing-key-normal-entry\.tsx:7:5/);
+    ok(!/error TS\d+/.test(text));
   });
 
   test("duplicate-sibling-name.tsx exits 1 with DUPLICATE_SIBLING_NAME", async () => {

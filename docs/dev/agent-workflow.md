@@ -109,7 +109,7 @@ Devinを使う場合はsandbox外で、信頼済みの担当slot、自己完結�
 
 ## 開発方針の前提
 
-通常制作は直結: TSX/JSON/ProtoGraph → ResoLoop → RLoop.ResoniteLink（選択した単一セッション）、またはRLoop.Flux → IFluxDeployer → F# deployer → Flux-SDK。Workbench backend（`src/RLoop.Workbench`、`--backend workbench`、`wb`）は凍結し、新機能・書込みadapter・backend同等化・自動fallbackへ投資しない。既存planのS1〜S5に従い、old W4を再開しない。
+通常制作は直結: TSX/JSON/ProtoGraph → ResoLoop → RLoop.ResoniteLink（選択した単一セッション）、またはRLoop.Flux → IFluxDeployer → F# deployer → Flux-SDK。Workbench backend（`src/RLoop.Workbench`、`--backend workbench`、`wb`）はcourse-correction-2026-10で除いた。old W4は再開しない。
 
 `.ccg/`のmanaged領域と信頼設定を無断変更しない。計画の正本は`openspec/`にあり、計画の変更は新しいchangeとしてユーザーの承認を得る。`plan/`は履歴で、変更しない。既存ユーザー変更と未追跡ファイルを保持する。製品の`skills/codex/*`を開発担当の指示へ転用しない。
 
@@ -159,6 +159,7 @@ build、テスト実行、件数集計、差分・hash照合、merge前のGit状
 - 指示書に書いたコマンドは、対象のworktreeで実行する（`--help`か、実機に触れない実行）。コマンドと終了codeを、指示書の「事前確認」に書く。使い方の誤りで終わるコマンドが残る指示書は出さない。
 - 変えてよいtestと、変えてはならないtestを、ファイル名で書く。
 - 停止・保留・所有の確認の挙動を変える指示書では、`rg`で見つけた既存のtest（`ApplyWorkflowTests.S3*.cs`、`SameSessionComponentIdentityTests.cs`、`Creation*Tests.cs`の該当）を「通り続けること」として挙げる。
+- 凍結したファイル（`AGENTS.md`の「Frozen path」）に触れる指示書は、冒頭に「凍結の例外」か「凍結の範囲内（不具合・安全の修正）」かを書く。「凍結の例外」は、ユーザーの承認を得てから出す。
 
 ## Codexの利用枠
 

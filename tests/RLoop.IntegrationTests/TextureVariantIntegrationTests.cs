@@ -8,12 +8,12 @@ namespace RLoop.IntegrationTests;
 [Collection("Screenshot exports")]
 public sealed class TextureVariantIntegrationTests
 {
-    [Fact]
+    [TextureSamplesIntegrationFact]
     [Trait("Category", "Integration")]
     public async Task ComparesTextureVariantsWithoutChangingExistingProviders()
     {
         var samples = Environment.GetEnvironmentVariable("RESOLOOP_TEXTURE_SAMPLES")?.Split(';', StringSplitOptions.RemoveEmptyEntries);
-        if (Environment.GetEnvironmentVariable("RESOLOOP_RUN_INTEGRATION") != "1" || samples is not { Length: > 0 }) return;
+        Assert.NotNull(samples);
         Assert.InRange(samples.Length, 1, 3);
         using var timeout = new CancellationTokenSource(TimeSpan.FromMinutes(4));
         var token = timeout.Token;
@@ -111,5 +111,16 @@ public sealed class TextureVariantIntegrationTests
             await new LiveCaptureService(client).CaptureAsync(ApplyDocument.Load(path), "main", Path.Combine(directory, stage + ".jpg"),
                 Environment.GetEnvironmentVariable("RESOLOOP_SCREENSHOTS_DIR") ?? ScreenshotDirectoryResolver.ResolveDefault(), cancellationToken: token);
         }
+    }
+}
+
+public sealed class TextureSamplesIntegrationFactAttribute : LiveIntegrationFactAttribute
+{
+    public TextureSamplesIntegrationFactAttribute()
+    {
+        Skip = LiveIntegrationGate.SkipReason(
+            Environment.GetEnvironmentVariable(LiveIntegrationGate.Variable),
+            "RESOLOOP_TEXTURE_SAMPLES is not set",
+            Environment.GetEnvironmentVariable("RESOLOOP_TEXTURE_SAMPLES")?.Split(';', StringSplitOptions.RemoveEmptyEntries) is { Length: > 0 });
     }
 }

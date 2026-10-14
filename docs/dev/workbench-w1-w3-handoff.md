@@ -1,5 +1,7 @@
 # Workbench対応 W1・W3 引き継ぎ
 
+> 履歴の文書。Workbench backend は course-correction-2026-10 で除いた。
+
 作成: 2026-09-28
 対象: main `623873c`（W1のmerge `3a86bc2`、W3のmerge `623873c`。未push）
 設計: `plan/workbench-design.md`（承認済み。git管理外）。計画: `plan/workbench-roadmap.md`

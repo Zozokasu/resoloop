@@ -8,11 +8,10 @@ namespace RLoop.IntegrationTests;
 [Collection("Live world writes")]
 public sealed partial class UixRecipeIntegrationTests
 {
-    [Fact]
+    [LiveIntegrationFact]
     [Trait("Category", "Integration")]
     public async Task StructuralRecipesDriveCallerValuesAndPreserveRuntimeState()
     {
-        if (Environment.GetEnvironmentVariable("RESOLOOP_RUN_INTEGRATION") != "1") return;
         using var timeout = new CancellationTokenSource(TimeSpan.FromMinutes(4));
         var ct = timeout.Token;
         await using var client = new ResoniteLinkClientAdapter(TimeSpan.FromSeconds(20));

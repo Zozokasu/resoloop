@@ -1,5 +1,7 @@
 # Workbench読み取り対応表（W2-B）
 
+> 履歴の文書。Workbench backend は course-correction-2026-10 で除いた。
+
 更新: 2026-09-30
 対象: ResoLoop W2-B の実装（このブランチ、コード確定 commit `0d334cc`（W2-B R2・R3 修正後。この文書の更新 commit を除く））、resonite-workbench `7d40c92`。R2（B1: 「不明」応答は接続変化ではない、B2: fieldの `MemberValue.Type` 充填、2026-09-30のlive比較が根拠）と R3 を含む。R3 の規定挙動: `type describe` の「不明」応答の扱い（`reflection.component` の「不明」は `reflection.type` で1回裏取りし、既知の非Component型なら `COMPONENT_TYPE_NOT_FOUND` でCLIが `DescribeTypeAsync` にフォールバック、それ以外は `WORKBENCH_UNAVAILABLE`）、「不明」の判定は `value` 存在＋nullに限定（欠落は不正な応答）、切断を挟む接続切り替わりでも型・member定義cacheを消去、fieldの `MemberValue.Type` は非ジェネリックな通常型のみ充填。`SLOT_NOT_FOUND`/`COMPONENT_NOT_FOUND` の「Unknown」扱いは不変。
 表記: 無印はResoLoop（このworktreeのルート）からの相対パス。`WB:`はresonite-workbench側の参照（このworktreeには同梱されていない）。行番号は1-based。

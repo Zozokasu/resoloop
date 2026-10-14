@@ -88,76 +88,9 @@ resoloop status --json
 
 URLがなければRESONITE_LINK_URL_MISSINGを返します。設定例は[examples/resoloop.example.json](examples/resoloop.example.json)です。
 
-## Workbench backend
+## Workbench backend の除去
 
-`--backend` で接続先のtransportを選択します。既定の `link` は従来どおりResoniteLink WebSocketへ接続します。`workbench` はResonite Workbench Appが開くnamed pipe経由のRPCで、URL探索は行いません。
-
-| 設定 | CLI | 環境変数 | 既定値 |
-|---|---|---|---|
-| backend | `--backend link\|workbench` | `RESOLOOP_BACKEND` | `link` |
-| workbench pipe | `--workbench-pipe NAME` | `RESOLOOP_WORKBENCH_PIPE` | `ResoniteWorkbench.Rpc.v1` |
-
-`resoloop wb status [--json]` は `--backend` の値に関係なく常にWorkbenchへ接続し、handshakeとsession状態を返します。
-
-~~~powershell
-resoloop wb status --json
-~~~
-
-~~~json
-{"ok":true,"data":{"pipe":"ResoniteWorkbench.Rpc.v1","handshake":{"serverVersion":"1.0.0","selectedProtocol":1,"availableCapabilities":["session.read"],"grantedCapabilities":["session.read"]},"session":{"connected":true,"resoniteVersion":"2025.9.2.1234","resoniteLinkVersion":"0.13.1","uniqueSessionId":"..."}}}
-~~~
-
-`session.connected` が `false` の場合、Workbench自体は応答していますがResonite sessionへ未接続です。
-
-`--backend workbench` 時のコマンド対応（正本は `src/RLoop.Cli/BackendSupport.cs` の `WorkbenchSupport`）。Workbench backendは凍結中で、未対応コマンドを追加する予定はありません。通常は直結（`--backend link`、既定）を使ってください。将来のリリースで除去予定です:
-
-| 対応 | コマンド |
-|---|---|
-| supported | status, ping, hierarchy, find, observe, inspect, type, validate |
-| planned-w2 | doctor, uix, item, tool, capture |
-| planned-w4 | diff, plan, slot, component, apply, test, flux |
-| link-only | scene, blender, logs |
-| unsupported | hierarchy profile, hierarchy query, snapshot create（`snapshot diff` は接続不要のため対象外） |
-
-supported以外の表内コマンドを `--backend workbench` で実行すると `BACKEND_UNSUPPORTED` になります。`validate`（非strict）は接続を要しません。`validate --strict` と `type check --manifest` はmember値の変換検証をWorkbench経路では実行できないため、`BACKEND_UNSUPPORTED` で明示的に失敗します。表にないコマンド（help, init, schema, manifest, uix recipe, skills, discover など）は接続を開かないためbackendの影響を受けません。`wb` は表に含めず、常にWorkbenchへ接続します。
-
-planned-w2の延期理由: `doctor` はlink URLの探索に依存します。`tool audit` はtransformが未報告のとき単位値へ黙ってフォールバックし、`uix audit` はmember値がnullのときを「有効」と扱い、`item audit` は深さ64固定、`capture` はComponent/Slotの作成を伴うため、直結経路と同じ結果を保証できません。`diff`/`plan` は書き込み経路の前提ゲートとしてW4で扱います。
-
-### 観測の上限
-
-`world.observe` は深さ0〜32、8,192 Slotまでです。上限は切り詰めずに拒否します。深さ33以上または `--depth -1`（無制限）はWorkbenchを呼ばず、観測が8,192 Slotを超えたときも、どちらも `WORKBENCH_OBSERVE_LIMIT_EXCEEDED`（終了コード7）で失敗します。`--under` で範囲を絞るか `--backend link` を使ってください。
-
-`--depth` の範囲（最大64）と既定値（hierarchy 2、find 8、inspect 1、tool audit 16）は直結経路と同じままです。既定値が32を超えるコマンドは無いため、Workbench経由のときだけ既定を32にする切り替えは入れていません。深さ64固定の内部処理（runtimeRelocatable Slotの再解決、item audit、diff/planの観測）は、Workbench経由ではこの上限で失敗します。
-
-### 直結経路との違い
-
-Workbenchが報告しなかった値は0や単位値で埋めず、null（JSON出力ではキーが省略される）で返します。
-
-- Slotの `position`/`rotation`/`scale`/`isActive`/`isPersistent`/`tag` は未報告のときnullです。slotレベルの `members`（`inspect --members` のslot部分。Parent・PositionなどSlot自身のsync member）はWorkbench経路では常にnull（省略）で得られません。必要なときは `--backend link` を使ってください。
-- 要求した深さより下の子（`--depth 0` ではルート以外すべて）と、除外された子は、`isReferenceOnly: true` のスタブ（id・name・parentIdのみ）として返ります。要求した深さより下でWorkbenchが読めなかった子も、子のないスタブとして扱われ、失敗しません。
-- 接続中ユーザーのSlot（`User ...` という名前で、Workbenchは除外理由を `UserRoot` と報告）は `world.observe` で常に除外され、要求した深さの範囲内でも `isReferenceOnly: true` のスタブとしてだけ返ります。直結経路では展開されます（live測定: `hierarchy --depth 2` で直結269 Slot、Workbenchは183 Slot展開）が、Workbench経路で含める選択肢はありません。
-- 要求した深さの範囲内で、Workbenchが読み取れなかった子Slot（`unexpanded` の reason が `ReadFailed`）があると、hierarchy / find / observe / inspect などSlotを観測するコマンドは、不完全な結果を返さず `WORKBENCH_UNAVAILABLE`（終了コード4、接続失敗と同じ）で失敗します。原因は接続断ではなく一部Slotの読み取り失敗です。コマンドを再試行するか `--backend link` を使ってください。
-- WorkbenchがComponent型の定義を読めないことがあります（`reflection.component` が `Unknown` を返す。測定例: `[FrooxEngine]FrooxEngine.GradientStripTexture`、unknownReasonは "ResoniteLink failed to read the definition of component type ...: Object reference not set to an instance of an object."）。member値は型定義のmember名一覧を起点に読むため、このようなComponentに当たると、member値を読むコマンド（`inspect --members`、`hierarchy --include-components` などすべて）は部分的な結果を返さず全体が `WORKBENCH_UNAVAILABLE`（終了コード4）で失敗します。messageにはComponent型名とWorkbenchのunknownReasonが入ります。接続の問題ではなく再試行しても改善しないため、そのsubtreeには `--backend link` を使うか、対象Componentを含むSlotでは `--members` / `--include-components` を避けてください。同じ型への `type describe` も `WORKBENCH_UNAVAILABLE`（終了コード4）で失敗し、messageに型名とunknownReasonが入ります。`type describe`（`--member` なし）は `reflection.component` の「不明」に対して `reflection.type` で1回裏取りし、型は存在するがComponentではない（enumなど）と分かったときだけ `COMPONENT_TYPE_NOT_FOUND` を返して `DescribeTypeAsync` にフォールバックして成功します（非Component型も従来どおり describe できます）。裏取りの `reflection.type` も「不明」、またはComponentなのに定義を読めないときは `WORKBENCH_UNAVAILABLE` のままです（Workbenchのwireには「型が存在しない」を明示する形がなく、Unknownは不在の証明ではありません）。完全名の打ち間違え（存在しない型）も同じ応答になるため `WORKBENCH_UNAVAILABLE` になり得ます。その場合は `type search` で正しい名前を確認してください。`Unknown` 応答のmetadataにはconnection idが無いため、「読み取り中の接続切り替わり」ではなく型定義の読み取り失敗として報告されます。
-- Componentのmember値: `value` はwireのJSONです。通常のfieldの `type` はComponent型のmember定義（`reflection.component` のvalueType）から埋め、assembly接頭辞を除くため `[mscorlib]System.Single`→`System.Single` のように直結経路のCLR完全名と同じ表記です。enumのfieldはenum型名のままです。`type` がnull（省略）のままなのは、generic・nullable値型、定義と一致しないmember、sync object内のnested memberとlist要素、field以外のmemberです（referenceは `targetType`、opaqueは変更なし）。配列・辞書のmemberは `kind: "opaque"`（値なし）、playbackも値なしです。
-- `type describe` の非Component型: `isWorldElement` と `genericParameters` はWorkbenchが報告しません（R5、保留中）。`isComponent`/`isSyncObject` はtrue、`isEnum`または値型はfalseと決められる型だけが答えられ、それ以外（普通のclass、閉じたgenericなど）は `BACKEND_UNSUPPORTED` です。open genericのパラメータ名は取れます。
-- `type search` が返す型名は `[Assembly]Namespace.Name` の形です。`Slider` などの短い名前は、`reflection.search`（500件の窓）で一意に解決できるときだけ受け付けます。`COMPONENT_TYPE_NOT_FOUND` が返るのは2条件だけです: 短い名前が `reflection.search` で一意に解決できない（該当なし・曖昧・切り詰め。非Component型の describe では `TYPE_NOT_FOUND`）とき、または型は存在するがComponentではないと `reflection.type` で判明したとき（`type describe` は `DescribeTypeAsync` にフォールバックして成功します）。`reflection.component` / `reflection.type` の「不明」（`value` がnullの応答）自体は `WORKBENCH_UNAVAILABLE` です。
-
-### 往復回数
-
-1回の論理読み取りが複数のRPC往復になります。`hierarchy --include-components`、`inspect --members`、`inspect --component/--member` は掛け算になるため、memberの多いComponentや大きなsubtreeでは遅くなります。
-
-- `GetSlot` = `world.observe` 1回。`includeComponentData` のときは、さらにComponentの型ごとに `reflection.component` 1回（client内でcache）＋ memberごとに `member.read` 1回。
-- `GetComponent` = 型が不明なとき `member.read` 1回（型特定のprobe）＋ `reflection.component` 1回（型ごとにcache）＋ member数分の `member.read`。直前の `GetSlot` で型が既知ならmember数分だけです。`member.read` は1回ごとにComponent全体をResoniteLinkから読みます。
-- `type search` = 1回、`type describe`（Component型）= 1〜2回、（非Component型）= 1〜4回。`reflection.component` が「不明」のときは裏取りの `reflection.type` がさらに1往復増えます。
-
-Workbench関連のエラーコード:
-
-- `WORKBENCH_UNAVAILABLE`: pipeへ接続できない、またはhandshakeを完了できない（Workbench未起動など）。読み取り中の接続切り替わり、`stale` 応答、memberの読み取り失敗、型定義の読み取り失敗（`reflection.component` / `reflection.type` の `Unknown`。`type describe` では `reflection.component` の「不明」を `reflection.type` で1回裏取りし、Componentまたは不明ならこのコード。messageに型名とunknownReasonを含む）、要求した深さの範囲内のSlot読み取り失敗（`ReadFailed`）、不正な応答形式も同じコードです
-- `WORKBENCH_PROTOCOL_INCOMPATIBLE`: Workbenchがprotocol versionを拒否。ResoLoopまたはWorkbench Appの更新が必要
-- `WORKBENCH_NOT_CONNECTED`: Workbenchは応答したがResonite sessionへ未接続。`wb status` では `connected: false` として正常出力されます
-- `WORKBENCH_OBSERVE_LIMIT_EXCEEDED`: 観測上限（深さ32・8,192 Slot）を超えた。`--under` で絞るか `--backend link` を使用
-- `BACKEND_UNSUPPORTED`: `--backend workbench` で未対応の接続コマンドを実行した
-- `SLOT_NOT_FOUND` / `COMPONENT_NOT_FOUND`: Workbenchの「Unknown」（不在の証明ではない）のときにも同じコードで返ります。`COMPONENT_TYPE_NOT_FOUND` / `TYPE_NOT_FOUND` は「Unknown」のときには返らず（その場合は `WORKBENCH_UNAVAILABLE`）、`COMPONENT_TYPE_NOT_FOUND` は短い型名が `reflection.search` で一意に解決できなかったとき（該当なし・曖昧・500件の窓で切り詰め）と、型は存在するがComponentではないとき（`type describe` は `DescribeTypeAsync` にフォールバック）に返ります。`TYPE_NOT_FOUND` は短い名前の解決失敗時だけです
+Workbench backend は除きました。`--backend workbench`、`wb` コマンド、`--workbench-pipe` は `BACKEND_REMOVED`（終了 code 2）で、接続の前に止まります。backend の指定を消すか、`link` にしてください。環境変数 `RESOLOOP_WORKBENCH_PIPE` と設定の `workbenchPipe` は読みません。
 
 ## Quick start
 
@@ -260,7 +193,7 @@ resoloop apply examples/house-world.json --json
 
 Creation regenerate rebuilds a complete owned root and is experimental. Its plan and apply require a matched discovery session (`--url auto --session S-ID`), and apply requires `--yes` after plan review. It uses delete-first replacement: all content below the old root, including manual additions, is deleted before creation starts. This leaves a gap, and failure does not restore the deleted root. Inspect the exact root boundary before confirmation.
 
-Build a creation envelope from TSX with `resoloop-jsx build content/room.tsx --target creation -o creation.json --project-root .`. Its default export must evaluate to one root Slot. Creation target permits omitted keys and repeated sibling Slot names, but explicit keys must be unique. `creationId` uses the key from the entry's named `ownership` export when present, otherwise the root Slot's explicit key; absent, invalid, over-128-character, or control-character values fail with `CREATION_ID_INVALID`. Generated positional keys are not eligible. Ordinary schema-v1 builds retain their explicit-key and distinct-sibling-name requirements. Creation target cannot be combined with `--draft`, `--bundle`, `--catalog`, or `--build-id`; creation bundles are unavailable.
+Build a creation envelope from TSX with `resoloop-jsx build content/room.tsx --target creation -o creation.json --project-root .`. Its default export must evaluate to one root Slot. See [Key rules](tools/resoloop-jsx/README.md#key-rules) for when keys may be omitted or are required; repeated sibling Slot names are allowed in creation target, but explicit keys must be unique. `creationId` uses the key from the entry's named `ownership` export when present, otherwise the root Slot's explicit key; absent, invalid, over-128-character, or control-character values fail with `CREATION_ID_INVALID`. Generated positional keys are not eligible. Creation target cannot be combined with `--draft`, `--bundle`, `--catalog`, or `--build-id`; creation bundles are unavailable.
 
 Validate the envelope offline with `resoloop validate creation.json --json`. The CLI recognizes it automatically; `validate` does not take `--mode`. `plan` and `apply` require `--mode regenerate`, and run `CreationRegeneratePreflight` before connecting. Unsupported Asset, Flux, Script, and other creation declarations stop at that preflight. Creation state v4 is separate from ordinary apply state v3; no migration is provided. The TSX creation path and regenerate with same-name siblings have not been verified in a live Resonite session.
 
@@ -291,7 +224,7 @@ TSX builder は入口の named export `export const ownership = { key: "house-wo
 
 新しい再利用部分木は TSX の `<Scope instanceKey="left">` で明示的に囲み、内部の明示 local key `body` を `left::body` に展開します。JSON source では node の `"$scope":"left"` が同じ規則です。nested scope は `outer::inner::local`、instance/local segment は空白のみと `:` を禁止します。兄弟順序は使わず、同名兄弟の禁止は従来どおりです。scope 内の fields/initialFields（配列・object 内も含む）の短い `$slot:` / `$component:` / `$ref:` / `$member:` / `$slot-member:` は現在 scope だけで解決し、親 scope/global に fallback しません。外からは `$member:left::state.Value` や `ref.component(ref.key("left","state"))` の完全 key を使います。完全 key は内部から別 scope を参照する場合にも使えます。`migrateFrom` も同じ scope 規則です。
 
-既存の unscoped key と state の実効 key はそのままです。Scope の追加による自動移行・再採番はせず、展開 key が旧 key と衝突すれば TSX build の `DUPLICATE_KEY` または C# の既存 key 衝突エラーで停止します。新しい segment の不正は `APPLY_SCOPE_INVALID`（終了コード6）。`--draft` の旧 index 由来 key は従来の文字列を出力しますが、source guard `"$draftKeys":true` を付け、validate/diff/plan/apply は `APPLY_DRAFT_KEY_UNSTABLE`（終了コード6）で停止します。意図した実効 key を明示 props に写して再buildしてください。scope 内は draft でも明示 key が必須です。展開後 document schema `"1"`・state schema v3・CLI selector の文字列完全一致規則は変わりません。
+既存の unscoped key と state の実効 key はそのままです。Scope の追加による自動移行・再採番はせず、展開 key が旧 key と衝突すれば TSX build の `DUPLICATE_KEY` または C# の既存 key 衝突エラーで停止します。新しい segment の不正は `APPLY_SCOPE_INVALID`（終了コード6）。`--draft` の旧 index 由来 key は従来の文字列を出力しますが、source guard `"$draftKeys":true` を付け、validate/diff/plan/apply は `APPLY_DRAFT_KEY_UNSTABLE`（終了コード6）で停止します。意図した実効 key を明示 props に写して再buildしてください。scope 内は draft でも明示 local key が必須です。展開後 document schema `"1"`・state schema v3・CLI selector の文字列完全一致規則は変わりません。
 
 生成JSONの任意top-level `authoring` は `{"projectRoot":"C:/projects/house","source":"content/main.tsx","ownershipSource":"entry-export"}` の形です。build時に一度だけ、明示 `--project-root` > 作者TSXの最寄り `.resoloop.json` のdirectory > TSXのdirectory、の順でprojectRootを決めます。projectRootは絶対パス、sourceはproject相対、ownershipSourceは診断情報（未指定exportでは `root-key`）です。生成JSONの出力先・コピー先はstate基準を変えません。project全体を移動したら再buildしてください。新しいmetadataを読むには対応CLIが必要です。
 
@@ -299,7 +232,7 @@ TSX build の受渡しは、呼出し側が毎回 build **前**に作る新規 I
 
 bundle は `kind`、`bundleVersion`、`buildId`、`completion`、`buildStages`、`inputs`、`ir`、`map`、`usedTypes`、`catalog` を持ちます。IR/map/catalog の `text` の UTF-8 bytes hash と、source/catalog の絶対 path・raw bytes hash を記録します。同じ directory の一時ファイルを close・入力再確認後に rename して公開します。TypeScript Program の全 source（宣言・標準 library を含む）と静的 local import が対象で、project 外 source、動的 import/require、Node 組込み、authoring runtime 以外の外部 package は確定できません。文・呼出し先は解析せず、環境変数・時刻等は検出不能で保証対象外です。map は version/buildId/IR hash/sources/entries を持ち、追跡できる元 AST の位置は known range、追跡できない位置は明示 `unknown` です。位置が unknown だけの旧 map も受け付けます。
 
-CLI は拡張子ではなく内容で識別し、bundle 経路から通常 JSON へ fallback しません。要求 R、確定 stage、全 payload、map/source 整合、共有 IR/catalog 検証、使用型完全名の集合を接続前に検査します。保持した入力 snapshot を準備後と最初の実機 mutation 直前に再確認し、変更・削除・読取り不能なら書込み 0 で停止します。内包 catalog 原本だけを使い、外部 `--catalog` の併用は拒否します。接続ありの diff/plan/apply と validate --strict は synthetic を拒否し、既存 strict と同じ session/client version 照合をします。未確認 catalog は既存 `APPLY_CATALOG_UNAVAILABLE`、bundle 不正は `APPLY_BUILD_BUNDLE_INVALID`（exit 6、`context.reason`: requestMismatch/uncommitted/mixed/inputChanged/inputUnknown）。bundle に ID がない／通常 JSON に ID がある場合は既存引数エラー（exit 2）、Workbench は `BACKEND_UNSUPPORTED`。手書き／従来生成 JSON の直接経路・validate JSON・schema `"1"`・state のパス解決は維持し、警告は増やしません。内包 authoring の project/state 基準と `--state`/`--require-state` も従来どおりです。
+CLI は拡張子ではなく内容で識別し、bundle 経路から通常 JSON へ fallback しません。要求 R、確定 stage、全 payload、map/source 整合、共有 IR/catalog 検証、使用型完全名の集合を接続前に検査します。保持した入力 snapshot を準備後と最初の実機 mutation 直前に再確認し、変更・削除・読取り不能なら書込み 0 で停止します。内包 catalog 原本だけを使い、外部 `--catalog` の併用は拒否します。接続ありの diff/plan/apply と validate --strict は synthetic を拒否し、既存 strict と同じ session/client version 照合をします。未確認 catalog は既存 `APPLY_CATALOG_UNAVAILABLE`、bundle 不正は `APPLY_BUILD_BUNDLE_INVALID`（exit 6、`context.reason`: requestMismatch/uncommitted/mixed/inputChanged/inputUnknown）。bundle に ID がない／通常 JSON に ID がある場合は既存引数エラー（exit 2）。手書き／従来生成 JSON の直接経路・validate JSON・schema `"1"`・state のパス解決は維持し、警告は増やしません。内包 authoring の project/state 基準と `--state`/`--require-state` も従来どおりです。
 
 保証は bundle 制作手順に限ります。R と確定印は署名ではなく producer との契約で、手動の ID 再利用や偽造を検出できません。最終確認後の競合・書込み開始後の変更、precondition/lock/応答喪失は S3 です。`--diagnostics NEW_FILE.json` は元 TSX の位置と詳細な証拠を別 JSON に出します。位置を追跡できない場合は unknown、catalog の成功だけでは runtime は未検証です。実 catalog と live は別途検証が必要です。[完全な手順・形式](tools/resoloop-jsx/README.md)。
 
@@ -581,7 +514,7 @@ mapper 2の旧catalogは `APPLY_CATALOG_UNAVAILABLE` となるため、明示認
 
 Component/member の取得範囲、完全名と確認済み alias、base/interface 閉包、generic の確認状態、nullable／tuple の要素、list／array／dictionary と SyncObject の入れ子を保持します。取得範囲外 member は不存在にしません。型名が違うだけでは参照不適合と判定せず、未取得の基底型・interface、未確認 generic、外部参照・asset・Slot member の型不明は `APPLY_CATALOG_UNAVAILABLE`。確認済み閉包で証明できた不適合だけが `APPLY_REFERENCE_TYPE_MISMATCH` です。Single は nullable の非 null 値と tuple 各要素を含め `VALUE_CONVERSION_FAILED` で変換失敗・NaN／Infinity・表現範囲外を拒否します。丸めや精度損失は許容し、member 固有範囲は推測しません。既存 issues／`ApplyValidationResult`／終了コード 6 を使います。
 
-schema v1のComponent `fieldAliases`は、宣言済みmemberへ文書内一意のaliasを付けます。`$field:alias`はcompile時に既存scope解決で`$member:componentKey.Member`へ変換され、state v3や`observe`のselector形式は変わりません。TSX `<Field>`は`mode`省略時に`propertyModes[name]`を引き継ぎ、未指定なら`fields`相当です。`mode="initial"`は`initialFields`相当です。runtime/driver-owned値は作成時も書きません。valueを省略したFieldはruntime/driver-owned memberを`propertyModes`へ登録し、`key`は任意aliasを付けます。`<Slot tag>`は任意JSON `slot.tag`です。省略は保持、空文字列は消去を意味し、Tag更新は通常のS3 pre-send check・pending・readbackを通ります。Workbench backendはSlot書込みに対応していません。実機（Resonite 2026.9.18.82、ResoniteLink 0.13.1.0）で2026-10-03に、tagを宣言したSlotの作成と更新が反映され読み直しと一致すること、tagを宣言から外しても実機の値を変えないこと、`tag: ""`が空文字として読み戻り保留が残らないこと（未設定のTagはnullで返る）を確認しました。runtime Reflectionは未検証です。
+schema v1のComponent `fieldAliases`は、宣言済みmemberへ文書内一意のaliasを付けます。`$field:alias`はcompile時に既存scope解決で`$member:componentKey.Member`へ変換され、state v3や`observe`のselector形式は変わりません。TSX `<Field>`は`mode`省略時に`propertyModes[name]`を引き継ぎ、未指定なら`fields`相当です。`mode="initial"`は`initialFields`相当です。runtime/driver-owned値は作成時も書きません。valueを省略したFieldはruntime/driver-owned memberを`propertyModes`へ登録し、`key`は任意aliasを付けます。`<Slot tag>`は任意JSON `slot.tag`です。省略は保持、空文字列は消去を意味し、Tag更新は通常のS3 pre-send check・pending・readbackを通ります。実機（Resonite 2026.9.18.82、ResoniteLink 0.13.1.0）で2026-10-03に、tagを宣言したSlotの作成と更新が反映され読み直しと一致すること、tagを宣言から外しても実機の値を変えないこと、`tag: ""`が空文字として読み戻り保留が残らないこと（未設定のTagはnullで返る）を確認しました。runtime Reflectionは未検証です。
 
 | 診断 | 発生条件 |
 | --- | --- |
@@ -594,7 +527,7 @@ schema v1のComponent `fieldAliases`は、宣言済みmemberへ文書内一意�
 
 mode policyとの競合には既存`APPLY_COMPONENT_FIELD_POLICY_CONFLICT`を使います。JSONはstructured JSON path、TSX bundleはsource rangeを返します。
 
-catalog 成功だけでは `Strict=true` にしません。`--catalog --strict` は先に offline catalog preflight、次に既存 live strict と session/client version 照合を行います。Workbench backendでは `catalog capture` を使えませんが、`catalog types` のoffline処理はbackend接続を必要としません。通常CLIの `catalog capture` / `catalog types` を使った後、開発者は必要に応じて[開発用tool](tools/RLoop.CatalogExport/README.md)からsnapshotのexport/importを行えます。旧cacheは取得identityがなく受け入れません。catalog未指定の既存経路は維持します。V11のfixtureは合成で、実catalog・live captureの実機検証はこの文書更新では実施していません。
+catalog 成功だけでは `Strict=true` にしません。`--catalog --strict` は先に offline catalog preflight、次に既存 live strict と session/client version 照合を行います。`catalog types` のoffline処理はbackend接続を必要としません。通常CLIの `catalog capture` / `catalog types` を使った後、開発者は必要に応じて[開発用tool](tools/RLoop.CatalogExport/README.md)からsnapshotのexport/importを行えます。旧cacheは取得identityがなく受け入れません。catalog未指定の既存経路は維持します。V11のfixtureは合成で、実catalog・live captureの実機検証はこの文書更新では実施していません。
 
 ### Experimental Object API
 
@@ -680,7 +613,7 @@ v3 の操作 ID は state の `pending[].operationId` です。v1/v2 の空 ID �
 
 直結の書込みは、session を観測してから session lock、project state lock の順に取得し、再観測して計画します。競合は待ち続けずに失敗し、handle は finally/Dispose で解放します。session lock の鍵は `ApplySessionObservation.NormalizeUrl` による正規化 URL です。scheme と host は小文字にし、IDN の host は ASCII 形にして末尾ドットを除きます。loopback アドレス（`localhost`、`127.0.0.0/8` 全体の `127.0.0.1`・`127.0.0.2` など、`::1`）は同じ `localhost` として扱い、既定 port は省略と同じ鍵になります。scheme・port・path・query が違えば別の鍵です。loopback 以外の host 名は、同じ Resonite へ届いても別の鍵になります。別の鍵が実際に同じ world へ届くかは実機で検証していません。project と作業 directory に関係なく `<LocalApplicationData>/ResoLoop/write-locks/<URL の SHA-256>.lock` の排他的 file handle を一つ使います。cache 清掃の対象ではありません。
 
-参加する入口は apply（asset import を含む）、Fluxの各配置、直接の Slot create/set/delete、Component add/set/remove、画像 capture の一時カメラ作成から後片付けまで、`test --probe` の実行と復元です。Fluxは配置ごとにlockを取得し、配置後のreadbackとstate確定まで保持します。読取りとoffline SVG captureはsession lockを取りません。`--discard-pending`もどちらのCLIでもsession lockを取りません。applyの破棄はapply project state lockを使ってapply stateだけを更新し、Fluxの破棄はFlux deploy stateのwriter lockを使ってdeployment pendingだけを更新します。どちらもofflineで実行し、worldへ接続・書込みしません。Workbenchの操作も変更していません。
+参加する入口は apply（asset import を含む）、Fluxの各配置、直接の Slot create/set/delete、Component add/set/remove、画像 capture の一時カメラ作成から後片付けまで、`test --probe` の実行と復元です。Fluxは配置ごとにlockを取得し、配置後のreadbackとstate確定まで保持します。読取りとoffline SVG captureはsession lockを取りません。`--discard-pending`もどちらのCLIでもsession lockを取りません。applyの破棄はapply project state lockを使ってapply stateだけを更新し、Fluxの破棄はFlux deploy stateのwriter lockを使ってdeployment pendingだけを更新します。どちらもofflineで実行し、worldへ接続・書込みしません。
 
 `APPLY_SESSION_BUSY`（exit 7）は同じ URL の別 writer が handle を保持している状態です。`APPLY_STATE_BUSY` は従来どおり、一つの state の writer 競合です。ファイルの存在や PID の古さで stale 判定しません。動いている writer が保持する lock を削除・奪取せず、holder の終了を待ってください。プロセス終了で OS が handle を解放すれば次の取得が可能です。
 

@@ -7,11 +7,10 @@ namespace RLoop.IntegrationTests;
 
 public sealed partial class UixRecipeIntegrationTests
 {
-    [Fact]
+    [LiveIntegrationFact]
     [Trait("Category", "Integration")]
     public async Task InputToggleChoiceSliderPreserveStateAndExposeCallerBindings()
     {
-        if (Environment.GetEnvironmentVariable("RESOLOOP_RUN_INTEGRATION") != "1") return;
         using var timeout = new CancellationTokenSource(TimeSpan.FromMinutes(4));
         var ct = timeout.Token;
         await using var client = new ResoniteLinkClientAdapter(TimeSpan.FromSeconds(20));

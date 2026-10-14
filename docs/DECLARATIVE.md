@@ -93,7 +93,7 @@ TSXでは`<Component>`内に`<Field name="REFLECTION_VERIFIED_LIGHT_MEMBER" valu
 
 modeとのpolicy衝突には既存の`APPLY_COMPONENT_FIELD_POLICY_CONFLICT`を使います。JSON入力はJSON path、TSX bundleはsource rangeで診断します。詳細は[TSX authoring](../tools/resoloop-jsx/README.md)を参照してください。
 
-Slotの任意`tag`を省略するとplanに差分を作らず既存Tagを保持します。明示した空文字列はTagを消去します。Tag書込みはS3 pre-send check、pending記録、readbackを通ります。Workbench backendはSlot書込みを受け付けません。実機（Resonite 2026.9.18.82、ResoniteLink 0.13.1.0）で2026-10-03に、tagを宣言したSlotの作成と更新が反映され読み直しと一致すること、tagを宣言から外しても実機の値を変えないこと、`tag: ""`が空文字として読み戻り保留が残らないこと（未設定のTagはnullで返る）を確認しました。runtime Reflectionは未検証です。
+Slotの任意`tag`を省略するとplanに差分を作らず既存Tagを保持します。明示した空文字列はTagを消去します。Tag書込みはS3 pre-send check、pending記録、readbackを通ります。実機（Resonite 2026.9.18.82、ResoniteLink 0.13.1.0）で2026-10-03に、tagを宣言したSlotの作成と更新が反映され読み直しと一致すること、tagを宣言から外しても実機の値を変えないこと、`tag: ""`が空文字として読み戻り保留が残らないこと（未設定のTagはnullで返る）を確認しました。runtime Reflectionは未検証です。
 
 ## Transform管理とstable key migration
 

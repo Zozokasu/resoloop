@@ -9,11 +9,10 @@ namespace RLoop.IntegrationTests;
 [Collection("Live world writes")]
 public sealed class CanvasFramingIntegrationTests
 {
-    [Fact]
+    [LiveIntegrationFact]
     [Trait("Category", "Integration")]
     public async Task LiveFramingCapturesTransformedCanvasAndPreservesItsPose()
     {
-        if (Environment.GetEnvironmentVariable("RESOLOOP_RUN_INTEGRATION") != "1") return;
         using var timeout = new CancellationTokenSource(TimeSpan.FromMinutes(3));
         var ct = timeout.Token;
         await using var client = new ResoniteLinkClientAdapter(TimeSpan.FromSeconds(20));

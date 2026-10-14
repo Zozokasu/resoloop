@@ -92,6 +92,25 @@ public sealed class CreationModeBoundaryTests : IDisposable
         Assert.Equal("CONFIRMATION_REQUIRED", parsed.RootElement.GetProperty("error").GetProperty("code").GetString());
     }
 
+    [Fact]
+    public async Task RegenerateApplyWithYesRejectsDraftKeysBeforeConnection()
+    {
+        var path = Save("apply-regenerate-draft-keys.json", Envelope.Replace("\"children\":[]", "\"children\":[],\"$draftKeys\":true"));
+        var report = Path.Combine(root, "apply-regenerate-draft-keys-report.json");
+        var connects = 0;
+        var exit = await Program.RunAsync(["apply", path, "--mode", "regenerate", "--replace-order", "delete-first", "--yes", "--json", "--report", report], _ =>
+        {
+            connects++;
+            throw new InvalidOperationException("Draft key rejection must happen before connection.");
+        });
+        Assert.Equal(ExitCodes.ValidationFailed, exit);
+        Assert.Equal(0, connects);
+        using var parsed = JsonDocument.Parse(File.ReadAllText(report));
+        var error = parsed.RootElement.GetProperty("error");
+        Assert.Equal("CREATION_DOCUMENT_INVALID", error.GetProperty("code").GetString());
+        Assert.Contains("Draft index-derived", error.GetProperty("message").GetString());
+    }
+
     [Theory]
     [InlineData("--adopt")]
     [InlineData("--prune")]

@@ -1,0 +1,38 @@
+{
+  "schemaVersion": 3,
+  "ownershipKey": "ordinary-apply-frozen",
+  "sessionId": "session-1",
+  "session": {
+    "normalizedUrl": "ws://fake/",
+    "discoverSessionId": "S-frozen-fixture",
+    "identityStatus": "matched"
+  },
+  "sessionBinding": "sha256:55db596272f59f2bbb4405d8e62d4b19c4640a535588f2f190c2ee88a8718992",
+  "slots": {
+    "root": {
+      "id": "S1",
+      "path": "Root/Managed",
+      "runtimeRelocatable": false,
+      "pathSegments": [
+        "Root",
+        "Managed"
+      ]
+    }
+  },
+  "components": {
+    "source": {
+      "id": "C1",
+      "slotKey": "root",
+      "type": "Test.Source",
+      "typeOrdinal": 0,
+      "componentIndex": 0,
+      "memberNames": [
+        "Target"
+      ],
+      "identityValues": null,
+      "referenceSelectors": null
+    }
+  },
+  "assets": {},
+  "pending": []
+}

@@ -6,7 +6,7 @@ ResoLoopは、AIコーディングエージェントがResoniteLink経由でReso
 アーキテクチャ、コマンド、Resonite安全規則、上流の扱い、テストとSkillの同期規則は[`AGENTS.md`](AGENTS.md)を正とする。
 この文書はClaude向けの入口で、AGENTS.mdと重複する規則は書かない。
 
-このリポジトリはorange3134/resoloopのforkである。当面はupstreamを取り込まない。通常制作は直結（ResoniteLink）主経路へ統一し、Workbench backendは凍結・S5で除去予定である（順序: `openspec/roadmap.md` の R12）。方針と調査結果は[`docs/dev/fork-strategy.md`](docs/dev/fork-strategy.md)にある。
+このリポジトリはorange3134/resoloopのforkである。当面はupstreamを取り込まない。通常制作は直結（ResoniteLink）主経路へ統一し、Workbench backendはcourse-correction-2026-10で除いた（順序: `openspec/roadmap.md` の R12）。方針と調査結果は[`docs/dev/fork-strategy.md`](docs/dev/fork-strategy.md)にある。
 
 ## 製品ファイルと開発用ファイルの区別
 

@@ -3,7 +3,7 @@
 param(
     [ValidateSet('All', 'Dotnet', 'Jsx', 'JsxContract', 'Inspect')][string]$Profile = 'All',
     [string]$TestFilter,
-    [ValidateSet('All','RLoop.Tests','RLoop.Workbench.Tests','RLoop.IntegrationTests')][string]$TestProject = 'All',
+    [ValidateSet('All','RLoop.Tests','RLoop.IntegrationTests')][string]$TestProject = 'All',
     [ValidatePattern('^[A-Za-z0-9][A-Za-z0-9_./-]*$')][string]$SourceRef
 )
 
@@ -11,7 +11,7 @@ param(
 function Get-VerifyPlan {
     param([string]$Profile, [string]$Root, [string]$Evidence, [string]$Filter, [string]$TestProject='All')
     if ($Profile -notin @('All','Dotnet','Jsx','JsxContract','Inspect')) { throw 'Unknown offline profile.' }
-    if ($TestProject -notin @('All','RLoop.Tests','RLoop.Workbench.Tests','RLoop.IntegrationTests')) { throw 'Unknown offline test project.' }
+    if ($TestProject -notin @('All','RLoop.Tests','RLoop.IntegrationTests')) { throw 'Unknown offline test project.' }
     if ($TestProject -ne 'All' -and $Profile -notin @('All','Dotnet')) { throw 'TestProject requires a .NET profile.' }
     if ($Filter -match '(?i)Integration|RESOLOOP_RUN|--|[\r\n;]') { throw 'Live/command options are forbidden in the test filter.' }
     $depth=0
@@ -24,7 +24,7 @@ function Get-VerifyPlan {
     $plan = [System.Collections.Generic.List[object]]::new()
     if ($Profile -in @('All','Dotnet')) {
         $plan.Add(@{name='dotnet-build';file='dotnet';args=@('build','ResoLoop.slnx','--no-restore','--no-incremental');cwd=$Root;kind='command'})
-        $projects=if ($TestProject -eq 'All') { @('RLoop.Tests','RLoop.Workbench.Tests','RLoop.IntegrationTests') } else { @($TestProject) }
+        $projects=if ($TestProject -eq 'All') { @('RLoop.Tests','RLoop.IntegrationTests') } else { @($TestProject) }
         foreach ($project in $projects) {
             $plan.Add(@{name="test-$project";file='dotnet';args=@('test',"tests/$project/$project.csproj",'--no-build','--no-restore','--filter',$filterArg,'--logger','trx','--results-directory',(Join-Path $Evidence $project));cwd=$Root;kind='trx';results=(Join-Path $Evidence $project)})
         }

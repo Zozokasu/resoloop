@@ -6,11 +6,10 @@ namespace RLoop.IntegrationTests;
 [Collection("Live world writes")]
 public sealed class ComponentRelocationReferenceIntegrationTests
 {
-    [Fact]
+    [LiveIntegrationFact]
     [Trait("Category", "Integration")]
     public async Task ReferencedLightRelocatesAndButtonToggleTracksItsNewEnabledField()
     {
-        if (Environment.GetEnvironmentVariable("RESOLOOP_RUN_INTEGRATION") != "1") return;
         var url = Environment.GetEnvironmentVariable("RESONITE_LINK_URL")
                   ?? throw new InvalidOperationException("RESONITE_LINK_URL is required.");
         var suffix = Guid.NewGuid().ToString("N");

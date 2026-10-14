@@ -60,12 +60,28 @@ resoloop-jsx build <entry.tsx> -o <out.json> [--draft] [--project-root PATH]
 node dist/src/cli.js build <entry.tsx> -o <out.json> [--draft] [--project-root PATH]
 ```
 
+See [Key rules](#key-rules) for how `--draft` handles omitted keys.
+
+## Key rules
+
+| Use | Import | Build | Apply | Key |
+| --- | --- | --- | --- | --- |
+| Regenerate (experimental) | `resoloop-jsx` | `build entry.tsx -o out.json --target creation` | `apply out.json --mode regenerate --replace-order delete-first --yes --url auto --session S-ID` | May be omitted. `Scope` `instanceKey` is required. |
+| Normal | `resoloop-jsx` | `build entry.tsx -o out.json` | `apply out.json` | Required on all nodes. Missing keys fail with `EXPLICIT_KEY_REQUIRED` (exit code 1, with a TSX location). |
+| Draft (inspection only) | `resoloop-jsx` | `build entry.tsx -o out.json --draft` | Not applicable (`APPLY_DRAFT_KEY_UNSTABLE`) | May be omitted. |
+
+With `--draft`, missing keys are generated as `<parentKey>/<slug(name-or-type)>#<sameKindSiblingIndex>` and one warning per generated key is printed to stderr. The output carries the source guard `"$draftKeys":true`; validate/diff/plan/apply reject it with `APPLY_DRAFT_KEY_UNSTABLE`. Copy intended effective keys into explicit props and rebuild before applying. The old generated strings remain unchanged, but inserting a sibling can shift their index, so they are inspection-only. Draft builds with all explicit keys have no guard and remain applicable.
+
+Explicit keys must be unique in every use. Normal builds also require distinct sibling Slot names (`DUPLICATE_SIBLING_NAME`); creation target allows repeated sibling names.
+
+`resoloop-jsx/draft` is a compatibility alias for the main entry point; do not use it for new TSX.
+
 ## Experimental TSX creation input
 
 To create an envelope for the experimental whole-root regenerate workflow, pass `--target creation`:
 
 ```tsx
-import { Slot, Component } from "resoloop-jsx/draft";
+import { Slot, Component } from "resoloop-jsx";
 
 export const ownership = { key: "room" };
 
@@ -75,7 +91,7 @@ export default <Slot name="Room">
 </Slot>;
 ```
 
-The entry's default export must evaluate to one root `<Slot>`. Creation target permits omitted keys and repeated sibling Slot names; explicit Slot and Component keys must still be unique. This relaxed rule applies to creation envelopes only. Ordinary builds still emit schema-v1 `ApplyDocument` JSON, where explicit keys and distinct sibling Slot names remain required. Creation builds do not use `--draft`, `--bundle`, `--catalog`, or `--build-id`; this version has no creation bundle.
+The entry's default export must evaluate to one root `<Slot>`. See [Key rules](#key-rules) for key requirements. Creation builds do not use `--draft`, `--bundle`, `--catalog`, or `--build-id`; this version has no creation bundle.
 
 `creationId` comes from the entry's named `ownership` export key when present, otherwise from the root Slot's explicit key. If neither supplies a valid key, build fails with `CREATION_ID_INVALID`. The value must contain 1–128 characters and no control characters; generated positional keys never become `creationId`.
 
@@ -111,7 +127,7 @@ The envelope fields are `kind: "resoloop-build-bundle"`, `bundleVersion: "1"`, `
 
 The map has `version`, `buildId`, `irSha256`, `sources` (path/hash) and `entries` (IR `jsonPath` and `source`). The producer emits known original AST ranges for tracked origins and explicit `{ "status": "unknown" }` for untracked locations; maps containing only unknown locations remain accepted. Core validates every payload, completion stages, request, input snapshot, shared IR/catalog semantics and the ordinal sorted set of resolved Component full names. Node identifies types without duplicating the semantic validator.
 
-`validate|diff|plan|apply BUNDLE --build-id R` consume this single snapshot without Node. Detection uses `kind`/`bundleVersion`, not the extension; damaged/unsupported bundles never fall back to ordinary JSON. Bundle input requires the external request ID, while ordinary JSON rejects `--build-id`. Checks run before connection and inputs are checked again after preparation and immediately before the first mutation. `APPLY_BUILD_BUNDLE_INVALID` uses exit 6 and `context.reason` (`requestMismatch`, `uncommitted`, `mixed`, `inputChanged`, `inputUnknown`). Missing/invalid arguments use existing exit 2 codes. Only the embedded catalog is used; omit CLI `--catalog`. Unavailable catalog evidence retains `APPLY_CATALOG_UNAVAILABLE`. Connected commands (`diff`, `plan`, `apply`, `validate --strict`) reject synthetic catalogs and require session/client version matching. Workbench rejects bundles with `BACKEND_UNSUPPORTED`.
+`validate|diff|plan|apply BUNDLE --build-id R` consume this single snapshot without Node. Detection uses `kind`/`bundleVersion`, not the extension; damaged/unsupported bundles never fall back to ordinary JSON. Bundle input requires the external request ID, while ordinary JSON rejects `--build-id`. Checks run before connection and inputs are checked again after preparation and immediately before the first mutation. `APPLY_BUILD_BUNDLE_INVALID` uses exit 6 and `context.reason` (`requestMismatch`, `uncommitted`, `mixed`, `inputChanged`, `inputUnknown`). Missing/invalid arguments use existing exit 2 codes. Only the embedded catalog is used; omit CLI `--catalog`. Unavailable catalog evidence retains `APPLY_CATALOG_UNAVAILABLE`. Connected commands (`diff`, `plan`, `apply`, `validate --strict`) reject synthetic catalogs and require session/client version matching.
 
 For source diagnosis, add `--diagnostics NEW_FILE.json` to `validate|diff|plan|apply`. This separate JSON has `diagnosticVersion: "1"` and structured key/member/IR path, known/unknown source, expected/observed evidence and completeness; a known null is distinct from unknown. Bundle map v1 stores original TS/TSX UTF-16 AST offsets and one-based, end-exclusive line/column ranges bound to source hashes. Fix TSX using that location, then create a fresh bundle/request; generated JSON lines are not an authoring location. Unchanged function props forwarded directly preserve caller expressions; rewritten scalar or nested object props have unknown primary locations; Scope, fragments, map callbacks and selected conditional children retain original ranges. Spread/computed members and untracked value transfers have unknown primary locations with real expressions/calls as related evidence. Handwritten and legacy generated JSON also accept diagnostics, with unknown source. Legacy stdout/stderr JSON, context.issues and reports are unchanged. Diagnostics require a new file in an existing writable directory, distinct from the selected input/bundle, catalog and state paths (including missing files); writing failure is reported on stderr without changing validation/apply judgement or exit code. Catalog evidence never completes runtime verification.
 
@@ -194,10 +210,7 @@ without draft key generation, then use `resoloop diff OUTPUT.json --state OLD_ST
 diff, preserved IDs, and zero diff after apply. The flag stops on a missing
 checkpoint instead of creating an empty state. See [migration details](../../README-DETAILS.md).
 
-Every `<Slot>` and `<Component>` carries an explicit stable `key` prop. With
-the normal entry point (`import { Slot, Component } from "resoloop-jsx"`)
-`key` is required by the TypeScript types — omitting it fails type-checking
-(exit code 2) before the entry is evaluated.
+See [Key rules](#key-rules) for when `<Slot>` and `<Component>` keys are required.
 
 `ref.slot(key)` / `ref.component(key)` / `ref.member(key, member)` /
 `ref.slotMember(key, member)` produce the `$slot:` / `$component:` /
@@ -246,27 +259,6 @@ Invalid segments or unresolved scoped references fail the TSX build with
 `APPLY_SCOPE_INVALID`; C# uses `APPLY_SCOPE_INVALID` for invalid segments and
 existing key-conflict/reference error codes for collisions/missing targets.
 
-## Entry points: normal vs draft
-
-- `import { Slot, Component } from "resoloop-jsx"` — `key` is required in the
-  prop types; omitting it fails TypeScript diagnostics (exit code 2).
-- `import { Slot, Component } from "resoloop-jsx/draft"` — the same runtime
-  functions, but `key` is optional in the types. Intended for prototyping a
-  tree. Without `--draft` a build still fails at evaluation with
-  `EXPLICIT_KEY_REQUIRED` (exit code 1); with `--draft`, a deterministic key
-  of the form `<parentKey>/<slug(name-or-type)>#<sameKindSiblingIndex>` is
-  generated per missing key and one warning each is printed to stderr
-  (exit code 0). Such output carries the source guard `"$draftKeys":true`;
-  validate/diff/plan/apply reject it with `APPLY_DRAFT_KEY_UNSTABLE`.
-  Copy intended effective keys into explicit props and rebuild before applying.
-  The old generated strings remain unchanged; inserting a sibling can shift
-  their index, so they are inspection-only. Draft builds with all explicit keys
-  have no guard and remain applicable.
-
-Everything other than `Slot`/`Component` prop typing (`ref`, `Fragment`,
-`Scope`, `BuildError`, `evaluate`, and all shared types) is identical from either
-entry point.
-
 ## Exit codes
 
 | code | meaning |
@@ -297,7 +289,7 @@ are not yet supported, no `ref.asset` helper is exposed.
 
 Without `mode`, a Field inherits `propertyModes[name]` when present; otherwise it is `config` and emits under `fields`. `mode="initial"` emits under `initialFields`. `runtime` and `driver-owned` values are never written, including during creation. A value may be omitted for `runtime` or `driver-owned`; the Field itself declares that member in `propertyModes`, and its optional `key` adds an alias. Alias targets must appear in `fields`, `initialFields`, or `propertyModes`. Do not declare the same member through both `fields`/`initialFields` and `<Field>`, or through multiple Field children. The generated types apply only to the `fields` and `initialFields` of `<Component type="...">`. Legacy `<Field>` children keep the loose `JsonValue` type, so TypeScript does not check their member names or values. For catalog-bound checks, use `componentFields(type, catalog)` and its `Lamp.Field` method; it checks confirmed member names and values. C# catalog validation remains authoritative.
 
-`<Slot tag="...">` maps to optional JSON `slot.tag`. Omit it to preserve an existing Tag without a plan change; pass an empty string to clear it. Slot Tag writes use the existing pre-send check, pending evidence and one readback. Workbench does not accept Slot writes. Live-verified on 2026-10-03 (Resonite 2026.9.18.82, ResoniteLink 0.13.1.0): creating and updating a Slot with a declared tag applied and matched the readback; removing the tag from the declaration left the live value unchanged; `tag: ""` read back as an empty string with no pending evidence left (an unset Tag is returned as null). Runtime Reflection remains unverified.
+`<Slot tag="...">` maps to optional JSON `slot.tag`. Omit it to preserve an existing Tag without a plan change; pass an empty string to clear it. Slot Tag writes use the existing pre-send check, pending evidence and one readback. Live-verified on 2026-10-03 (Resonite 2026.9.18.82, ResoniteLink 0.13.1.0): creating and updating a Slot with a declared tag applied and matched the readback; removing the tag from the declaration left the live value unchanged; `tag: ""` read back as an empty string with no pending evidence left (an unset Tag is returned as null). Runtime Reflection remains unverified.
 
 JSON `fieldAliases` is an optional alias-to-member dictionary. It does not change `schemaVersion: "1"`. The compiler resolves `$field` references to canonical `$member:componentKey.Member` selectors; state v3 and downstream `observe` selectors continue to use `$member`.
 
