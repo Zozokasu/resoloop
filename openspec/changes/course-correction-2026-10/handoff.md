@@ -2,6 +2,88 @@
 
 群を 1 つ終えるたびに、日付の見出しの節を先頭へ足す。進捗は `tasks.md` のチェックだけに書き、ここには写さない。全体の順序は `openspec/roadmap.md`、未検証の一覧は `openspec/unverified.md` にある。
 
+## 2026-10-14 14:40 JST — 群 5 を終えた（主の入口で key を省けるようにし、key の規則を 1 つの表にした）
+
+### 伺いと返事
+
+- 2026-10-14 13:31 ごろ、ユーザーが `/ccg:spec-impl` を実行した（言葉の添えは無い）。Opus は、群 5 に入ってよいとして受け取った。Codex の枠は、11:18 のユーザーの言葉が今日も有効と解釈した（Opus の解釈）。
+
+### 計画と実際の違い（下調べ: Claude の調査役 2 本、読み取りだけ、slot3 `a28b708`）
+
+| 計画（`tasks.md`） | 実際 | Opus の決定 |
+| --- | --- | --- |
+| 5.4 `elements.ts` の `key` を `key?: string` にする | 必須の `key: string` は生成物 `src/generated/apply-types.ts:116,128` にあり、`SlotProps` はそれを継ぐ | 生成物は変えず、`elements.ts` で `Omit<…,"key"> & { key?: string }` の形にする |
+| 5.1 (c) `EXPLICIT_KEY_REQUIRED` と要素の位置／5.4 `resolveKey` は変えない | いまの `EXPLICIT_KEY_REQUIRED` には TSX の位置が付かない（文書内の path だけ） | `resolveKey` の本体と key の規則は変えず、呼び出しの 2 か所（`evaluate.ts:286,379`）で位置を付け、`cli.ts` の位置付きの code の一覧に足す。計画の「変えない」は key の規則を守る条件と読んだ |
+| 5.1 (e) `--target creation --draft` が止まる | すでに終了 code 1・出力なしで止まる | test を足すだけ |
+| 5.6 `README.md`・`README_JA.md`・`README-DETAILS.md`・`skills` の `resoloop-jsx/draft` を消す | 4 つとも 0 件。`resoloop-jsx/draft` は `tools/resoloop-jsx/README.md:68,253` だけ。`README-DETAILS.md` の行は Workbench の節が縮んで 192〜227 行へずれた | 5.6 の契約で、行を今の位置で指定する |
+| 5.5 `--mode regenerate --yes` で拒否 | src はすでに、接続の前に終了 code 6 で止まる。外側の code は `CREATION_DOCUMENT_INVALID`（`CreationDocument.cs:147-150` が包む）で、message に `Draft index-derived` が入る | src は変えない。test はその形で確かめる |
+
+### Codex の利用枠（起動の前の記録）
+
+- 窓の開始は 2026-10-14 09:14:01（14:14 ごろに閉じる見込み）、使用済みは 1,008,958 token。見積もりは entry 25 万、docs と 5.5 で 10 万。目安の 50 万はすでに超えているが、ユーザーの言葉により起動する。容量切れや利用上限の拒否が出たら、契約を書き換えずに止め、ユーザーに伝える。
+
+### 事前確認（Opus、slot3 `a28b708`、sandbox の外、13:34〜13:39）
+
+- log は slot3 `TestResults/CC-G5/opus/precheck-*.log`。`npm.cmd run typecheck` 終了 code 0／`npm.cmd test` 336 pass・fail 0（約 40 秒）／`npm.cmd run contract` 64・11・4・2、失敗 0／build 1 回 約 0.3 秒／`dotnet build … --no-restore` 警告 0・エラー 0／filter `CreationModeBoundary|IndexDerivedDraftBuildCannotLoadForValidateOrApply|CreationTsxSkill|CreationRegenerateSkill|S2Fix` 成功 17。
+
+### 実行の記録
+
+| 契約 | 時刻 | token | 担当の報告 | Opus の扱い |
+| --- | --- | --- | --- | --- |
+| cc-g5-entry v1（task 5.1〜5.4） | 13:39:53〜14:03:48 | 264,763 | `DONE`（slot3 `TestResults/CC-G5/entry-report.md`）。赤: 実装の前に 340 件中 2 件が失敗（5.1 (a)(b) と (c)）、(d)(e) は成功。実装の後 341 pass・fail 0（336 + 5）、約 322 秒。contract 64／11／4／2。下調べとの違いは 1 点（`markBuildErrorOrigin` には `{ source }` の形で渡す） | 差分を読んで受け入れた。生成物・`resolveKey` の本体・`package.json` は変わっていない。既存の test の変更は `cli.test.ts` の 1 件だけ |
+| cc-g5-docs v1（task 5.5・5.6） | 14:10:53〜14:19:22 | 129,023 | `DONE`（slot3 `TestResults/CC-G5/docs-report.md`）。test の filter は 1 回目に失敗 1（SKILL.md の文を大文字で始めたため、test の確かめる `same-name sibling Slots` と一致しなかった）、文書を直して成功 17。表の 3 つの build のコマンドは終了 code 0 | 差分を読んで受け入れ、文書の 3 点を Opus が直した（下） |
+
+- Opus の受け入れ（slot3、sandbox の外、14:04〜14:10。log は slot3 `TestResults/CC-G5/opus/accept-*.log`）: `npm.cmd run typecheck` 終了 code 0／`npm.cmd test` tests 341・pass 341・fail 0（約 341 秒。前は約 40 秒で、増えたのは性質の test の 200 件）／`npm.cmd run contract` 64・11・4・2、失敗 0。
+- commit: `agent/course-correction` の `aa2e2f3`（`feat(jsx): make keys optional in the main entry`）。
+- 気付いた点（直す）: `one-entry.test.ts:61` は、保存した出力のファイルを読むときに CRLF を LF にそろえていない。この repo は `core.autocrlf` で JSON を CRLF に変えて checkout するので、新しい clone（task 7.1）では一致しないおそれがある。docs の契約が終わってから Opus が直す。
+- この窓の使用済み: 1,273,721 token（1,008,958 + 264,763）。窓は 14:14 ごろに閉じる見込みで、docs の契約は、閉じる前に起動した。docs の 129,023 token を足すと 1,402,744。利用上限の拒否は出なかった。
+
+### task 5.5: P05（`$draftKeys` の定義はどの組でも拒否される）を確かめている test
+
+| 経路 | test | 止まり方 |
+| --- | --- | --- |
+| 通常の `validate`・`apply`（`ApplyDocument.Load`） | `ApplyWorkflowTests.IndexDerivedDraftBuildCannotLoadForValidateOrApply`（`ApplyWorkflowTests.Scopes.cs`） | `APPLY_DRAFT_KEY_UNSTABLE` |
+| 作り直しの envelope の読込み | `CreationDocumentTests.RejectsOwnershipMismatchAndInvalidDefinitionShape`（`CreationDocumentTests.cs:62`） | `CREATION_DOCUMENT_INVALID` |
+| `apply --mode regenerate --replace-order delete-first --yes`（新しく足した） | `CreationModeBoundaryTests.RegenerateApplyWithYesRejectsDraftKeysBeforeConnection` | 終了 code 6、接続 0 回、`CREATION_DOCUMENT_INVALID`、message に `Draft index-derived` |
+| TSX の build から C# の `validate` まで | `tools/resoloop-jsx/scripts/contract.ts:63`（`missing-key-draft.tsx` の `--draft` の出力） | `APPLY_DRAFT_KEY_UNSTABLE` |
+
+- `--adopt`・`--prune` との組は、`$draftKeys` を見る前に `CREATION_MODE_MISMATCH`（終了 code 2）で止まる（既存の `RegenerateRejectsLegacyMutationAndFilterOptions`）。「どの組でも拒否」は「実機へ何も送らず、0 でない終了 code」の意味で成り立つ。code は 1 つにそろわない。
+
+### Opus が直した点（commit の前）
+
+- `tools/resoloop-jsx/README.md`: 担当が見出し「Experimental TSX creation input」を消し、作り直しの説明が「Key rules」の節の下に入っていた。見出しを戻し、指す先を失った「This relaxed rule applies to creation envelopes only.」を消した。3 つの README から消えた「通常の build は兄弟の Slot の名前が重ならないこと（`DUPLICATE_SIBLING_NAME`）」を、「Key rules」の節に 1 文で足した。
+- `skills/codex/resonite-build/SKILL.md:72`: 小文字で始まった文を、前の文と `;` でつないだ（test の確かめる `same-name sibling Slots` は残る）。
+- `tools/resoloop-jsx/test/one-entry.test.ts:61`: 保存した出力のファイルを読むときに CRLF を LF にそろえた（上の「気付いた点」）。
+
+### task 5.7 の受け入れ（Opus、slot3、sandbox の外、`RESOLOOP_RUN_INTEGRATION` なし、14:20〜14:35）
+
+log は slot3 `TestResults/CC-G5/opus/accept2-*.log`。対象は上の直しを入れた作業ツリー（直後に commit）。
+
+| 検証 | 結果 |
+| --- | --- |
+| `dotnet build ResoLoop.slnx --no-incremental` | 警告 0、エラー 0 |
+| RLoop.Tests（全体、1 回目） | **失敗 1**、成功 2026、skip 4。失敗は U13 の `S3RealProcessKillReleasesHandleButPreviousPendingStillBlocks`（`SessionWriteLock.cs:41` の `IOException`） |
+| RLoop.Tests（全体、2 回目） | **失敗 1**、成功 2026、skip 4。失敗は `CaptureTests.RejectsWrongFormatAndSize(… "CAPTURE_FORMAT_MISMATCH")`（期待と違う `CAPTURE_EXPORT_TIMEOUT`）。初めて見る失敗で、`openspec/unverified.md` に U24 として書いた |
+| `CaptureTests` だけ（3 回） | 3 回とも失敗 0、成功 40 |
+| RLoop.Tests（全体、3 回目） | 失敗 0、成功 2027、skip 4（4.7 の 2026 + 5.5 の 1） |
+| filter `CreationModeBoundary\|CreationTsxSkill\|CreationRegenerateSkill\|S2Fix` | 失敗 0、成功 17 |
+| `npm.cmd run typecheck`／`npm.cmd test`／`npm.cmd run contract` | 終了 code 0／341 pass・fail 0／64・11・4・2、失敗 0 |
+| `rg -n "resoloop-jsx/draft" README.md README_JA.md README-DETAILS.md skills`／同じ語の `tools/resoloop-jsx/README.md` の一致 | 0 件／1 件 |
+
+- src（C#）は `a28b708` から変わっていない（`git diff --stat a28b708 -- src` が空）。失敗した 2 つの test も、その対象のコードも、この群では変えていない。**3 回のうち 2 回で失敗が出たので、「slot3 の RLoop.Tests は失敗 0」とは言えない。**
+- commit（`agent/course-correction`）: `aa2e2f3`（`feat(jsx): make keys optional in the main entry`）、`b694490`（`test: cover draft keys in regenerate apply and CRLF checkouts of saved outputs`）、`5ff0c18`（`docs(jsx): explain the key rules in one table`）。計画の 2 つの commit の間に、test の 1 つを足した。main への merge と push はしていない。
+
+### 未検証・実行しなかったこと（群 5）
+
+- 実機。主の入口 `resoloop-jsx` から import して key を省いた TSX の作り直しは、L5（task 7.4 (i)）で確かめる。
+- 重いレビュー（群 7 の 7.2）。
+- `npm test` は約 40 秒から約 340 秒に延びた（性質の test の 200 件）。件数は計画どおりにしている。
+- Integration は、この群では実行していない（C# の src を変えていない。群 7 の 7.1 で実行する）。
+
+### 次
+
+- 群 6（実行しなかった実機の test を skip にする）: task 6.1 から。slot3 の HEAD は `5ff0c18`。
+
 ## 2026-10-14 12:30 JST — 群 4 の途中（task 4.1 の基準を取り、4.2〜4.5 の契約を起動する）
 
 ### 伺いと返事
