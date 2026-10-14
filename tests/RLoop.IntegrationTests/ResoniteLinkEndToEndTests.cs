@@ -6,11 +6,10 @@ namespace RLoop.IntegrationTests;
 [Collection("Live world writes")]
 public sealed class ResoniteLinkEndToEndTests
 {
-    [Fact]
+    [LiveIntegrationFact]
     [Trait("Category", "Integration")]
     public async Task ReparentsIsolatedSlotWithoutChangingItsId()
     {
-        if (Environment.GetEnvironmentVariable("RESOLOOP_RUN_INTEGRATION") != "1") return;
         var url = Environment.GetEnvironmentVariable("RESONITE_LINK_URL")
                   ?? throw new InvalidOperationException("RESONITE_LINK_URL is required.");
         await using var client = new ResoniteLinkClientAdapter();
@@ -50,11 +49,10 @@ public sealed class ResoniteLinkEndToEndTests
         }
     }
 
-    [Fact]
+    [LiveIntegrationFact]
     [Trait("Category", "Integration")]
     public async Task ApplyRelocatesOwnershipRootAndPrunesItsOldChild()
     {
-        if (Environment.GetEnvironmentVariable("RESOLOOP_RUN_INTEGRATION") != "1") return;
         var url = Environment.GetEnvironmentVariable("RESONITE_LINK_URL")
                   ?? throw new InvalidOperationException("RESONITE_LINK_URL is required.");
         var suffix = Guid.NewGuid().ToString("N")[..8];
@@ -114,11 +112,10 @@ public sealed class ResoniteLinkEndToEndTests
         }
     }
 
-    [Fact]
+    [LiveIntegrationFact]
     [Trait("Category", "Integration")]
     public async Task CreatesMutatesAndCleansIsolatedSlot()
     {
-        if (Environment.GetEnvironmentVariable("RESOLOOP_RUN_INTEGRATION") != "1") return;
         var url = Environment.GetEnvironmentVariable("RESONITE_LINK_URL")
                   ?? throw new InvalidOperationException("RESONITE_LINK_URL is required.");
         await using var client = new ResoniteLinkClientAdapter();
@@ -163,11 +160,10 @@ public sealed class ResoniteLinkEndToEndTests
         }
     }
 
-    [Fact]
+    [LiveIntegrationFact]
     [Trait("Category", "Integration")]
     public async Task ApplyCheckpointsAndConvergesWithoutSecondRunWrites()
     {
-        if (Environment.GetEnvironmentVariable("RESOLOOP_RUN_INTEGRATION") != "1") return;
         var url = Environment.GetEnvironmentVariable("RESONITE_LINK_URL")
                   ?? throw new InvalidOperationException("RESONITE_LINK_URL is required.");
         var suffix = Guid.NewGuid().ToString("N")[..8];
@@ -226,11 +222,10 @@ public sealed class ResoniteLinkEndToEndTests
         }
     }
 
-    [Fact]
+    [LiveIntegrationFact]
     [Trait("Category", "Integration")]
     public async Task ApplyTagsGeneratedRootAndPortableChildInLiveWorld()
     {
-        if (Environment.GetEnvironmentVariable("RESOLOOP_RUN_INTEGRATION") != "1") return;
         var url = Environment.GetEnvironmentVariable("RESONITE_LINK_URL")
                   ?? throw new InvalidOperationException("RESONITE_LINK_URL is required.");
         var suffix = Guid.NewGuid().ToString("N")[..8];
@@ -309,11 +304,10 @@ public sealed class ResoniteLinkEndToEndTests
         }
     }
 
-    [Fact]
+    [LiveIntegrationFact]
     [Trait("Category", "Integration")]
     public async Task ApplyPreservesTransformMigratesKeysAndPrunesParentAsOneOperation()
     {
-        if (Environment.GetEnvironmentVariable("RESOLOOP_RUN_INTEGRATION") != "1") return;
         var url = Environment.GetEnvironmentVariable("RESONITE_LINK_URL")
                   ?? throw new InvalidOperationException("RESONITE_LINK_URL is required.");
         var suffix = Guid.NewGuid().ToString("N")[..8];

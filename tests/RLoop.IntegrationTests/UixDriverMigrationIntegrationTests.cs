@@ -8,19 +8,17 @@ namespace RLoop.IntegrationTests;
 [Collection("Live world writes")]
 public sealed class UixDriverMigrationIntegrationTests
 {
-    [Fact]
+    [LiveIntegrationFact]
     [Trait("Category", "Integration")]
     public async Task ReplacesSliderDrivesPreservesExactNamesAndReconnects()
     {
-        if (Environment.GetEnvironmentVariable("RESOLOOP_RUN_INTEGRATION") != "1") return;
         await RunMigrationAsync(oneShot: false);
     }
 
-    [Fact]
+    [LiveIntegrationFact]
     [Trait("Category", "Integration")]
     public async Task OneShotDriverReplacementStopsAtMismatchRetainsPendingAndOldSlider()
     {
-        if (Environment.GetEnvironmentVariable("RESOLOOP_RUN_INTEGRATION") != "1") return;
         await RunMigrationAsync(oneShot: true);
     }
 

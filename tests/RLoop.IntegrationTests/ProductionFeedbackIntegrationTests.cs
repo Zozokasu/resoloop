@@ -7,11 +7,10 @@ namespace RLoop.IntegrationTests;
 [Collection("Live world writes")]
 public sealed class ProductionFeedbackIntegrationTests
 {
-    [Fact]
+    [LiveIntegrationFact]
     [Trait("Category", "Integration")]
     public async Task PreflightNullableNestedConvergenceAndSlotFieldOwnership()
     {
-        if (Environment.GetEnvironmentVariable("RESOLOOP_RUN_INTEGRATION") != "1") return;
         using var timeout = new CancellationTokenSource(TimeSpan.FromMinutes(3));
         var token = timeout.Token;
         await using var client = new ResoniteLinkClientAdapter(TimeSpan.FromSeconds(30));

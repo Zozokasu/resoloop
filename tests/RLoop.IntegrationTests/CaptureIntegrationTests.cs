@@ -6,13 +6,11 @@ namespace RLoop.IntegrationTests;
 [Collection("Screenshot exports")]
 public sealed class CaptureIntegrationTests
 {
-    [Fact]
+    [CaptureIntegrationFact]
     [Trait("Category", "Integration")]
     public async Task CapturesLocalScreenshotAndRemovesDedicatedCamera()
     {
         // Also opt in to writing an actual photo to the user's screenshot library.
-        if (Environment.GetEnvironmentVariable("RESOLOOP_RUN_INTEGRATION") != "1" ||
-            Environment.GetEnvironmentVariable("RESOLOOP_RUN_CAPTURE_INTEGRATION") != "1") return;
         var url = Environment.GetEnvironmentVariable("RESONITE_LINK_URL")
             ?? throw new InvalidOperationException("RESONITE_LINK_URL is required.");
         var screenshots = Environment.GetEnvironmentVariable("RESOLOOP_SCREENSHOTS_DIR")
@@ -41,5 +39,16 @@ public sealed class CaptureIntegrationTests
             Assert.Equal(before, after);
         }
         finally { Directory.Delete(directory, true); }
+    }
+}
+
+public sealed class CaptureIntegrationFactAttribute : LiveIntegrationFactAttribute
+{
+    public CaptureIntegrationFactAttribute()
+    {
+        Skip = LiveIntegrationGate.SkipReason(
+            Environment.GetEnvironmentVariable(LiveIntegrationGate.Variable),
+            "RESOLOOP_RUN_CAPTURE_INTEGRATION is not 1",
+            Environment.GetEnvironmentVariable("RESOLOOP_RUN_CAPTURE_INTEGRATION") == "1");
     }
 }

@@ -8,11 +8,10 @@ namespace RLoop.IntegrationTests;
 [Collection("Screenshot exports")]
 public sealed class UixMigrationIntegrationTests
 {
-    [Fact]
+    [LiveIntegrationFact]
     [Trait("Category", "Integration")]
     public async Task ComparesParentPreparationBeforeAndAfterMovingExistingUix()
     {
-        if (Environment.GetEnvironmentVariable("RESOLOOP_RUN_INTEGRATION") != "1") return;
         using var timeout = new CancellationTokenSource(TimeSpan.FromMinutes(4));
         var token = timeout.Token;
         await using var client = new ResoniteLinkClientAdapter(TimeSpan.FromSeconds(15));

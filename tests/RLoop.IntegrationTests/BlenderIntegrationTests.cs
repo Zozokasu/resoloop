@@ -7,12 +7,10 @@ namespace RLoop.IntegrationTests;
 [Collection("Screenshot exports")]
 public sealed class BlenderIntegrationTests
 {
-    [Fact]
+    [BlenderIntegrationFact]
     [Trait("Category", "Integration")]
     public async Task BuildsExportsImportsAndReappliesTexturedBlenderProp()
     {
-        if (Environment.GetEnvironmentVariable("RESOLOOP_RUN_INTEGRATION") != "1" ||
-            Environment.GetEnvironmentVariable("RESOLOOP_RUN_BLENDER_TESTS") != "1") return;
         using var timeout = new CancellationTokenSource(TimeSpan.FromMinutes(3));
         var token = timeout.Token;
         var url = Environment.GetEnvironmentVariable("RESONITE_LINK_URL") ?? throw new InvalidOperationException("RESONITE_LINK_URL is required.");
@@ -96,5 +94,16 @@ public sealed class BlenderIntegrationTests
             }
             Directory.Delete(directory, true);
         }
+    }
+}
+
+public sealed class BlenderIntegrationFactAttribute : LiveIntegrationFactAttribute
+{
+    public BlenderIntegrationFactAttribute()
+    {
+        Skip = LiveIntegrationGate.SkipReason(
+            Environment.GetEnvironmentVariable(LiveIntegrationGate.Variable),
+            "RESOLOOP_RUN_BLENDER_TESTS is not 1",
+            Environment.GetEnvironmentVariable("RESOLOOP_RUN_BLENDER_TESTS") == "1");
     }
 }
