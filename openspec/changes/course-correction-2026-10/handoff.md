@@ -85,6 +85,12 @@
 - 事前確認（実機への書込みなし）: `status` connected・Resonite `2026.9.18.82`・ResoniteLink `0.13.1.0`／`find --name ResoLoop_Test` 0 件／`--backend workbench status` が `BACKEND_REMOVED`（2）／主の入口から import して key を省いた TSX の `--target creation` の build と `validate` が成功、target なしの build は `EXPLICIT_KEY_REQUIRED`（1）でファイルを作らない。
 - 下調べ（Claude の調査役 1 本、読み取りだけ）で決めた期待: U07 = `CREATION_OWNER_AMBIGUOUS`（6）で送信 0 回／U15・U16 = 通常の `apply` の S3 で、次の `apply` が `APPLY_WRITE_UNVERIFIED`（7）／U10 = 再起動で S-ID が変わる見込みで、`CREATION_SESSION_UNPROVEN`（6）か `CREATION_PREVIOUS_ROOT_ABSENT` の警告つき作成。U08 は、SPIKE-DV P5 の読む側の graph を手本にし、作れなければ「未実施」とする（25 分の上限）。`RESONITE_MANAGED_DATA_PATH` は、`FrooxEngine.dll` がある `D:\SteamLibrary\steamapps\common\Resonite` を Opus が指示書に書いた（ユーザーの設定の操作は要らなくなった）。
 - 指示書 `cc-live-l5-charter.md`。ユーザーの操作が要る 3 点（WAIT-U07・WAIT-U16・WAIT-U10）で担当が止まり、Opus がユーザーに伝えて再開させる。17:05 ごろ Claude の `coding-worker` を起動した。
+### task 7.5: 伺いと返事（2026-10-14 17:07 ごろ）
+
+- 伺い（Opus）: U06（回復の `finish` の成功）と U14（応答だけが失われた場合）を、offline の test（名前を示した）を根拠に免除してよいか。
+- 返事（ユーザー、選択肢で回答）: 「Exempt both」。`openspec/unverified.md` の U06・U14 を「免除」にし、代わりの test の名前を書いた。
+- U17 は、Opus が 4 行（U17a〜d）に分けた: W04 の回復・alias・`Children=null` は「offline で足りる」（免除するなら改めて伺う）、drift は「実機で作れる」（ユーザーの操作が要る）。4 行とも「未検証」のまま。この change が生んだ項目（U01〜U05）ではないので、7.6 の条件には入らない。
+
 - 気付いた点（直していない）: `resoloop help apply` の末尾が「The TSX creation path and same-name sibling Slots are unverified live.」のままで、L4（U02〜U05 の PASS）と食い違う。L5 の後に、直すかを決める。
 
 
