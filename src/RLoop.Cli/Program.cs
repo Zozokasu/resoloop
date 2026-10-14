@@ -27,8 +27,7 @@ public static class Program
                 throw new RLoopException("BACKEND_REMOVED", "The Workbench backend was removed. The wb command is no longer available.", ExitCodes.InvalidArguments);
             if (parsed.Has("workbench-pipe"))
                 throw new RLoopException("BACKEND_REMOVED", "The Workbench backend was removed. Remove --workbench-pipe.", ExitCodes.InvalidArguments);
-            if (parsed.Option("backend") is { } selectedBackend && selectedBackend.Equals("workbench", StringComparison.OrdinalIgnoreCase))
-                throw new RLoopException("BACKEND_REMOVED", "The Workbench backend was removed. Remove the backend setting or set it to link.", ExitCodes.InvalidArguments);
+            ConfigResolver.RejectRemovedBackend(Environment.CurrentDirectory, parsed.Option("backend"));
             if (parsed.Option("report") is { } reportPath) output.OpenReport(reportPath);
             if (parsed.Has("version") || parsed.Positionals.Count == 1 &&
                 parsed.Positionals[0].Equals("version", StringComparison.OrdinalIgnoreCase))

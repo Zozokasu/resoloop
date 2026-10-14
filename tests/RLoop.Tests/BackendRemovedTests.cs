@@ -24,6 +24,23 @@ public sealed class BackendRemovedTests
             yield return [name, setting];
     }
 
+    public static IEnumerable<object[]> OfflineCommandCases()
+    {
+        var commands = new (string Name, string[] Args)[]
+        {
+            ("help", ["help"]),
+            ("version", ["version"]),
+            ("init", ["init"]),
+            ("manifest scaffold", ["manifest", "scaffold", "--output", "manifest.json"]),
+            ("skills sync --update", ["skills", "sync", "--update"]),
+            ("creation validate", ["validate", "creation.json", "--json"]),
+            ("apply discard pending", ["apply", "definition.json", "--state", "state.json", "--discard-pending", "review-op", "--yes", "--json"])
+        };
+        foreach (var (name, args) in commands)
+        foreach (var setting in new[] { "environment", "project" })
+            yield return [name, setting, args];
+    }
+
     [Fact]
     public async Task BackendWorkbenchFromCliEnvironmentAndProjectFailsBeforeConnect()
     {
@@ -99,6 +116,48 @@ public sealed class BackendRemovedTests
     }
 
     [Theory]
+    [MemberData(nameof(OfflineCommandCases))]
+    public async Task OfflineCommandRejectsRemovedBackendFromEnvironmentAndProject(string command, string setting, string[] args)
+    {
+        await InTemporaryStateAsync(async () =>
+        {
+            if (setting == "environment") Environment.SetEnvironmentVariable("RESOLOOP_BACKEND", "workbench");
+            else File.WriteAllText(".resoloop.json", "{\"backend\":\"workbench\"}");
+
+            File.WriteAllText("creation.json", "{\"schemaVersion\":\"creation-1\",\"kind\":\"resoloop-creation\",\"creationVersion\":\"1\",\"creationId\":\"room\",\"definition\":{\"schemaVersion\":\"1\",\"ownership\":{\"key\":\"room\"},\"slot\":{\"key\":\"root\",\"name\":\"Room\",\"parent\":\"Root\"},\"components\":[],\"children\":[]},\"diagnostics\":[]}");
+            File.WriteAllText("definition.json", ApplyDefinition);
+            if (command == "apply discard pending")
+            {
+                var state = JsonNode.Parse(File.ReadAllText(Path.Combine(RepositoryRoot(), "tests", "RLoop.Tests", "fixtures", "ordinary-apply-surface", "state-v3.json")))!;
+                state["pending"] = new JsonArray(new JsonObject
+                {
+                    ["operationId"] = "review-op",
+                    ["kind"] = "addComponent",
+                    ["key"] = "unconfirmed",
+                    ["ownershipKey"] = state["ownershipKey"]!.GetValue<string>(),
+                    ["id"] = "C-exact"
+                });
+                File.WriteAllText("state.json", state.ToJsonString(new System.Text.Json.JsonSerializerOptions { WriteIndented = true }) + "\n");
+            }
+
+            var before = SnapshotFiles(Environment.CurrentDirectory);
+            var outcome = await InvokeAsync(args);
+            AssertRemoved(outcome);
+            Assert.Equal(before, SnapshotFiles(Environment.CurrentDirectory));
+            return true;
+        });
+    }
+
+    [Fact]
+    public async Task EnvironmentLinkOverridesProjectWorkbench()
+    {
+        var outcome = await InvokeInStateAsync(["help"], environment: ("RESOLOOP_BACKEND", "link"), projectConfig: "{\"backend\":\"workbench\"}");
+        Assert.Equal(ExitCodes.Success, outcome.Exit);
+        Assert.Equal(0, outcome.Connects);
+        Assert.DoesNotContain("BACKEND_REMOVED", outcome.Text);
+    }
+
+    [Theory]
     [MemberData(nameof(RemovedBackendCases))]
     public async Task EveryConnectedCommandRejectsRemovedBackend(string command, string setting)
     {
@@ -170,6 +229,17 @@ public sealed class BackendRemovedTests
             Environment.SetEnvironmentVariable("RESOLOOP_WORKBENCH_PIPE", oldPipe);
             Directory.Delete(root, true);
         }
+    }
+
+    private static Dictionary<string, string> SnapshotFiles(string root) =>
+        Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories)
+            .ToDictionary(path => Path.GetRelativePath(root, path), path => Convert.ToBase64String(File.ReadAllBytes(path)), StringComparer.Ordinal);
+
+    private static string RepositoryRoot()
+    {
+        var directory = new DirectoryInfo(AppContext.BaseDirectory);
+        while (directory is not null && !File.Exists(Path.Combine(directory.FullName, "ResoLoop.slnx"))) directory = directory.Parent;
+        return directory?.FullName ?? throw new InvalidOperationException("Repository root not found.");
     }
 
     private static async Task<(int Exit, string Text)> CaptureAsync(Func<Task<int>> action)

@@ -19,6 +19,48 @@ public sealed record ConfigResolution(RLoopConfig Config, IReadOnlyDictionary<st
 public static class ConfigResolver
 {
     public const string ProjectFileName = ".resoloop.json";
+    private const string RemovedBackendMessage = "The Workbench backend was removed. Remove the backend setting or set it to link.";
+
+    public static void RejectRemovedBackend(
+        string startDirectory,
+        string? cliBackend,
+        Func<string, string?>? getEnvironment = null,
+        string? userProfile = null)
+    {
+        getEnvironment ??= Environment.GetEnvironmentVariable;
+        userProfile ??= Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+
+        string? backend = !string.IsNullOrWhiteSpace(cliBackend) ? cliBackend : getEnvironment("RESOLOOP_BACKEND");
+        if (string.IsNullOrWhiteSpace(backend))
+        {
+            RLoopConfig project;
+            try
+            {
+                project = ReadConfig(FindProjectConfigPath(startDirectory));
+            }
+            catch (RLoopException)
+            {
+                return;
+            }
+            backend = project.Backend;
+        }
+        if (string.IsNullOrWhiteSpace(backend))
+        {
+            RLoopConfig user;
+            try
+            {
+                user = ReadConfig(Path.Combine(userProfile, ".resoloop", "config.json"));
+            }
+            catch (RLoopException)
+            {
+                return;
+            }
+            backend = user.Backend;
+        }
+
+        if (backend?.Equals("workbench", StringComparison.OrdinalIgnoreCase) == true)
+            throw new RLoopException("BACKEND_REMOVED", RemovedBackendMessage, ExitCodes.InvalidArguments);
+    }
 
     public static ConfigResolution Resolve(
         string startDirectory,
@@ -72,7 +114,7 @@ public static class ConfigResolver
         var blender = Pick("blender-executable", "RESOLOOP_BLENDER_EXECUTABLE", x => x.BlenderExecutable, "blenderExecutable");
         var backend = Pick("backend", "RESOLOOP_BACKEND", x => x.Backend, "backend") ?? "link";
         if (backend.Equals("workbench", StringComparison.OrdinalIgnoreCase))
-            throw new RLoopException("BACKEND_REMOVED", "The Workbench backend was removed. Remove the backend setting or set it to link.", ExitCodes.InvalidArguments);
+            throw new RLoopException("BACKEND_REMOVED", RemovedBackendMessage, ExitCodes.InvalidArguments);
         if (!backend.Equals("link", StringComparison.OrdinalIgnoreCase))
             throw new RLoopException("INVALID_BACKEND", $"Backend must be 'link', got '{backend}'.", ExitCodes.InvalidArguments);
         backend = backend.ToLowerInvariant();
