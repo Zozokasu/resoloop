@@ -2,6 +2,30 @@
 
 群を 1 つ終えるたびに、日付の見出しの節を先頭へ足す。進捗は `tasks.md` のチェックだけに書き、ここには写さない。全体の順序は `openspec/roadmap.md`、未検証の一覧は `openspec/unverified.md` にある。
 
+## 2026-10-14 19:50 JST — 群 7 の 7.7・7.8 を終えた（main へ merge し、記録を直した）
+
+### task 7.7: 伺いと返事、merge
+
+- 伺い（Opus、19:25 ごろ）: `agent/course-correction` を main へ `--no-ff` で merge してよいか。示したもの: レビューの結果（`PASS_WITH_P2`）と修正、実機 L4・L5 の結果、残った未検証（U17a〜d・U18・U25・U26、観察中の U23・U24）、利用者への影響（`--backend workbench`・`wb`・`--workbench-pipe`、環境変数・設定の `workbench` は、`help` を含むすべての command で `BACKEND_REMOVED`）。
+- 返事（ユーザー、選択肢で回答）: 「merge してよい」（U26 は後の change で扱う）。
+- merge: main `7d6dac4`（branch は `bc8e9fd`、衝突なし）。push はしていない。
+- main の検証（Opus、sandbox の外、`RESOLOOP_RUN_INTEGRATION` なし、19:26〜19:34、`npm ci`・`dotnet restore` の後。log は `.ccg/tasks/resoloop-slimming/cc-main-merge2/`）: build 警告 0・エラー 0／RLoop.Tests 失敗 0・成功 2048・skip 4／Integration 失敗 0・成功 10・skip 21／typecheck 0／`npm test` 341 pass・fail 0／contract 64・11・4・2。7.3 の後の slot3 と新しい clone の件数と一致する。
+
+### task 7.8: 記録
+
+- `openspec/roadmap.md`: R12 を「完了」にし、根拠に merge `7d6dac4`・`cc-review-report.md`・`cc-live-l5-report.md` を書いた。R10・R11 はすでに「完了」で、R11 に L5 の I3（主の入口からの TSX）を足した。
+- Notion: 「現在地と引き継ぎ」の現在地の callout を差し替え、あらすじに 1 行足し、未検証の行を直した。「ロードマップ（実装計画）」の冒頭の callout に 2026-10-14 の 1 行を足し、図の 14 に「完了」を付けた。
+- `task.json`: phase（295 字）と next（151 字）を、群 1〜7.7 の済みと、残りの 7.8・7.9・archive に直した（古い phase が出させていた ccg の LOOP DETECTED の警告の元）。
+
+### 後回しにした項目
+
+- U26（`help apply` の「The TSX creation path and same-name sibling Slots are unverified live.」）、U25（再起動の後に作り直しを続ける道）、`verify.ps1` の skip の数え方（群 6 の気付いた点）、`phase: "staged"` と `replaced: true` の組。どれも後続の change で決める。
+- 新しい clone `resoloop-worktrees/cc-fresh` と、slot3 の `agent/course-correction` の後始末（消す前に伺う）。
+
+### 次
+
+- task 7.9（【伺う】main を origin へ push するか）。その後、change を archive する。
+
 ## 2026-10-14 16:10 JST — 群 7 の途中（task 7.1 の検証を終え、7.2 の重いレビューを起動する）
 
 ### 伺いと返事

@@ -18,8 +18,8 @@
 | R08 | Slot の有効・無効を書く | — | — | G1 | 完了 | `e00ce41` | — |
 | R09 | root を作り直す apply と回復 | — | — | B2a・B2b | 実験（手書きの JSON、delete-first） | `e00ce41` | — |
 | R10 | 同じ session の ID での照合 | — | — | — | 完了。重いレビューの指摘（P1 1 件、P2 2 件）は修正して merge 済み。実機は確認済み（U01、2026-10-14 の L4） | `03479cf`、修正の merge `b88ed8a`、`better-impl-b2c-review-report.md`、`cc-live-l4-report.md` | course-correction-2026-10 |
-| R11 | TSX から作り直しの定義を出す | — | — | B2c-1 | 完了。重いレビューの指摘（P2 1 件）は修正して merge 済み。実機は確認済み（U02〜U05、2026-10-14 の L4。TSX の import 元は `resoloop-jsx/draft`） | merge `b88ed8a`（branch は `ba57564`）、`better-impl-b2c-review-report.md`、`cc-live-l4-report.md` | course-correction-2026-10 |
-| R12 | Workbench なしで制作の経路をそろえる | S5 | 14 | — | 未着手 | — | course-correction-2026-10 |
+| R11 | TSX から作り直しの定義を出す | — | — | B2c-1 | 完了。重いレビューの指摘（P2 1 件）は修正して merge 済み。実機は確認済み（U02〜U05、2026-10-14 の L4。TSX の import 元は `resoloop-jsx/draft`。主の入口 `resoloop-jsx` から import して key を省いた TSX も、2026-10-14 の L5 の I3 で確認済み） | merge `b88ed8a`（branch は `ba57564`）、`better-impl-b2c-review-report.md`、`cc-live-l4-report.md`、`cc-live-l5-report.md` | course-correction-2026-10 |
+| R12 | Workbench なしで制作の経路をそろえる | S5 | 14 | — | 完了（2026-10-14）。通常の `apply` の表面を test で固定し、Workbench backend を除き（`BACKEND_REMOVED`）、TSX の入口と key の規則を 1 つにし、実行しなかった実機の test を skip にした。重いレビューは `PASS_WITH_P2`（P2 2 件・P3 1 件）で、修正して merge 済み。実機 L5 は I1〜I4・U07・U08・U15 が PASS、U16 は制限つきで PASS、U10 は確認済み | merge `7d6dac4`（branch は `bc8e9fd`）、`cc-review-report.md`、`cc-live-l5-report.md` | course-correction-2026-10 |
 | R13 | Object と親の変数、入れ子、配置口 | — | 6 | B3 | 未着手（4 点は確定） | `course-correction-2026-10` の `design.md` の決定 6 | b3-objects-parent-variables |
 | R14 | 止めない警告を構造化して返す | — | — | B3 の前提 | 未着手 | — | structured-warnings |
 | R15 | 無効な新しい root を先に作る入れ替えの順 | — | — | B2c-2 | 待ち（U08 の後） | `course-correction-2026-10` の `design.md` の決定 7 | stage-inactive-replace-order |
