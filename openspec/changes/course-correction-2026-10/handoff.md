@@ -71,6 +71,39 @@ log は slot3 `TestResults/CC-G4/opus/accept-*.log`。仕分けは `.ccg/tasks/r
 - Opus が足した片づけ: 消した 2 つの project の directory に残った、git の無視する `bin/`・`obj/` と空の `Protocol/` を消した（受け入れの script の Workbench の段が、その directory を見て実行し、`MSB1003` で終了 code 1 になったため。test の結果ではない）。
 - commit: `agent/course-correction` の `c48f33f`（`feat(cli)!: remove the Workbench backend`。47 ファイル、+237／−9808）。
 
+### task 4.6（文書と配布する Skill）
+
+- 契約 `cc-g4-docs-contract.md`（`gpt-6-luna` high、13:11:31〜13:14:38、116,465 token、報告は `DONE`。報告は slot3 `TestResults/CC-G4/docs-report.md`）。変えたのは契約の 15 ファイルだけ（+29／−86）。この窓の使用済みは 1,008,958 token（892,493 + 116,465）。
+- Opus が差分を読んで受け入れた。`README-DETAILS.md` の Workbench の節（91〜161 行）は、節「Workbench backend の除去」（91・93 行）に置き換わった。節の外の 4 か所の句も消えた。`fork-strategy.md` は 1・8・27・46 行を直し、9・29〜32・50 行は記録の事実として残した。
+- Opus の確かめ（slot3、sandbox の外）: `rg -n -i workbench README.md README_JA.md tools/resoloop-jsx/README.md skills docs/DECLARATIVE.md` は 0 件（前は 6 件）／`README-DETAILS.md` の一致は 91・93 行だけ（前は 30 行）／`rg -n "凍結|除去予定" docs/dev/fork-strategy.md CLAUDE.md docs/dev/agent-workflow.md` は `agent-workflow.md:162` の「凍結の例外」（Workbench ではない）だけ（前は 7 行）。
+
+### task 4.7 の受け入れ（Opus、slot3、sandbox の外、`RESOLOOP_RUN_INTEGRATION` なし、13:15〜13:19）
+
+log は slot3 `TestResults/CC-G4/opus/accept2-*.log`。対象は `c48f33f` と文書の変更（直後に `a28b708` で commit）。
+
+| 検証 | 除く前（4.1） | 除いた後 |
+| --- | --- | --- |
+| build | 警告 0、エラー 0 | 警告 0、エラー 0 |
+| RLoop.Tests | 成功 2013、skip 4 | 失敗 0、成功 2026、skip 4（2013 − 48 + 61） |
+| RLoop.Workbench.Tests | 成功 190 | （project を消した） |
+| RLoop.IntegrationTests | 「成功」23 | 「成功」23（同じ。実機は実行していない） |
+| `npm.cmd run typecheck`／`test`／`contract` | 0／336 pass／64・11・4・2 | 0／336 pass／64・11・4・2 |
+
+- commit（`agent/course-correction`）: `c48f33f`（`feat(cli)!: remove the Workbench backend`）、`a28b708`（`docs: describe the removal of the Workbench backend`）。main への merge と push はしていない。
+- `.claude/settings.local.json`（main の作業ツリー、git の追跡外）には、Workbench に触れる許可が 3 行残っている: 8・9 行（別の repo `resonite-workbench` の `dotnet test`）と 23 行（消した `scripts/dev/workbench.ps1` の実行）。task 4.7 のとおり、設定は変えていない。消すかはユーザーが決める。
+- `.devin/config.local.json` にも Workbench の語がある（調査役の報告。中身は見ていない。追跡外で、この群の対象外）。
+- RLoop.Tests の全体は、除いた後に 2 回（13:06・13:15）実行し、2 回とも失敗 0 だった。U13・U23 はこの 2 回では出なかった。
+
+### 未検証・実行しなかったこと（群 4）
+
+- 実機。`--backend workbench status` が実機の session に対しても `BACKEND_REMOVED` で止まることは、L5（task 7.4 (i)）で確かめる。offline では、偽の client で `connect` 0 回を確かめた。
+- 重いレビュー（群 7 の 7.2 で `main..agent/course-correction` を見る）。
+- spec の「`backend` の値が `workbench` の場合（どれから来ても）」のうち、設定を読まない offline のコマンドに、環境変数・設定の `workbench` を与えた場合は止まらない（上の「Opus が決めた点」(2)）。これを test で確かめてはいない。
+
+### 次
+
+- 群 5（入口と key の規則を 1 つにする）: task 5.1 から。slot3 の HEAD は `a28b708`。
+
 ## 2026-10-14 12:17 JST — 群 3 を終えた（task 3.2〜3.9。通常の apply の表面を test で固定し、error code の範囲を 14 ファイルへ広げた）
 
 ### 伺いと返事
