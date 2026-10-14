@@ -36,6 +36,14 @@ dotnet test tests/RLoop.IntegrationTests/RLoop.IntegrationTests.csproj --filter 
 - CLI delete/remove must retain explicit --yes; do not add an implicit confirmation bypass.
 - IDs are session-scoped. Re-observe after session restart.
 
+## Frozen path (凍結した経路)
+
+- `apply`, `plan`, and `diff` without `--mode regenerate` (the ordinary apply) are frozen. They accept bug fixes and safety fixes only; add new authoring features to the regenerate path.
+- Frozen files in `src/RLoop.Core/`: `WorldService.cs`, `WorldService.ApplyPending.cs`, `WorldService.ApplySafety.cs`, `WorldService.ApplyDeletion.cs`, `ApplyPendingDiscard.cs`, `ApplyWorkflow.cs`.
+- A change that alters the pinned option or error-code lists, or adds a feature to any of the six files, is a freeze exception (凍結の例外): say so in the task contract and get the user's approval before implementing it.
+- `OrdinaryApplySurfaceTests` pins both lists against `tests/RLoop.Tests/fixtures/ordinary-apply-surface/`. Do not rewrite the pinned files to make it pass without that approval.
+- Do not share ownership checks, pending records, recovery, or state between the ordinary apply and the regenerate path.
+
 ## Upstream discipline
 
 - Do not guess ResoniteLink messages, field wrappers, Component type names, or member names. Check the pinned upstream source/docs and verify through runtime Reflection.

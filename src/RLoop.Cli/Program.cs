@@ -41,6 +41,7 @@ public static class Program
 
             ValidateSlotActiveArguments(args, parsed);
 
+            // ordinary-apply-surface:begin
             var applyCommand = parsed.Positionals[0].ToLowerInvariant() is "validate" or "diff" or "plan" or "apply";
             if (parsed.Has("diagnostics") && !applyCommand)
                 throw new RLoopException("INVALID_OPTION", "--diagnostics is supported only by validate/diff/plan/apply.", ExitCodes.InvalidArguments);
@@ -66,6 +67,7 @@ public static class Program
                     throw new RLoopException("CONFIRMATION_REQUIRED", "apply --discard-pending requires --yes after inspecting the world.", ExitCodes.ValidationFailed);
                 if (parsed.Positionals.Count > 2)
                     throw new RLoopException("UNEXPECTED_ARGUMENT", "apply --discard-pending accepts one apply file.", ExitCodes.InvalidArguments);
+                // ordinary-apply-surface:end
                 var document = ApplyDocument.Load(parsed.Positional(1, "Apply file"), parsed.Option("build-id"));
                 output.ProtectDiagnosticsState(document, parsed.Option("state"));
                 var discarded = ApplyPendingDiscard.Discard(document, operationId, true, parsed.Option("state"));
@@ -810,6 +812,7 @@ public static class Program
                     ApplyOptionsFrom(args, output), cancellationToken);
                 output.SetDiagnostics(result.Warnings.Select(issue => ApplyDiagnostics.Unknown(issue.Code, issue.Message,
                     args.Positionals[0].ToLowerInvariant(), issue.Severity, args.Option("build-id")) with { JsonPath = issue.Path }).ToArray());
+                // ordinary-apply-surface:begin
                 var filters = new[] { "changes-only", "creates-only", "deletes-only", "summary" }.Where(args.Has).ToArray();
                 if (filters.Length > 1)
                     throw new RLoopException("PLAN_FILTER_CONFLICT", "Use only one plan output filter at a time.", ExitCodes.InvalidArguments,
@@ -817,6 +820,7 @@ public static class Program
                 var displayed = args.Has("summary") ? [] : args.Has("changes-only") ? result.Changes :
                     args.Has("creates-only") ? result.Operations.Where(operation => operation.Action == "create").ToArray() :
                     args.Has("deletes-only") ? result.Operations.Where(operation => operation.Action == "delete").ToArray() : result.Operations;
+                // ordinary-apply-surface:end
                 var response = new
                 {
                     result.Valid, result.SchemaVersion, result.OwnershipKey, result.StateFile,
@@ -1535,10 +1539,12 @@ public static class Program
         return options;
     }
 
+    // ordinary-apply-surface:begin
     private static ApplyOptions ApplyOptionsFrom(ParsedArguments args, OutputWriter output) => new(
         args.Option("state"), args.Has("adopt"), args.Has("profile"),
         args.Has("quiet") || args.Has("brief") && !args.Has("ndjson-progress") ? null : progress => output.Progress(progress, args.Has("ndjson-progress")),
         args.Has("prune"), args.Has("yes"), args.Has("require-state"));
+    // ordinary-apply-surface:end
 
     private static string ProductVersion()
     {

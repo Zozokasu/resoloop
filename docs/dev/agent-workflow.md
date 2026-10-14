@@ -159,6 +159,7 @@ build、テスト実行、件数集計、差分・hash照合、merge前のGit状
 - 指示書に書いたコマンドは、対象のworktreeで実行する（`--help`か、実機に触れない実行）。コマンドと終了codeを、指示書の「事前確認」に書く。使い方の誤りで終わるコマンドが残る指示書は出さない。
 - 変えてよいtestと、変えてはならないtestを、ファイル名で書く。
 - 停止・保留・所有の確認の挙動を変える指示書では、`rg`で見つけた既存のtest（`ApplyWorkflowTests.S3*.cs`、`SameSessionComponentIdentityTests.cs`、`Creation*Tests.cs`の該当）を「通り続けること」として挙げる。
+- 凍結したファイル（`AGENTS.md`の「Frozen path」）に触れる指示書は、冒頭に「凍結の例外」か「凍結の範囲内（不具合・安全の修正）」かを書く。「凍結の例外」は、ユーザーの承認を得てから出す。
 
 ## Codexの利用枠
 
