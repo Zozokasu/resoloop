@@ -85,6 +85,15 @@
 - 事前確認（実機への書込みなし）: `status` connected・Resonite `2026.9.18.82`・ResoniteLink `0.13.1.0`／`find --name ResoLoop_Test` 0 件／`--backend workbench status` が `BACKEND_REMOVED`（2）／主の入口から import して key を省いた TSX の `--target creation` の build と `validate` が成功、target なしの build は `EXPLICIT_KEY_REQUIRED`（1）でファイルを作らない。
 - 下調べ（Claude の調査役 1 本、読み取りだけ）で決めた期待: U07 = `CREATION_OWNER_AMBIGUOUS`（6）で送信 0 回／U15・U16 = 通常の `apply` の S3 で、次の `apply` が `APPLY_WRITE_UNVERIFIED`（7）／U10 = 再起動で S-ID が変わる見込みで、`CREATION_SESSION_UNPROVEN`（6）か `CREATION_PREVIOUS_ROOT_ABSENT` の警告つき作成。U08 は、SPIKE-DV P5 の読む側の graph を手本にし、作れなければ「未実施」とする（25 分の上限）。`RESONITE_MANAGED_DATA_PATH` は、`FrooxEngine.dll` がある `D:\SteamLibrary\steamapps\common\Resonite` を Opus が指示書に書いた（ユーザーの設定の操作は要らなくなった）。
 - 指示書 `cc-live-l5-charter.md`。ユーザーの操作が要る 3 点（WAIT-U07・WAIT-U16・WAIT-U10）で担当が止まり、Opus がユーザーに伝えて再開させる。17:05 ごろ Claude の `coding-worker` を起動した。
+### task 7.4: L5 の途中経過（2026-10-14 17:30 ごろ。報告 `cc-live-l5-report.md`、証拠 `live-1012\evidence\L5`、実効のモデル Sonnet 5.5）
+
+- テスト用の親 `ResoLoop_Test_L5` = `Reso_31B23`（子の親: I2 `Reso_31B2E`、I3 `Reso_31B39`、U15 `Reso_31B44`、U08 `Reso_31B4F`、U07 `Reso_31B5A`、U16 `Reso_31B65`、U10 `Reso_31B70`）。
+- I1〜I4 は PASS（I3 = 主の入口から import して key を省いた TSX の作成と置き換え、I4 = 3 通りとも `BACKEND_REMOVED` で 121〜152 ms）。U15 は 2 回目（子 400、22 秒で強制終了）で PASS: pending 1 件（`createSlot` C215、`possiblySent`）、再 `apply` が `APPLY_WRITE_UNVERIFIED`（7、`pendingUnresolved`）で何も送らず、子は 216 のまま。1 回目（子 200）は 30 秒の前に終わり、取消を試せなかった。
+- **止まった理由**: U15 の pending（`work-l5\u15b-state.json`、operation `f4e8445b9aa9429e9f23a34763e38bd5`）が、同じ URL の書込みを全部止める（`slot create`・`slot delete` も 7、`previousStatePending`。証拠 `302`・`303`）。指示書が `--discard-pending` を禁じていたため、担当は止まった（正しい止め方。指示書の矛盾は Opus の誤り）。
+- ユーザーは 2026-10-14 17:20 ごろ「Allow both discards」（U15 と U16 の pending を、記録の後に offline で 1 件ずつ捨ててよい）と答えた。しかし、担当の実行も Opus の実行も、Claude Code の自動の許可の判定で拒否された（「Safety Bypass Flag」「Auto-Mode Bypass」）。回り道はしていない。ユーザー自身が実行するか、許可の規則を足すのを待つ。
+- 記録した事実（不具合かは未判断）: (1) 1 つの state の pending が、同じ URL への他の書込みも止める。(2) 作り直しの `apply` が `phase: "staged"` と `replaced: true` を同時に返した（証拠 `127`）。
+- いま world に残っている物: `Reso_31B23` の下の全部（I2 の root `Reso_31B7F`、I3 の root `Reso_31C2E`、U15 の `Reso_31C88`（子 200）と `Reso_330E7`（子 216）、空の親 4 つ）。world の保存はまだ頼んでいない。
+
 ### task 7.5: 伺いと返事（2026-10-14 17:07 ごろ）
 
 - 伺い（Opus）: U06（回復の `finish` の成功）と U14（応答だけが失われた場合）を、offline の test（名前を示した）を根拠に免除してよいか。
