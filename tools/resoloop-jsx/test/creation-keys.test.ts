@@ -104,3 +104,18 @@ test("creation rejects blank root and ownership ID candidates", () => {
   throws(() => evaluate(slot({ key: "  ", name: "Room" }), { creation: true }), code("CREATION_ID_INVALID"));
   throws(() => evaluate(slot({ key: "room", name: "Room" }), { creation: true, ownership: { key: "  " } }), code("CREATION_ID_INVALID"));
 });
+
+test("creation takes the ID from the explicit root key before Scope is applied", () => {
+  const scoped = evaluate(scope("part", [slot({ key: "room", name: "Room" })]), { creation: true }).document;
+  equal(scoped.ownership.key, "room");
+  equal(scoped.slot.key, "part::room");
+
+  const longScope = evaluate(scope("a".repeat(128), [slot({ key: "room", name: "Room" })]), { creation: true }).document;
+  equal(longScope.ownership.key, "room");
+
+  const controlScope = evaluate(scope("part\u0001", [slot({ key: "room", name: "Room" })]), { creation: true }).document;
+  equal(controlScope.ownership.key, "room");
+
+  const ordinary = evaluate(scope("part", [slot({ key: "room", name: "Room" })])).document;
+  equal(ordinary.ownership.key, "part::room");
+});

@@ -448,18 +448,20 @@ export function evaluate(
         `got ${roots.length === 0 ? "none" : `${roots.length} (${roots.map((r) => r.kind).join(", ")})`}`
     );
 
+  let creationKey: string | undefined;
   if (options.creation === true) {
     const candidate = hasOwnership ? (ownership as { key?: unknown }).key : roots[0].props?.key;
     if (typeof candidate !== "string" || candidate.trim().length === 0 || candidate.length < 1 || candidate.length > 128 ||
         /[\u0000-\u001f\u007f-\u009f]/.test(candidate))
       throw new BuildError("CREATION_ID_INVALID",
         "creationId must be 1..128 characters and contain no control characters; export ownership or add an explicit key to the root Slot.");
+    creationKey = candidate;
   }
 
   const converted = convertSlot(roots[0], undefined, 0, "$", true);
   const document: ApplyDocument = {
     schemaVersion: "1",
-    ownership: hasOwnership ? ownership as ApplyOwnershipSpec : { key: converted.key },
+    ownership: hasOwnership ? ownership as ApplyOwnershipSpec : { key: creationKey ?? converted.key },
     slot: converted.spec,
     components: converted.components,
     children: converted.children,
