@@ -2,6 +2,32 @@
 
 群を 1 つ終えるたびに、日付の見出しの節を先頭へ足す。進捗は `tasks.md` のチェックだけに書き、ここには写さない。全体の順序は `openspec/roadmap.md`、未検証の一覧は `openspec/unverified.md` にある。
 
+## 2026-10-14 10:30 JST — task 2.6 の途中（実機 L4 の許可を得た。対象の session はまだ決まっていない）
+
+### 伺いと返事
+
+- 2026-10-14 10:25 ごろ、ユーザーが `/ccg:spec-impl` を実行した。Opus は slot3（`agent/better-b2c`、`ba57564`、追跡ファイルの変更なし）の build で `discover --json` を実行した（読み取りだけ）。結果は session 0 件（探索 12 秒）。
+- 2026-10-14 10:28 ごろ、「実機テスト L4（U01〜U05。書込みは `ResoLoop_Test_L4` の下だけ、終わりに片づけ）を実行してよいか。いま discover は 0 件」と伺った（選択肢から選ぶ形）。返事:「許可する（これから起動）」= ユーザーが Resonite を起動して ResoniteLink を有効にした後、Opus が `discover` をやり直す。1 件ならその session を対象にし、2 件以上なら対象を改めて伺う。
+
+- 2026-10-14 10:31 ごろ、ユーザー:「resonite linkを有効にしました」。
+
+### 確認済みの事実（Opus が slot3 の build で読み取りだけを実行。2026-10-14 10:31〜10:33）
+
+- `discover --json`: session は 1 件。名前「ぞかホーム」、URL `ws://localhost:25410/`、S-ID `S-01a13803-91cf-76b4-b635-eb730117be13`。1 件なので、これを L4 の対象にする。
+- `status`: Resonite `2026.9.18.82`、ResoniteLink `0.13.1.0`、connected true。
+- `find --name ResoLoop_Test`: 0 件（L4 の前に残っているテスト用の Slot は無い）。
+- slot3 `ba57564` を `dotnet build ResoLoop.slnx` で build し（警告 0・エラー 0）、出力 `src/RLoop.Cli/bin/Debug/net10.0` を `resoloop-worktrees/live-1012/bin5` へ複製した（172 ファイル）。L4 はこの `bin5\resoloop.exe` だけを使う。
+
+### 仕組み（L4 の進め方）
+
+- 指示書は `.ccg/tasks/resoloop-slimming/cc-live-l4-charter.md`。「事前確認」の表に、Opus が offline で実行したコマンドと終了 code がある（help、fixture `creation-keys/main.tsx` の `--target creation` の build、`validate`）。実機で実行していない書式（`plan`／`apply` の `--mode regenerate`、`slot create`／`delete`、`inspect`、URL の直接指定）は、そう明記した。
+- 下調べは Claude の調査役 2 本（読み取りだけ）。分かったこと: 実機で使える TSX の fixture は無い（fixture の型 `Probe` は test 用）ので、実行担当が実在の型で TSX を書く／同じ名前の兄弟の fixture は 2 つまでで、3 つは実行担当が書く／root の照合は名前ではなく、state の ID・親・印による（`CreationOwnershipVerifier.cs`）／slot3 の未追跡の `examples/object-lamp-a/`・`-b/` には `node_modules/resoloop-jsx` の link しか無い。
+- 2026-10-14 10:46 ごろ、Claude の `coding-worker` を起動した。順序は S → U02 → U03 → U04 → U05 → U01 → Z（片づけ）。証拠は `resoloop-worktrees/live-1012/evidence/L4`、報告は `.ccg/tasks/resoloop-slimming/cc-live-l4-report.md`。
+
+### 未検証
+
+- U01〜U05 は「未検証」のまま（L4 は実行中で、結果はまだ無い）。
+
 ## 2026-10-14 09:55 JST — task 2.4・2.5 を終えた（レビューの指摘 4 件と help を直し、P10・P11 の test を足した）
 
 ### 伺いと返事
