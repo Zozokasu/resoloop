@@ -2,6 +2,33 @@
 
 群を 1 つ終えるたびに、日付の見出しの節を先頭へ足す。進捗は `tasks.md` のチェックだけに書き、ここには写さない。全体の順序は `openspec/roadmap.md`、未検証の一覧は `openspec/unverified.md` にある。
 
+## 2026-10-14 16:10 JST — 群 7 の途中（task 7.1 の検証を終え、7.2 の重いレビューを起動する）
+
+### 伺いと返事
+
+- 2026-10-14 15:45 ごろ、ユーザーが `/ccg:spec-impl` を実行した（言葉の添えは無い）。Opus は、群 7 の【伺う】でない task（7.1・7.2・7.3）に入ってよいとして受け取った（Opus の解釈）。
+
+### task 7.1: 2 か所の検証（Opus、sandbox の外、`RESOLOOP_RUN_INTEGRATION` なし）
+
+- slot3（`agent/course-correction` `dd4048d`、15:46〜15:55）と、新しい clone `resoloop-worktrees/cc-fresh`（`git clone --branch agent/course-correction` の main の repo から、同じ `dd4048d`。`npm ci`・`dotnet restore` の後、15:55〜16:03）。log は両方とも slot3 `TestResults/CC-G7/opus/slot3/` と `…/fresh/`（各 `summary.txt` に終了 code と秒）。2 か所は順に実行した（並べると、時間に敏感な U13・U24 の test を揺らすため）。
+
+| 検証 | slot3 | 新しい clone |
+| --- | --- | --- |
+| `dotnet build ResoLoop.slnx --no-restore --no-incremental` | 警告 0、エラー 0 | 警告 0、エラー 0 |
+| RLoop.Tests（全体、1 回） | 失敗 0、成功 2027、skip 4、合計 2031 | 失敗 0、成功 2027、skip 4、合計 2031 |
+| RLoop.IntegrationTests | 失敗 0、成功 10、skip 21、合計 31 | 失敗 0、成功 10、skip 21、合計 31 |
+| `npm.cmd run typecheck` | 終了 code 0 | 終了 code 0 |
+| `npm.cmd test` | 341 pass、fail 0、skipped 0 | 341 pass、fail 0、skipped 0 |
+| `npm.cmd run contract` | 64・11・4・2、失敗 0 | 64・11・4・2、失敗 0 |
+
+- 2 か所の件数は一致した。今回の 1 回ずつでは U13・U24 の失敗は出なかったが、群 5 で 3 回中 2 回出ているので、不安定さが消えたとは言えない。
+- 新しい clone は、7.7 の merge の後に消す予定（消す前に伺う）。
+
+### task 7.2 の準備
+
+- Codex の利用枠: 窓の開始 15:23:30（群 6 の契約）、使用済み 89,304 token、重いレビューの見積もり 22 万 token。合計約 31 万で 50 万に収まるので起動する。窓が閉じるのは 20:23 ごろ。
+- 指示書は `.ccg/tasks/resoloop-slimming/cc-review-charter.md`。事前確認（slot3 `dd4048d`、16:05 ごろ、log は slot3 `TestResults/CC-G7/opus/precheck-review/`）: 指示書に書いた build・`git show`・`git archive`・`rg`・`help` が終了 code 0、`--backend workbench status` が `BACKEND_REMOVED` で終了 code 2。
+
 ## 2026-10-14 15:40 JST — 群 6 を終えた（実行しなかった実機の test を skip にする）
 
 ### 伺いと返事

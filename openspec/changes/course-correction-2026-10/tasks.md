@@ -73,7 +73,7 @@
 
 ## 7. まとめのレビュー・実機・merge・片づけ
 
-- [ ] 7.1 Opus が、slot3 と、`agent/course-correction` の新しい clone の両方で、sandbox の外から全部を検証する（build、RLoop.Tests、Integration、`npm run typecheck`、`npm test`、contract の検査）。確かめ方: 2 か所の成功・失敗・skip の件数が一致し、`handoff.md` に分けて書かれている
+- [x] 7.1 Opus が、slot3 と、`agent/course-correction` の新しい clone の両方で、sandbox の外から全部を検証する（build、RLoop.Tests、Integration、`npm run typecheck`、`npm test`、contract の検査）。確かめ方: 2 か所の成功・失敗・skip の件数が一致し、`handoff.md` に分けて書かれている
 - [ ] 7.2 `handoff.md` に Codex の窓の開始時刻・使用済み・見積もり 22 万 token を書き、足りれば重いレビューを起動する。指示書 `cc-review-charter.md` は 1.7 (c) の事前確認つきで書く。対象は `main..agent/course-correction` の全差分。観点: 通常の `apply`・`plan`・`diff` の挙動が変わっていないこと／Workbench の消し残しと、直結の test の消しすぎ／`BACKEND_REMOVED` が接続の前に出ること／`resoloop-jsx/draft` の互換と出力の一致／skip の報告／文書・help・配布する Skill と CLI の一致。報告は `cc-review-report.md`。確かめ方: 報告に PASS か FAIL と、P1〜P3 の件数がある
 - [ ] 7.3 レビューの P1・P2 を、2.4 と同じ手順で直す（4 回まで）。確かめ方: 7.1 の検証をもう一度実行し、失敗 0
 - [ ] 7.4 【伺う】実機テスト L5 の許可と、対象の session を伺う。先に、ユーザーの操作が要る項目（U07 の root の複製、U08 の `RESONITE_MANAGED_DATA_PATH` の設定、U10 の world の保存と Resonite の再起動、U16 の接続の切断）を伝える。許可されたら、指示書 `cc-live-l5-charter.md` を書き、Claude の `coding-worker` が実行する。書込みは `ResoLoop_Test_L5` の下だけ。項目: (i) 群 3〜6 の後の確認（`status`／通常の `apply` の初回と、変更 0 件の再 `apply`／`resoloop-jsx` から import して key を省いた TSX を `--target creation` で build した定義の作り直し／`--backend workbench status` が `BACKEND_REMOVED`）。(ii) U07、U08、U10、U15、U16 のうち、許可と条件がそろったもの。終わりに片づけ、Opus が `find --name ResoLoop_Test` 0 件を確かめる。確かめ方: 報告 `cc-live-l5-report.md` に、session の名前・S-ID・版、項目ごとの成功・失敗・未実施、証拠の場所がある
