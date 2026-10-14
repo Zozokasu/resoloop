@@ -2,6 +2,93 @@
 
 群を 1 つ終えるたびに、日付の見出しの節を先頭へ足す。進捗は `tasks.md` のチェックだけに書き、ここには写さない。全体の順序は `openspec/roadmap.md`、未検証の一覧は `openspec/unverified.md` にある。
 
+## 2026-10-14 11:45 JST — 群 3 を終えた（task 3.2〜3.7。通常の apply の表面を test で固定した）
+
+### 伺いと返事
+
+- 2026-10-14 11:18 ごろ、ユーザーが `/ccg:spec-impl` を実行し、次の言葉を添えた（原文）:「codexの枠にかなり余裕があるので気にしないでください。」Opus は、これを「下の 11:15 の節の『この窓では起動しない』を取り消し、窓の残りを待たずに群 3 の契約を起動してよい」として受け取った（範囲の解釈は Opus のもの）。
+
+### Codex の利用枠（起動の前の記録）
+
+- 窓の開始は 2026-10-14 09:14:01、使用済みは 404,605 token。`docs/dev/agent-workflow.md` の目安（1 つの窓 50 万）では残り 約 9.5 万で、群 3 の見積もり（実装の 1 段階 25 万）は収まらない。
+- 判断: ユーザーの言葉（上）により、目安を超えて起動する。1 本ごとの時刻と `tokens used` は、これまでどおり下へ書く。容量切れ（`Selected model is at capacity`）や利用上限の拒否が出たら、契約を書き換えずに止め、ユーザーに伝える。
+
+### 仕組み（群 3 の分け方。Opus の決定）
+
+- task 3.2・3.3・3.4 は、契約 1 本（`.ccg/tasks/resoloop-slimming/cc-g3-freeze-contract.md`）にして `gpt-6-luna` high へ渡した。報告は同 `cc-g3-freeze-report.md`（同じ内容が slot3 `TestResults/CC-G3/freeze-report.md`）、log は同 `-codex.log`、時刻は同 `-times.txt`。
+- task 3.5（既存の test の実行と表）と 3.6（`AGENTS.md`・`docs/dev/agent-workflow.md`）は Opus が行った。3.6 は開発エージェント向けの文書だけの変更で、製品コードではない。
+- 下調べは Claude の調査役 2 本（読み取りだけ。slot3 `85f8ad5`）。事前確認（slot3、sandbox の外、11:21〜11:26）の log は slot3 `TestResults/CC-G3/opus/`: 契約の build のコマンドは終了 code 0・警告 0・エラー 0／filter `FullyQualifiedName~ApplyWorkflowTests|…LegacyCommandsRejectCreationEnvelopeWithoutMode` は失敗 0・成功 471。
+
+### 計画と実際の違い（契約で合わせた点）
+
+| 計画（`tasks.md`） | 実際 | 契約での扱い |
+| --- | --- | --- |
+| 3.2 (i) は 44〜69 行 | 検査の終わりは 68 行（69 行は `ApplyDocument.Load`）。(ii)・(iii) は行番号どおり | end の目印は 68 行の直後 |
+| 3.3 の確かめ方の filter `OrdinaryApplySurface` | そのままで一意 | 変更なし |
+| 3.4 の test の名前は `StateV3FromThisVersionPlansNoChanges`、filter `OrdinaryApplyFrozenContract` で成功 1 | 偽の client `FakeResoniteClient` は `ApplyWorkflowTests` の private な入れ子の class。新しいファイルは `partial class ApplyWorkflowTests` にするしかなく、class の名前では filter に一致しない | test の名前を `OrdinaryApplyFrozenContractStateV3FromThisVersionPlansNoChanges` にした |
+| 3.4「同じ world を持つ偽の client」 | 偽の client に、state から world を組み立てる仕掛けは無い。ID は `S1`・`C1` からの連番で決まる | test の中で、同じ定義を別の一時の state へ 1 回 `apply` して world を作り、その後 fixture の state で `plan` する |
+| 3.5 の `SameSessionComponentIdentityTests`・`StoredIdIdentityTests` は class | どちらもファイルの名前で、中身は `ApplyWorkflowTests` の partial（test の method は 7 つで、数は計画どおり） | 表は method の名前で書いた |
+| （計画に無い） | filter `FullyQualifiedName~OrdinaryApply` は、既存の `CreationSiblingNamesTests.OrdinaryApplyCliRejectsDuplicateSiblingNamesBeforeAnySend`（3 件）にも一致する | 契約の filter を `…~OrdinaryApplySurface\|…~OrdinaryApplyFrozenContract` にした |
+
+### task 3.5: `specs/ordinary-apply/spec.md` の requirement を確かめている既存の test
+
+実行（Opus、slot3 `85f8ad5`、sandbox の外、11:23 ごろ）: `dotnet test tests/RLoop.Tests --no-build --filter "FullyQualifiedName~ApplyWorkflowTests|FullyQualifiedName~CreationModeBoundaryTests.LegacyCommandsRejectCreationEnvelopeWithoutMode"` は失敗 0・成功 471・skip 0。下の名前は、結果のファイル（slot3 `TestResults/CC-G3/opus/cc-g3-3.5.trx`）で 1 つずつ `Passed` を確かめた。class はどれも `RLoop.Tests.ApplyWorkflowTests`（最後の 1 つだけ `CreationModeBoundaryTests`）。既存の test は変えていない。
+
+| requirement | scenario | test（ファイル） | 件数 |
+| --- | --- | --- | --- |
+| 通常の apply は凍結する | option・error code を足す | 新しい `OrdinaryApplySurfaceTests`（task 3.3。下の結果） | — |
+| 既存の文書と state を読み続ける | 以前の state v3 で `plan` | 新しい `OrdinaryApplyFrozenContract…`（task 3.4。下の結果） | — |
+| 同上（v1・v2） | — | `S3V1V2EmptyIdsRemainUnprovedLegacyCreations`（`ApplyWorkflowTests.S3I2.cs`） | 4 |
+| 記録した ID での照合（P09） | 同じ session で再 apply | `RecordedIdsContinueMatchingTwinsOnlyInTheSameSessionAndPlanDoesNotWriteState`（`SameSessionComponentIdentityTests.cs`） | 1 |
+| 同上 | session が変わった／確かめられない接続 | `UnprovenOrChangedSessionKeepsAmbiguousStop`、`ChangedSessionDoesNotPersistProofWhenStateHasUnverifiedComponentRecord`（同） | 3、1 |
+| 同上 | 条件 (b)・(c) | `OldStateWithoutSessionAndMissingOrDuplicateRecordedIdsStillStop`、`MissingStoredIdAmongAmbiguousCandidatesStops`、`IdentityFieldsReestablishSessionProofAndFailedApplyDoesNotPersistIt`（同） | 各 1 |
+| 同上 | 途中で失敗した後 | `FailedWriteCheckpointDoesNotKeepSessionAndNextApplyStopsAmbiguous`（同）、`RootUpdateFailureClearsSessionAndRetryStopsAmbiguous`（`SameSessionInterruptedApplyTests.cs`） | 1、2 |
+| 同上 | state の ID を入れ替えた（条件 (d)） | `SwappedRecordedIdsStopAmbiguous`、`StateWithoutBindingStopsAmbiguous`、`CompletedApplyWritesBindingAndInterruptedApplyDoesNot`（`SameSessionBindingTests.cs`） | 各 1 |
+| 同上 | 片方を prune で消そうとする | `PruneNeverSelectsByRecordedId`（`SameSessionInterruptedApplyTests.cs`） | 1 |
+| 結果の分からない書込みが残っていれば止まる | 保留が残っている | `PendingCheckpointStopsWhenCreateResponseIsLost`（`ApplyWorkflowTests.cs`） | 1 |
+| 削除は所有を確かめた正確な ID だけ | 記録した ID の先が変わっていた | `S3OwnedSubtreeDeletesOnlyExactIdsAndReadbacksAbsence`（`ApplyWorkflowTests.S3I3.cs`）、`PruneDoesNotDeleteAnObjectBecauseItOnlyHoldsAStoredId`、`PruneDoesNotDeleteAComponentThatOnlySharesTheStoredId`（`StoredIdIdentityTests.cs`） | 各 1 |
+| 作り直しの定義は通常の apply で受け付けない | mode を付け忘れた | `CreationModeBoundaryTests.LegacyCommandsRejectCreationEnvelopeWithoutMode`（`plan`・`diff`・`apply`） | 3 |
+
+- 「session が変わった」の scenario は「Resonite を開き直す」形で、偽の client の上では S-ID・URL を変える形で確かめている。実機では L4 の U01 が、URL の直接指定の側だけを確かめた（開き直しは U10）。
+
+### 実行の記録と受け入れ（task 3.2〜3.4・3.6・3.7）
+
+| 契約 | 時刻 | token | 担当の報告 | Opus の検証（slot3、sandbox の外、11:38〜11:42） |
+| --- | --- | --- | --- | --- |
+| cc-g3-freeze v1 | 11:26:55〜11:38:11 | 120,861 | `DONE`（build 警告 0・エラー 0、新しい test 3 pass、error code 68 件・option 27 件で照らし合わせ用の値と一致、検出の確認は「足すと失敗・消すと成功」。sandbox の中の `ApplyWorkflowTests` は 469 pass・失敗 0 で、契約の期待 472 より 3 少ない） | 受け入れた。下の表 |
+
+| 検証 | 結果 |
+| --- | --- |
+| `dotnet build ResoLoop.slnx --no-restore --no-incremental …` | 警告 0、エラー 0 |
+| filter `…~OrdinaryApplySurface\|…~OrdinaryApplyFrozenContract` | 失敗 0、成功 3 |
+| 検出の確認（`WorldService.cs` の末尾に `// "APPLY_PIN_PROBE"` を足す → 戻す） | 足すと `ErrorCodesMatchPinnedList` が失敗（`Implementation only: [APPLY_PIN_PROBE]`）、戻すと成功。`git diff --stat -- src/RLoop.Core` は空 |
+| RLoop.Tests（全体、1 回） | 失敗 0、成功 2013、skip 4（基準 2010 + 3） |
+| `rg -c "ordinary-apply-surface:" src/RLoop.Cli/Program.cs` | 6。`Program.cs` の差分はコメント 6 行だけ |
+| `AGENTS.md` の「凍結した経路」／`agent-workflow.md` の「凍結の例外」 | 1 件／1 件。差分に `skills/`・`README*` は無い |
+
+- log は slot3 `TestResults/CC-G3/opus/`（`accept-build.log`、`accept-ordinary.log`、`accept-probe-added.log`、`accept-probe-removed.log`、`accept-full.log`・`.trx`）。
+- commit: `agent/course-correction` の `91e88b8`（`test(apply): pin the frozen surface of the ordinary apply`。9 ファイル、追加 236 行）。main への merge と push はしていない。
+- Opus が直した 1 点: 1 つ目の end の目印の字下げ（12 桁 → 16 桁。コメントの空白だけ）。
+- 固定したもの: error code 68 件（`APPLY_` 60、`STABLE_` 8）、option の文字列 27 件。state の fixture の最上位の member は `schemaVersion`（3）・`ownershipKey`・`sessionId`・`session`・`sessionBinding`・`slots`・`components`・`assets`・`pending`。
+- `AGENTS.md` は英語の文書なので、節の見出しは `## Frozen path (凍結した経路)`、本文は英語で書いた。
+- この窓の使用済み: 525,466 token（404,605 + 120,861）。目安の 50 万を超えている（ユーザーの言葉による）。利用上限の拒否は出なかった。
+
+### 未検証・実行しなかったこと
+
+- sandbox の中で `ApplyWorkflowTests` が 3 件少なかった理由は調べていない（sandbox の外では、全体が基準 + 3 で一致した）。
+- 重いレビューは実行していない（1 つの段階につき 1 回の決まりで、群 7 の 7.2 で `main..agent/course-correction` を見る）。ccg の `verify-change` は実行したが、「変更 8 ファイル、+0／−0、通過」と返しただけで、検査の根拠にならない。
+- Workbench・Integration・`npm` の検証は、この群では実行していない（変えていない。群 4 の 4.1 と群 7 の 7.1 で実行する）。
+- RLoop.Tests の全体は 1 回だけ実行した。不安定な 2 件（U13・U23）は、この 1 回では出なかった。
+
+### 次
+
+- 群 4（Workbench を除く）: task 4.1 で、除く前の基準（`rg -l -i workbench …` の結果と、RLoop.Tests の件数 = 成功 2013・skip 4）を取る。
+
+### 気付いた点（直していない。ユーザーに示す）
+
+- **固定する error code の一覧は、通常の `apply` が返しうる code の全部ではない。** 計画どおり 6 ファイルから集める（68 件）。`src/RLoop.Core/` には、ほかに `"APPLY_`・`"STABLE_` を含むファイルが 18 ある（調査役の数え。`ApplyDocumentCompiler.cs` 30 行、`StableReferences.cs` 8 行、`ApplyCatalogValidator.cs` 6 行、`SessionWriteLock.cs` 5 行 ほか。`Creation*` は作り直しの側）。定義の検査や参照の解決が返す code に足し引きがあっても、`OrdinaryApplySurfaceTests` は気付かない。spec の文（「返しうる error code の一覧は、固定 SHALL」）より狭い。凍結するファイルを増やすかは、計画の決定なので変えていない。
+- 固定する option の一覧（27 件）には、option でない文字列（コマンドの名前 `apply`・`plan`・`diff`・`validate`・`flux`、操作の種類 `create`・`delete`、辞書の key `filters`）が混ざる。目印の中の文字列を正規表現で集める、という計画の形のとおり。
+
 ## 2026-10-14 11:15 JST — 群 2 を終えた（task 2.8・2.9。`agent/better-b2c` を main へ merge した）
 
 ### 伺いと返事
