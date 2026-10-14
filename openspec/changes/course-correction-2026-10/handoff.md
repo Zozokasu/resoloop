@@ -2,6 +2,52 @@
 
 群を 1 つ終えるたびに、日付の見出しの節を先頭へ足す。進捗は `tasks.md` のチェックだけに書き、ここには写さない。全体の順序は `openspec/roadmap.md`、未検証の一覧は `openspec/unverified.md` にある。
 
+## 2026-10-14 09:30 JST — task 2.4 の準備（契約 6 本を書いた。Codex は起動していない）
+
+### 伺いと返事
+
+- 2026-10-13 22:00 に伺った 2 点（修正に入るか／Codex をどこまで使ってよいか）への、言葉での返事は無い。2026-10-14 08:57 ごろ、ユーザーが `/ccg:spec-impl` を実行した。Opus は、これを「task 2.4 に入ってよい」として受け取った（Opus の解釈で、ユーザーの言葉ではない）。Codex の量の返事は無いので、Codex は起動していない。契約の案と見積もりを示して、起動の前に改めて伺う。
+
+### 確認済みの事実（指摘の裏取り。Claude の調査役 4 本が slot3 `061b054` のコードを読んだ結果と、Opus が読んだ範囲）
+
+- 指摘 1〜4 は、どれもコードと合う。レビュー担当の再現の log（slot3 `TestResults/BETTER-B2C/review-final/repro-a-run1.log`、`repro-a-verified-run2.log`、`-run3.log`）は Opus が読んだ。Opus は再現を実行し直していない。
+- 指摘 1: ID での選択の条件は、`sessionProof == "matched"`、記録 ID が候補の中、ID の重複なしの 3 つだけ（`WorldService.cs:1863-1873`、`1931-1938`）。state に、対応を確かめる hash のたぐいは無い（`ApplyWorkflow.cs:692-709`）。
+- 指摘 2: `ExecutePendingAsync` の送信の前の保存は `ApplyStateStore.Copy(prepared.State)` で、`session` を写す（`WorldService.ApplyPending.cs:51-53`）。`Checkpoint` だけが消す（`WorldService.cs:2254`）。再現の log: root の更新の拒否は「保留 0・`session` あり・再 `apply` 成功（書込み 3）」、取消は「保留 1・`session` あり・再 `apply` 成功（書込み 2）」、応答の喪失は「保留 1・再 `apply` は `APPLY_WRITE_UNVERIFIED`」。
+- 指摘 2 のうち state の保存の失敗（`state-write-failure`）: 最初の保存が失敗して `APPLY_STATE_WRITE_FAILED` で止まり、何も送信していない。古い記録は実機と合ったままなので、直さない（書けないファイルの記録は消せない）。
+- 指摘 3: prune の照合は `MatchComponent` を通る（`WorldService.cs:1379`）。調査役が見つけた追加: その直前の `ResolveStateTopologyTargets`（1378 行）から `ResolveStateComponent` に入る経路でも、ID での選択が効く。契約では両方を止める。`711ef87` の前は、候補が 2 つ以上なら無条件に `STABLE_COMPONENT_AMBIGUOUS` だった。
+- 指摘 4: 検査は Scope を適用する前の key（`evaluate.ts:451-457`）、`creationId` は適用した後の key（`evaluate.ts:462`、`cli.ts:219`）。B2c-1 の指示書（`better-impl-b2c-charter.md:52-57`）と spec は、Scope の下の root を決めていなかった。C# は `creationId` を `definition.ownership.key` とだけ比べる（`CreationDocument.cs:118-119, 211`）。
+- help: 古い文は `Program.cs` の 4 か所（1623・1634・1649・1785 行）。README 4 つと配布する Skill は、すでに TSX の入口を説明している。`CreationRegenerateUsageTests.cs:27,29` が、古い文のうち 2 つを assert している。
+- 文書: `README.md:44`、`README_JA.md:147`、`README-DETAILS.md:261` は、「実機で未検証」を作り直しの全体について書いたまま（同じファイルの後ろの行は、TSX の経路と同じ名前の兄弟に限っている）。
+- P10・P11: 前回読まなかった 4 つの test ファイルは、穴のどれも確かめていない。穴の (1)〜(8) は、偽の client `CreationMutationTestClient` の公開の member だけで書ける。
+
+### 仕組み（Opus が契約で決めた形。一覧と理由は `.ccg/tasks/resoloop-slimming/cc-b2c-fix2-contract.md`）
+
+- 契約は 6 本（`cc-b2c-fix2a`〜`fix2f-contract.md`）。順に 1 つずつ `gpt-6-luna` high へ渡す: a = 指摘 2・3、b = 指摘 1、c = 指摘 4、d = help、f = 文書、e = P10・P11 の test（task 2.5）。
+- 指摘 1: state に省略できる `sessionBinding`（Component ごとの key・SlotKey・Slot の ID・Component の ID を並べた JSON の SHA-256）を足す。`SchemaVersion` は 3 のまま。最後まで成功した `apply` だけが書き、読むときに計算し直して、違えば記録 ID では選ばない。error code・option・`sessionProof` の値は増やさない（群 3 の「凍結の例外」には当たらない）。
+- 指摘 4: レビュー担当の案を採った。`creationId` は、検査した root の明示の key（Scope を適用する前）から出す。
+- help の「実機で未検証」は、TSX の経路と同じ名前の兄弟、回復の `finish` の成功に限る（手書きの JSON の定義での作り直しは L1・L3 で確かめたため）。
+- spec を 2 か所直した: `specs/ordinary-apply/spec.md` の「記録した ID での照合」に条件 (d) と、途中で止まった `apply` の後・prune では使わないこと、scenario 3 つ／`specs/creation-regenerate/spec.md` に、Scope で包んだ root の `creationId` と scenario 1 つ。
+- 事前確認（2026-10-14 09:10〜09:20、slot3、sandbox の外）: `ApplyWorkflowTests`＋`StoredId` 462、`Creation` 308、`CreationRegenerateUsage` 1、`Skill` 16、`npm.cmd test` 335、`codex exec --help` 終了 code 0。log は slot3 `TestResults/BETTER-B2C/opus/fix2-precheck/`。
+
+### Codex の利用枠
+
+- 前の窓は 2026-10-13 21:34:52 に開き、使用済みは約 21.6 万。2026-10-14 02:35 ごろに閉じた見込み。次の起動が新しい窓の開始になる（使用済み 0、残り 50 万）。
+- 見積もり: 6 本で約 42 万 token（a 8、b 8、c 5、d 5、f 4、e 12。同じ形の fix1 が約 5 万だったことからの目安で、実測ではない）。残りには収まるが、修正の出し直しの余裕は約 8 万しかない。
+- 判断: ユーザーの返事の後に起動する。起動の時刻と、1 本ごとの `tokens used` を、ここへ書き足す。
+
+### 後回しにした項目
+
+- P11 の「作成の応答の重複」は、test を足さない（偽の client の interface では表せない。応答が不明になる場合は `CreationApplyFaultMatrixTests.NewRootUnknownReceiptRetainsCandidateContextAndNoLaterFrames` が確かめている）。`design.md` の P11 の崩し方の 1 つが、test の無いまま残る。
+- `711ef87` の build が書いた state（`sessionBinding` が無い）は、同じ型 2 つの場面で、修正の後は `STABLE_COMPONENT_AMBIGUOUS` で止まる。移行の手段は用意しない（`711ef87` は main にあるが未 push）。
+
+### 未検証
+
+- 契約は、まだ 1 本も実行していない。件数の期待値（465・468・336・318）は見込みである。
+- 対応と hash の両方を書き換えた state は、`sessionBinding` では見分けられない。
+- root を `defineObject` の中に置いた場合に Scope で包まれるか／`CreationApplyExecution.cs`・`CreationApplyService.cs` が root の key と `creationId` を照合していないこと（grep では出ていない）。
+- 偽の client で、2 回目の作り直しを `SeedOwnedRoot` なしで通せるか／同じ名前の兄弟の定義を `CreationApplyService.ApplyAsync` が通すか。
+- `gpt-6-luna` を `codex exec` で起動するコマンドの実例は残っていない。管理役のコマンドの model だけを替えた形で起動する（option の名前は `--help` で確かめた）。
+
 ## 2026-10-13 22:00 JST — 重いレビューの結果は FAIL（task 2.3 済み、2.4 は未着手）
 
 ### 判定と使用量

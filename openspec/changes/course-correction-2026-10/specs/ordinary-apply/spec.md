@@ -25,7 +25,7 @@
 - **THEN** 変更 0 件の計画が返り、state の読込みのエラーは出ない
 
 ### Requirement: 記録した ID での照合は同じ session の中だけ
-同じ Slot・同じ型の Component の候補を絞れないとき、記録した ID で決めてよいのは、(a) state を書いたのが同じ session で最後まで成功した `apply`、(b) 記録した ID が候補の中にある、(c) 同じ Slot の中で記録した ID に重複が無い、のすべてを満たす場合だけ SHALL とする。
+同じ Slot・同じ型の Component の候補を絞れないとき、記録した ID で決めてよいのは、(a) state を書いたのが同じ session で最後まで成功した `apply`、(b) 記録した ID が候補の中にある、(c) 同じ Slot の中で記録した ID に重複が無い、(d) state の key と ID の対応が、その `apply` の保存したものから変わっていない、のすべてを満たす場合だけ SHALL とする。途中で止まった `apply` の後と、`--prune` の削除の対象の照合では、記録した ID で決めてはならない（MUST NOT）。
 
 #### Scenario: 同じ session で再 apply する
 - **WHEN** 同じ Slot に同じ型の Component を 2 つ持つ定義を `apply` し、同じ session のまま、同じ定義でもう一度 `apply` する
@@ -38,6 +38,18 @@
 #### Scenario: session を確かめられない接続
 - **WHEN** `--url ws://…` の直接の指定で接続し、同じ定義を 2 回 `apply` する
 - **THEN** 2 回目は `STABLE_COMPONENT_AMBIGUOUS` で止まる
+
+#### Scenario: 途中で失敗した後に再 apply する
+- **WHEN** 上の 1 回目の後、値を変えた定義の `apply` が最初の書込みで失敗し、同じ session のまま、もう一度 `apply` する
+- **THEN** `STABLE_COMPONENT_AMBIGUOUS` で止まり、何も書き込まれない
+
+#### Scenario: state の ID を手で入れ替えた
+- **WHEN** 上の 1 回目の後、state の 2 つの Component の ID を手で入れ替え、同じ session で `apply` する
+- **THEN** `STABLE_COMPONENT_AMBIGUOUS` で止まり、何も書き込まれない
+
+#### Scenario: 同じ型の片方を prune で消そうとする
+- **WHEN** 上の 1 回目の後、2 つのうち片方を定義から外し、同じ session で `apply --prune --yes` を実行する
+- **THEN** `STABLE_COMPONENT_AMBIGUOUS` で止まり、何も削除されない
 
 ### Requirement: 結果の分からない書込みが残っていれば止まる
 前回の `apply` で結果を確かめられなかった書込みが記録に残っている場合、通常の `apply` は、新しい書込みを 1 件も送る前に止まらなければならない（MUST）。同じ書込みを確かめずに送り直してはならない（MUST NOT）。

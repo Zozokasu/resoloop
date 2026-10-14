@@ -7,7 +7,11 @@
 ## ADDED Requirements
 
 ### Requirement: TSX から作り直しの定義を出せる
-`build --target creation` は、TSX から `creation-1` の定義を出力 SHALL する。`creationId` は、entry の `ownership.key`、無ければ root の Slot に明示した `key` とする。どちらも無い、または空白だけの場合は、build を止める。
+`build --target creation` は、TSX から `creation-1` の定義を出力 SHALL する。`creationId` は、entry の `ownership.key`、無ければ root の Slot に明示した `key` とする。root を `Scope` で包んでいても、`creationId` には Scope を適用する前の `key` を使う。どちらも無い、または空白だけの場合は、build を止める。
+
+#### Scenario: root を Scope で包んだ
+- **WHEN** `ownership.key` を書かず、`key="room"` の root を `Scope` で包んだ TSX を `--target creation` で build する
+- **THEN** 出力の `creationId` は `room` になり、その定義は `validate` を通る
 
 #### Scenario: ownership.key から決まる
 - **WHEN** entry に `ownership.key` を書いた TSX を `--target creation` で build する
