@@ -58,7 +58,7 @@ test("same creation and draft fixtures retain their saved output", async () => {
     for (const [name, entry, options] of cases) {
       const result = await buildFile(entry, { ...options, output, projectRoot: fixturesDir });
       equal(result.exitCode, 0, `${name}: ${result.errors.join("\n")}`);
-      equal(normalized(fs.readFileSync(output, { encoding: "utf8" })), fs.readFileSync(path.join(baselineDir, `${name}.json`), { encoding: "utf8" }));
+      equal(normalized(fs.readFileSync(output, { encoding: "utf8" })), fs.readFileSync(path.join(baselineDir, `${name}.json`), { encoding: "utf8" }).replace(/\r\n/g, "\n"));
     }
   } finally { fs.rmSync(output, { force: true }); }
 });
